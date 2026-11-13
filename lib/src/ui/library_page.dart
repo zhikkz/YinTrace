@@ -19,12 +19,15 @@ class LibraryPage extends StatefulWidget {
 
 class _LibraryPageState extends State<LibraryPage> {
   List<SongMeta>? _songs;
+  bool _loaded = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _songs ??= const [];
-    _reload();
+    if (!_loaded) {
+      _loaded = true;
+      _reload();
+    }
   }
 
   Future<void> _reload() async {

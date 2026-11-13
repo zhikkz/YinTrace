@@ -32,13 +32,14 @@ class ImportFailedEvent extends ImportEvent {
 
 /// Runs the import pipeline in a background isolate so the UI stays fluid.
 class ImportJob {
-  ImportJob._(this._isolate, this._events, this._commands);
+  ImportJob._(this._isolate, this._controller, this._commands, this._port);
 
   final Isolate _isolate;
-  final Stream<ImportEvent> _events;
+  final StreamController<ImportEvent> _controller;
   final Completer<SendPort> _commands;
+  final ReceivePort _port;
 
-  Stream<ImportEvent> get events => _events;
+  Stream<ImportEvent> get events => _controller.stream;
 
   static Future<ImportJob> start(ImportRequest request, String songsRoot) async {
     final token = RootIsolateToken.instance;
@@ -73,15 +74,20 @@ class ImportJob {
           port.close();
       }
     });
-    return ImportJob._(isolate, controller.stream, commands);
+    return ImportJob._(isolate, controller, commands, port);
   }
 
-  /// Asks the job to stop at the next checkpoint.
+  /// Asks the job to stop at the next checkpoint (or kills the worker if it
+  /// has not started yet).
   Future<void> cancel() async {
+    if (_controller.isClosed) return;
     if (_commands.isCompleted) {
       (await _commands.future).send('cancel');
     } else {
       _isolate.kill(priority: Isolate.immediate);
+      _controller.add(ImportFailedEvent('已取消', cancelled: true));
+      await _controller.close();
+      _port.close();
     }
   }
 
