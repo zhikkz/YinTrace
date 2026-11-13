@@ -1,0 +1,147 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:isolate';
+
+import 'package:flutter/services.dart';
+
+import '../audio/audio_backend.dart';
+import '../library/song.dart';
+import '../library/song_repository.dart';
+import '../separation/onnx_model.dart';
+import '../separation/tensor_model.dart';
+import 'import_pipeline.dart';
+
+/// Events emitted by a running [ImportJob].
+sealed class ImportEvent {}
+
+class ImportProgressEvent extends ImportEvent {
+  ImportProgressEvent(this.progress);
+  final ImportProgress progress;
+}
+
+class ImportDoneEvent extends ImportEvent {
+  ImportDoneEvent(this.song);
+  final SongMeta song;
+}
+
+class ImportFailedEvent extends ImportEvent {
+  ImportFailedEvent(this.message, {this.cancelled = false});
+  final String message;
+  final bool cancelled;
+}
+
+/// Runs the import pipeline in a background isolate so the UI stays fluid.
+class ImportJob {
+  ImportJob._(this._isolate, this._events, this._commands);
+
+  final Isolate _isolate;
+  final Stream<ImportEvent> _events;
+  final Completer<SendPort> _commands;
+
+  Stream<ImportEvent> get events => _events;
+
+  static Future<ImportJob> start(ImportRequest request, String songsRoot) async {
+    final token = RootIsolateToken.instance;
+    if (token == null) throw StateError('ImportJob must be started from the root isolate');
+    final port = ReceivePort();
+    final commands = Completer<SendPort>();
+    final controller = StreamController<ImportEvent>();
+    final isolate = await Isolate.spawn(
+      _entry,
+      [port.sendPort, token, request.toMap(), songsRoot],
+      debugName: 'yintrace-import',
+    );
+    port.listen((msg) {
+      if (msg is SendPort) {
+        commands.complete(msg);
+        return;
+      }
+      final m = msg as Map;
+      switch (m['type']) {
+        case 'progress':
+          controller.add(ImportProgressEvent(ImportProgress(
+              ImportStage.values[m['stage'] as int],
+              (m['stageFraction'] as num).toDouble(),
+              (m['overall'] as num).toDouble())));
+        case 'done':
+          controller.add(ImportDoneEvent(SongMeta.fromJson((m['song'] as Map).cast<String, dynamic>())));
+          controller.close();
+          port.close();
+        case 'error':
+          controller.add(ImportFailedEvent(m['message'] as String, cancelled: m['cancelled'] == true));
+          controller.close();
+          port.close();
+      }
+    });
+    return ImportJob._(isolate, controller.stream, commands);
+  }
+
+  /// Asks the job to stop at the next checkpoint.
+  Future<void> cancel() async {
+    if (_commands.isCompleted) {
+      (await _commands.future).send('cancel');
+    } else {
+      _isolate.kill(priority: Isolate.immediate);
+    }
+  }
+
+  static Future<void> _entry(List<Object?> args) async {
+    final out = args[0] as SendPort;
+    final token = args[1] as RootIsolateToken;
+    final request = ImportRequest.fromMap(args[2] as Map<Object?, Object?>);
+    final root = args[3] as String;
+    BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+    final commands = ReceivePort();
+    out.send(commands.sendPort);
+    var cancelled = false;
+    commands.listen((msg) {
+      if (msg == 'cancel') cancelled = true;
+    });
+
+    Future<LoadedModel> loader(String path,
+        {String? inputName, String? outputName, bool useCoreML = false}) async {
+      OnnxTensorModel model;
+      try {
+        model = await OnnxTensorModel.load(path,
+            inputName: inputName, outputName: outputName, useCoreML: useCoreML);
+      } catch (_) {
+        if (!useCoreML) rethrow;
+        model = await OnnxTensorModel.load(path, inputName: inputName, outputName: outputName);
+      }
+      List<int>? shape;
+      try {
+        final info = await model.inputInfo();
+        final s = info.isNotEmpty ? info.first['shape'] : null;
+        if (s is List) shape = [for (final d in s) d is int ? d : -1];
+      } catch (_) {}
+      return (model: model, inputShape: shape);
+    }
+
+    final pipeline = ImportPipeline(
+      audio: const NativeAudioBackend(),
+      loadModel: loader,
+      repository: SongRepository(Directory(root)),
+    );
+    var lastSent = DateTime.fromMillisecondsSinceEpoch(0);
+    try {
+      final song = await pipeline.run(request, isCancelled: () => cancelled, onProgress: (p) {
+        final now = DateTime.now();
+        if (now.difference(lastSent).inMilliseconds < 100 && p.stageFraction < 1) return;
+        lastSent = now;
+        out.send({
+          'type': 'progress',
+          'stage': p.stage.index,
+          'stageFraction': p.stageFraction,
+          'overall': p.overall,
+        });
+      });
+      out.send({'type': 'done', 'song': song.toJson()});
+    } on SeparationCancelled {
+      out.send({'type': 'error', 'message': '已取消', 'cancelled': true});
+    } catch (e) {
+      out.send({'type': 'error', 'message': e.toString()});
+    } finally {
+      commands.close();
+    }
+  }
+}

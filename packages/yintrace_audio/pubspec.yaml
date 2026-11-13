@@ -1,0 +1,30 @@
+name: yintrace_audio
+description: "YinTrace native audio core (miniaudio + Core Audio): decoding, AAC encoding and a full-duplex practice engine via dart:ffi."
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.13.7
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        ffiPlugin: true
+      ios:
+        ffiPlugin: true
+      macos:
+        ffiPlugin: true
+      windows:
+        ffiPlugin: true

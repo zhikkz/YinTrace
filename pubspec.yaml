@@ -1,0 +1,28 @@
+name: yintrace
+description: "YinTrace 唱歌练习：人声分离 + 逐字音高图 + YIN 实时音高对比"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  fftea: ^1.5.0
+  ffi: ^2.1.3
+  file_picker: ^13.3.3
+  flutter_onnxruntime: ^1.9.0
+  path_provider: ^2.1.6
+  wakelock_plus: ^1.8.2
+  yintrace_audio:
+    path: packages/yintrace_audio
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
