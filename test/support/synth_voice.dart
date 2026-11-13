@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:yintrace/src/analysis/pinyin_initials.dart';
 import 'package:yintrace/src/dsp/pitch.dart';
 
 /// One synthetic sung syllable.
@@ -70,6 +71,26 @@ Float32List synthVoice(List<Syl> syls, double seconds,
       }
       out[i] += 0.25 * env * v;
     }
+  }
+  return out;
+}
+
+/// Lays out syllables for [text] like a singer would: characters with a
+/// voiceless initial (q, d, f, sh, ...) get a short consonant gap before the
+/// vowel, the others (m, n, l, r, vowels) follow without a gap.
+List<Syl> sungLine(String text, double start, List<double> pitches,
+    {List<double>? durations, Map<int, double> pauses = const {}, Map<int, double> glides = const {}}) {
+  final chars = text.replaceAll(' ', '').split('');
+  assert(chars.length == pitches.length);
+  final out = <Syl>[];
+  var t = start;
+  for (var i = 0; i < chars.length; i++) {
+    final unvoiced = onsetClassOf(chars[i]) == OnsetClass.unvoiced;
+    if (i > 0 && unvoiced) t += 0.07;
+    t += pauses[i] ?? 0;
+    final d = durations?[i] ?? 0.3;
+    out.add(Syl(t, t + d, pitches[i], unvoicedOnset: i == 0 || unvoiced || pauses.containsKey(i), glideTo: glides[i]));
+    t += d;
   }
   return out;
 }

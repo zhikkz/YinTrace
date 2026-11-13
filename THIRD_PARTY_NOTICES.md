@@ -22,6 +22,12 @@ https://github.com/mackron/miniaudio — `packages/yintrace_audio/src/miniaudio.
 (version 0.11.25), available under your choice of the public domain (Unlicense)
 or MIT No Attribution. See the license text at the end of the header.
 
+## pypinyin (MIT License)
+
+https://github.com/mozillazg/python-pinyin — `lib/src/analysis/pinyin_initials.dart`
+(the onset class of each GB2312 character) is generated from pypinyin's data by
+`tools/reference/make_pinyin_table.py`.
+
 ## Flutter packages
 
 The app depends on Flutter packages listed in `pubspec.yaml` (e.g.

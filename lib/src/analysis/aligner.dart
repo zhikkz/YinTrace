@@ -3,15 +3,15 @@ import 'dart:typed_data';
 
 import '../dsp/pitch.dart';
 import 'lrc.dart';
+import 'pinyin_initials.dart';
 import 'pitch_track.dart';
 import 'reference.dart';
 
 /// Tunables of the character aligner.
 class AlignOptions {
   const AlignOptions({
-    this.leadIn = 0.35,
-    this.maxPhraseGap = 0.9,
-    this.minSecondsPerToken = 0.16,
+    this.earlySlack = 0.5,
+    this.lateSlack = 1.0,
     this.maxLastLine = 12,
     this.gridFrames = 2,
     this.maxTokenSeconds = 4,
@@ -19,19 +19,19 @@ class AlignOptions {
     this.minNoteSeconds = 0.06,
   });
 
-  /// Singing may start this much before the typed time stamp.
-  final double leadIn;
+  /// A line may start this much before its time stamp...
+  final double earlySlack;
 
-  /// Voiced runs separated by more than this end a line (once enough
-  /// material for its characters has been collected).
-  final double maxPhraseGap;
-  final double minSecondsPerToken;
+  /// ...or this much after it (time stamps are rarely exact).
+  final double lateSlack;
 
   /// Window for the last line, which has no following time stamp.
   final double maxLastLine;
 
-  /// Boundary search resolution in pitch frames.
+  /// Boundary resolution in pitch frames.
   final int gridFrames;
+
+  /// Longest sung part of one character.
   final double maxTokenSeconds;
   final double noteSplitSemitones;
   final double minNoteSeconds;
@@ -40,35 +40,99 @@ class AlignOptions {
 /// Builds the per-character reference melody from a pitch track and timed
 /// lyrics.
 ///
-/// For every line the voiced region after its time stamp is located, then
-/// the N characters are placed on it with a dynamic programme that prefers
-/// boundaries at syllable onsets (unvoiced consonant gaps, energy dips,
-/// pitch changes) while keeping durations plausible. Finally the pitch
-/// inside every character is split into stable notes.
+/// All characters of the song are placed in one dynamic programme over a
+/// ~12 ms grid. Each line's time stamp is a soft anchor for its first
+/// character (singers start early or late, and lines often run into each
+/// other), boundaries are attracted to syllable onsets whose kind is
+/// predicted from the character's Mandarin initial (voiceless consonant
+/// gap, voiced-consonant level dip, vowel pitch change), and each
+/// character's voiced duration is kept plausible. Finally the pitch inside
+/// every character is split into stable notes.
 SongReference buildReference(PitchTrack track, List<LyricLine> lines,
     {AlignOptions options = const AlignOptions()}) {
-  final aligner = _Aligner(track, options);
-  final out = <RefLine>[];
-  var prevEnd = 0.0;
-  for (var i = 0; i < lines.length; i++) {
-    final line = lines[i];
-    final next = i + 1 < lines.length ? lines[i + 1].start : null;
-    final refLine = aligner.alignLine(i, line, prevEnd, next);
-    out.add(refLine);
-    if (refLine.tokens.isNotEmpty) prevEnd = math.max(prevEnd, refLine.end);
-  }
-  return SongReference(lines: out, duration: track.duration);
+  if (lines.isEmpty) return SongReference(lines: const [], duration: track.duration);
+  return _ChainAligner(track, options).run(lines);
 }
 
-class _Aligner {
-  _Aligner(this.t, this.o)
+class _Tok {
+  _Tok(this.line, this.index, this.token, this.cls, this.first, this.last);
+  final int line;
+  final int index;
+  final LyricToken token;
+  final OnsetClass cls;
+  final bool first;
+  final bool last;
+  int lo = 0; // grid range [lo, hi)
+  int hi = 0;
+  late Float64List dp;
+  late Int32List back;
+}
+
+class _ChainAligner {
+  _ChainAligner(this.t, this.o)
       : hop = t.hopSeconds,
-        energy = _smooth(t.rmsDb, 2);
+        g = math.max(1, o.gridFrames) {
+    final n = t.length;
+    _voicedPrefix = Int32List(n + 1);
+    for (var i = 0; i < n; i++) {
+      _voicedPrefix[i + 1] = _voicedPrefix[i] + (t.voiced(i) ? 1 : 0);
+    }
+    _energy = _smooth(t.rmsDb, 2);
+    // _nextBreak[f]: first frame >= f inside a silence of at least
+    // [_breakSeconds]; voicing after it does not belong to the same phrase.
+    final minBreak = (_breakSeconds / hop).round();
+    final unvRun = Int32List(n + 1);
+    for (var i = n - 1; i >= 0; i--) {
+      unvRun[i] = t.voiced(i) ? 0 : unvRun[i + 1] + 1;
+    }
+    _nextBreak = Int32List(n + 1)..[n] = n;
+    for (var i = n - 1; i >= 0; i--) {
+      _nextBreak[i] = unvRun[i] >= minBreak ? i : _nextBreak[i + 1];
+    }
+    // A character may start on the consonant just before the voice (up to
+    // 0.25 s): look past that lead-in before deciding it sits in silence.
+    final lead = (0.25 / hop).round();
+    for (var i = 0; i < n; i++) {
+      if (_nextBreak[i] == i && unvRun[i] <= lead && i + unvRun[i] < n) {
+        _nextBreak[i] = _nextBreak[i + unvRun[i]];
+      }
+    }
+    // Most recent voiced onset (after >= 2 unvoiced frames) at or before f.
+    _lastOnset = Int32List(n);
+    var last = -1000000;
+    for (var i = 0; i < n; i++) {
+      if (t.voiced(i) && i >= 2 && !t.voiced(i - 1) && !t.voiced(i - 2)) last = i;
+      _lastOnset[i] = last;
+    }
+    _cells = (n + g - 1) ~/ g;
+    _gap = Float64List(_cells);
+    _dip = Float64List(_cells);
+    _jump = Float64List(_cells);
+    _voicedAt = List<bool>.filled(_cells, false);
+    for (var c = 0; c < _cells; c++) {
+      for (var j = c * g; j < math.min(n, c * g + g); j++) {
+        _gap[c] = math.max(_gap[c], _gapBefore(j));
+        _dip[c] = math.max(_dip[c], _dipAt(j));
+        _jump[c] = math.max(_jump[c], _jumpAt(j));
+        if (t.voiced(j)) _voicedAt[c] = true;
+      }
+    }
+  }
 
   final PitchTrack t;
   final AlignOptions o;
   final double hop;
-  final Float32List energy;
+  final int g;
+  late final Int32List _voicedPrefix;
+  late final Int32List _nextBreak;
+  late final Int32List _lastOnset;
+  static const _breakSeconds = 0.6;
+  late final Float32List _energy;
+  late final int _cells;
+  late final Float64List _gap; // seconds of voicelessness right before
+  late final Float64List _dip; // dB depth of a level dip
+  late final Float64List _jump; // semitones of pitch change
+  late final List<bool> _voicedAt;
 
   static Float32List _smooth(Float32List x, int r) {
     final out = Float32List(x.length);
@@ -84,11 +148,344 @@ class _Aligner {
     return out;
   }
 
-  int f(double seconds) => (seconds / hop).round().clamp(0, t.length).toInt();
-  double sec(int frame) => frame * hop;
+  int frameOf(double s) => (s / hop).round().clamp(0, t.length).toInt();
+  int cellOf(double s) => (frameOf(s) / g).floor().clamp(0, _cells).toInt();
+  double secOfCell(int c) => c * g * hop;
+
+  /// Seconds of unvoiced signal right before a voiced frame [j].
+  double _gapBefore(int j) {
+    final voicedHere = t.voiced(j) || (j + 1 < t.length && t.voiced(j + 1));
+    if (!voicedHere) return 0;
+    var k = 0;
+    while (j - 1 - k >= 0 && !t.voiced(j - 1 - k) && k < 200) {
+      k++;
+    }
+    return k >= 2 ? k * hop : 0;
+  }
+
+  double _dipAt(int j) {
+    if (!t.voiced(j)) return 0;
+    final n = t.length;
+    for (var k = math.max(0, j - 3); k <= math.min(n - 1, j + 3); k++) {
+      if (_energy[k] < _energy[j] - 0.01) return 0;
+    }
+    var leftMax = -1e9, rightMax = -1e9;
+    for (var k = math.max(0, j - 8); k < j; k++) {
+      leftMax = math.max(leftMax, _energy[k]);
+    }
+    for (var k = j + 1; k <= math.min(n - 1, j + 8); k++) {
+      rightMax = math.max(rightMax, _energy[k]);
+    }
+    final d = math.min(leftMax, rightMax) - _energy[j];
+    return d > 0 ? d : 0;
+  }
+
+  double _jumpAt(int j) {
+    final left = <double>[], right = <double>[];
+    for (var k = math.max(0, j - 8); k < j; k++) {
+      if (t.voiced(k)) left.add(t.midi[k]);
+    }
+    for (var k = j; k < math.min(t.length, j + 8); k++) {
+      if (t.voiced(k)) right.add(t.midi[k]);
+    }
+    if (left.length < 3 || right.length < 3) return 0;
+    final d = (median(right) - median(left)).abs();
+    // Singers slide ("scoop") into a note right after its onset; such a
+    // pitch change is not a new syllable.
+    if (j - _lastOnset[j] < (0.15 / hop).round()) return d * 0.25;
+    return d;
+  }
+
+  /// Evidence that [tok] starts at grid cell [c].
+  double _onset(_Tok tok, int c) {
+    final gap = _gap[c];
+    final dip = math.min(_dip[c], 12.0);
+    final jump = math.min(_jump[c], 4.0);
+    double s;
+    final gapScore = gap > 0 ? 2.0 + math.min(gap, 0.25) / 0.05 : 0.0;
+    switch (tok.cls) {
+      case OnsetClass.unvoiced:
+        // A gap is expected, but unaspirated b/d/g/j/zh/z and h are often
+        // voiced when sung: then a dip or a pitch change marks the onset.
+        s = gapScore > 0 ? gapScore * 1.2 : (dip >= 2 ? dip / 3 : 0);
+        s += 0.6 * (jump >= 0.7 ? jump : 0);
+      case OnsetClass.voiced:
+        s = math.max(gapScore, dip >= 2 ? dip / 3 * 1.4 : 0);
+        s += 0.6 * (jump >= 0.7 ? jump : 0);
+      case OnsetClass.vowel:
+        s = math.max(gapScore, dip >= 2 ? dip / 3 : 0);
+        s += 0.7 * (jump >= 0.7 ? jump : 0);
+      case OnsetClass.unknown:
+        s = math.max(gapScore, dip >= 2 ? dip / 3 : 0);
+        s += 0.6 * (jump >= 0.7 ? jump : 0);
+    }
+    if (!_voicedAt[c] && gap == 0) s -= 2; // starts must be on the voice
+    if (tok.token.spaceBefore) s = gap > 0 ? s * 1.5 + 1 : s - 1;
+    if (!tok.first) {
+      // Long silences rarely happen inside a line (a little longer at a
+      // space): a character after one most likely starts the next line.
+      final allowed = tok.token.spaceBefore ? 1.2 : 0.6;
+      if (gap > allowed) s -= math.min(8.0, (gap - allowed) * 10);
+    }
+    final time = tok.token.time;
+    if (time != null && (secOfCell(c) - time).abs() < 0.08) s += 10;
+    return s;
+  }
+
+  /// Penalty for a line's first character starting at [t] given its
+  /// time stamp [stamp].
+  static double _anchor(double t, double stamp) {
+    final d = t - stamp;
+    if (d < -0.15) return 10 * (-0.15 - d);
+    if (d > 0.35) return 8 * (d - 0.35);
+    return 0;
+  }
+
+  SongReference run(List<LyricLine> lines) {
+    final toks = <_Tok>[];
+    final lineAvg = <double>[];
+    final end = t.duration;
+    // Lines with no voice anywhere near their time stamp are not sung by
+    // the lead vocal (e.g. backing-vocal only); keep them out of the joint
+    // alignment so they cannot steal syllables from their neighbours.
+    final sung = List<bool>.filled(lines.length, false);
+    for (var k = 0; k < lines.length; k++) {
+      final line = lines[k];
+      final next = k + 1 < lines.length ? lines[k + 1].start : math.min(end, line.start + o.maxLastLine);
+      var stop = line.end ?? next;
+      if (stop > next) stop = next;
+      final lo = cellOf(math.max(0, line.start - o.earlySlack));
+      final firstEnd = math.min(end, math.min(line.start + o.lateSlack, stop));
+      final f0 = math.min(lo * g, t.length), f1 = frameOf(firstEnd);
+      sung[k] = f1 > f0 && _voicedPrefix[f1] - _voicedPrefix[f0] >= (0.08 / hop).round();
+      // A line cannot plausibly last much longer than ~1 s per character.
+      final n = line.tokens.length;
+      final cap = line.start + 1.5 + n * 1.0;
+      final hi = math.max(lo + 1, cellOf(math.min(end, math.min(stop + o.lateSlack, cap))));
+      final firstHi = math.max(lo + 1, math.min(hi, cellOf(line.start + o.lateSlack) + 1));
+      // Expected voiced seconds per character in this line.
+      final v0 = frameOf(math.max(0, line.start - 0.2)), v1 = frameOf(math.min(end, stop + 0.3));
+      final voiced = (_voicedPrefix[v1] - _voicedPrefix[v0]) * hop;
+      lineAvg.add((voiced / n).clamp(0.12, 1.5).toDouble());
+      if (!sung[k]) continue;
+      for (var i = 0; i < n; i++) {
+        final tok = _Tok(k, i, line.tokens[i], onsetClassOf(line.tokens[i].text), i == 0, i == n - 1)
+          ..lo = lo
+          ..hi = i == 0 ? firstHi : hi;
+        toks.add(tok);
+      }
+    }
+    if (toks.isEmpty) {
+      return SongReference(
+          lines: [for (var k = 0; k < lines.length; k++) _unsungLine(k, lines)], duration: t.duration);
+    }
+    // Keep the ranges feasible for a strictly increasing placement.
+    for (var m = 1; m < toks.length; m++) {
+      toks[m].lo = math.max(toks[m].lo, toks[m - 1].lo + 1);
+    }
+    for (var m = toks.length - 1; m >= 0; m--) {
+      final cap = m + 1 < toks.length ? toks[m + 1].hi - 1 : _cells;
+      toks[m].hi = math.max(toks[m].lo + 1, math.min(toks[m].hi, cap));
+    }
+
+    // Duration penalty tables per line, indexed by voiced frames / raw frames.
+    final maxRaw = ((o.maxTokenSeconds * 1.25) / hop / g).ceil();
+    final penV = <Float64List>[];
+    for (var k = 0; k < lines.length; k++) {
+      final avg = lineAvg[k];
+      final size = maxRaw * g + 1;
+      final tab = Float64List(size);
+      for (var v = 0; v < size; v++) {
+        final dv = v * hop;
+        var p = 0.0;
+        if (dv < 0.04) {
+          p += 25;
+        } else if (dv < 0.08) {
+          p += 4;
+        }
+        if (dv > o.maxTokenSeconds) p += 10 + (dv - o.maxTokenSeconds) * 5;
+        final l = math.log(math.max(dv, 0.02) / avg);
+        p += 0.35 * l * l;
+        tab[v] = p;
+      }
+      penV.add(tab);
+    }
+    // Voiced frames of a slot that belong to the same phrase as its start.
+    int connectedVoiced(int a, int b) => _voicedPrefix[math.min(b, _nextBreak[a])] - _voicedPrefix[a];
+    double voicedPen(int line, int fromCell, int toCell) {
+      final a = math.min(fromCell * g, t.length), b = math.min(toCell * g, t.length);
+      final v = connectedVoiced(a, b);
+      final tab = penV[line];
+      if (v < tab.length) return tab[v];
+      final dv = v * hop;
+      return 10 + (dv - o.maxTokenSeconds) * 5 + 0.35 * math.pow(math.log(dv / lineAvg[line]), 2);
+    }
+
+    const neg = -1e18;
+    for (final tok in toks) {
+      final len = tok.hi - tok.lo;
+      tok.dp = Float64List(len)..fillRange(0, len, neg);
+      tok.back = Int32List(len)..fillRange(0, len, -1);
+    }
+    final first = toks.first;
+    for (var c = first.lo; c < first.hi; c++) {
+      first.dp[c - first.lo] = _onset(first, c) - _anchor(secOfCell(c), lines[first.line].start);
+    }
+    for (var m = 1; m < toks.length; m++) {
+      final prev = toks[m - 1], cur = toks[m];
+      final crossLine = cur.first;
+      final stamp = lines[cur.line].start;
+      final pl = prev.line;
+      for (var c = cur.lo; c < cur.hi; c++) {
+        final iHi = math.min(prev.hi, c);
+        final iLo = crossLine ? prev.lo : math.max(prev.lo, c - maxRaw);
+        if (iHi <= iLo) continue;
+        var best = neg;
+        var arg = -1;
+        final fc = math.min(c * g, t.length);
+        final tab = penV[pl];
+        for (var i = iLo; i < iHi; i++) {
+          final pv = prev.dp[i - prev.lo];
+          if (pv <= neg / 2) continue;
+          final fi = math.min(i * g, t.length);
+          final v = _voicedPrefix[math.min(fc, _nextBreak[fi])] - _voicedPrefix[fi];
+          final pen = v < tab.length ? tab[v] : voicedPen(pl, i, c);
+          var val = pv - pen;
+          if (!crossLine && c - i > maxRaw) val -= 50;
+          if (val > best) {
+            best = val;
+            arg = i;
+          }
+        }
+        if (arg < 0) continue;
+        var s = _onset(cur, c);
+        if (crossLine) s -= _anchor(secOfCell(c), stamp);
+        cur.dp[c - cur.lo] = best + s;
+        cur.back[c - cur.lo] = arg;
+      }
+    }
+    // Close the last character at the end of its window.
+    final last = toks.last;
+    final endCell = last.hi;
+    var best = neg;
+    var arg = -1;
+    for (var c = last.lo; c < last.hi; c++) {
+      final pv = last.dp[c - last.lo];
+      if (pv <= neg / 2) continue;
+      final v = pv - voicedPen(last.line, c, endCell);
+      if (v > best) {
+        best = v;
+        arg = c;
+      }
+    }
+    final starts = List<int>.filled(toks.length, 0);
+    if (arg < 0) {
+      // Infeasible (should not happen): fall back to the time stamps.
+      for (var m = 0; m < toks.length; m++) {
+        starts[m] = toks[m].lo;
+      }
+    } else {
+      starts[toks.length - 1] = arg;
+      for (var m = toks.length - 1; m > 0; m--) {
+        final b = toks[m].back[starts[m] - toks[m].lo];
+        starts[m - 1] = b >= 0 ? b : math.max(toks[m - 1].lo, starts[m] - 1);
+      }
+    }
+
+    // Build the reference.
+    final out = <RefLine>[];
+    var m = 0;
+    for (var k = 0; k < lines.length; k++) {
+      if (!sung[k]) {
+        out.add(_unsungLine(k, lines));
+        continue;
+      }
+      final line = lines[k];
+      final refTokens = <RefToken>[];
+      for (var i = 0; i < line.tokens.length; i++, m++) {
+        final s = starts[m] * g;
+        final e = m + 1 < toks.length ? starts[m + 1] * g : endCell * g;
+        final (vs, ve) = _voicedExtent(s, math.max(s + 1, e));
+        final notes = ve > vs ? _notes(vs, ve) : <RefNote>[];
+        final onset = _onset(toks[m], starts[m]);
+        refTokens.add(RefToken(
+          text: line.tokens[i].text,
+          start: vs * hop,
+          end: ve > vs ? ve * hop : (s + (0.25 / hop).round()) * hop,
+          notes: notes,
+          spaceBefore: line.tokens[i].spaceBefore,
+          confidence: notes.isEmpty ? 0 : (0.4 + onset / 6).clamp(0.0, 1.0).toDouble(),
+        ));
+      }
+      out.add(RefLine(
+        index: k,
+        text: line.text,
+        lrcStart: line.start,
+        lrcEnd: k + 1 < lines.length ? lines[k + 1].start : null,
+        tokens: refTokens,
+      ));
+    }
+    return SongReference(lines: out, duration: t.duration);
+  }
+
+  /// A line the lead vocal does not sing: evenly spaced, pitchless tokens.
+  RefLine _unsungLine(int k, List<LyricLine> lines) {
+    final line = lines[k];
+    final n = line.tokens.length;
+    final next = k + 1 < lines.length ? lines[k + 1].start : line.start + 0.35 * n;
+    final span = math.max(0.2 * n, math.min(next - line.start, 0.35 * n));
+    final step = span / n;
+    return RefLine(
+      index: k,
+      text: line.text,
+      lrcStart: line.start,
+      lrcEnd: k + 1 < lines.length ? lines[k + 1].start : null,
+      tokens: [
+        for (var i = 0; i < n; i++)
+          RefToken(
+            text: line.tokens[i].text,
+            start: line.start + i * step,
+            end: line.start + (i + 1) * step,
+            notes: [],
+            spaceBefore: line.tokens[i].spaceBefore,
+            confidence: 0,
+          )
+      ],
+    );
+  }
+
+  /// The voiced part of a slot: from its first voiced frame (allowing for
+  /// the consonant) through the voiced runs connected to it.
+  (int, int) _voicedExtent(int s, int e) {
+    final n = t.length;
+    e = math.min(e, n);
+    var a = s;
+    final maxLead = (0.25 / hop).round();
+    while (a < e && a - s < maxLead && !t.voiced(a)) {
+      a++;
+    }
+    if (a >= e || !t.voiced(a)) return (s, s);
+    final maxGap = (0.25 / hop).round();
+    var b = a;
+    var i = a;
+    while (i < e) {
+      if (t.voiced(i)) {
+        b = i + 1;
+        i++;
+        continue;
+      }
+      var j = i;
+      while (j < e && !t.voiced(j)) {
+        j++;
+      }
+      if (j >= e || j - i > maxGap) break;
+      i = j;
+    }
+    return (a, b);
+  }
 
   /// Voiced runs `[start, end)` inside `[a, b)`.
-  List<(int, int)> runs(int a, int b) {
+  List<(int, int)> _runs(int a, int b) {
     final out = <(int, int)>[];
     var i = a;
     while (i < b) {
@@ -106,261 +503,11 @@ class _Aligner {
     return out;
   }
 
-  RefLine alignLine(int index, LyricLine line, double prevEnd, double? nextStart) {
-    final n = line.tokens.length;
-    final w0 = math.max(prevEnd, line.start - o.leadIn);
-    var w1 = nextStart != null ? nextStart - 0.03 : line.start + o.maxLastLine;
-    if (line.end != null && line.end! < w1) w1 = line.end!;
-    w1 = math.min(w1, t.duration);
-    final a0 = f(w0), b0 = f(w1);
-
-    final rs = b0 > a0 ? runs(a0, b0) : <(int, int)>[];
-    // Ignore blips that start before the time stamp but end right away.
-    final region = _pickRegion(rs, n, f(line.start));
-    if (region == null) {
-      return RefLine(
-          index: index,
-          text: line.text,
-          lrcStart: line.start,
-          lrcEnd: nextStart,
-          tokens: _evenTokens(line, w0 < line.start ? line.start : w0, w1));
-    }
-    final (a, b) = region;
-    final bounds = _boundaries(line.tokens, a, b);
-    final tokens = <RefToken>[];
-    for (var k = 0; k < n; k++) {
-      final s = bounds[k].$1, e = k + 1 < n ? bounds[k + 1].$1 : b;
-      final notes = _notes(s, e);
-      var vs = s, ve = e;
-      // Trim the slot to its voiced extent for display.
-      while (vs < ve && !t.voiced(vs)) {
-        vs++;
-      }
-      while (ve > vs && !t.voiced(ve - 1)) {
-        ve--;
-      }
-      if (ve <= vs) {
-        vs = s;
-        ve = e;
-      }
-      tokens.add(RefToken(
-        text: line.tokens[k].text,
-        start: sec(vs),
-        end: sec(ve),
-        notes: notes,
-        spaceBefore: line.tokens[k].spaceBefore,
-        confidence: bounds[k].$2,
-      ));
-    }
-    return RefLine(index: index, text: line.text, lrcStart: line.start, lrcEnd: nextStart, tokens: tokens);
-  }
-
-  (int, int)? _pickRegion(List<(int, int)> rs, int nTokens, int stampFrame) {
-    if (rs.isEmpty) return null;
-    final need = nTokens * o.minSecondsPerToken;
-    final maxGap = (o.maxPhraseGap / hop).round();
-    var startIdx = 0;
-    // Skip short runs that end before the time stamp (tails of the previous
-    // phrase or breaths).
-    while (startIdx < rs.length - 1 && rs[startIdx].$2 <= stampFrame && (rs[startIdx].$2 - rs[startIdx].$1) * hop < 0.15) {
-      startIdx++;
-    }
-    var a = rs[startIdx].$1, b = rs[startIdx].$2;
-    var covered = (b - a) * hop;
-    for (var i = startIdx + 1; i < rs.length; i++) {
-      final gap = rs[i].$1 - b;
-      if (gap > maxGap && covered >= need) break;
-      b = rs[i].$2;
-      covered += (rs[i].$2 - rs[i].$1) * hop;
-    }
-    if ((b - a) * hop < 0.05) return null;
-    return (a, b);
-  }
-
-  List<RefToken> _evenTokens(LyricLine line, double from, double to) {
-    final n = line.tokens.length;
-    final span = math.max(0.2 * n, math.min(to - from, 0.35 * n));
-    final step = span / n;
-    return [
-      for (var k = 0; k < n; k++)
-        RefToken(
-          text: line.tokens[k].text,
-          start: from + k * step,
-          end: from + (k + 1) * step,
-          notes: [],
-          spaceBefore: line.tokens[k].spaceBefore,
-          confidence: 0,
-        )
-    ];
-  }
-
-  /// Onset evidence for a token starting at frame [j] (0 = none).
-  double _onsetScore(int j, int a, int b) {
-    if (j <= a || j >= b) return 0;
-    // Unvoiced gap ending right before j.
-    var g = 0;
-    while (j - 1 - g >= a && !t.voiced(j - 1 - g)) {
-      g++;
-    }
-    final voicedHere = t.voiced(j) || (j + 1 < b && t.voiced(j + 1));
-    if (g >= 2 && voicedHere) {
-      return 2.0 + math.min(g * hop, 0.25) / 0.05;
-    }
-    if (!t.voiced(j)) return 0;
-    var score = 0.0;
-    // Energy dip: j is (close to) a local minimum of the smoothed level.
-    const r = 8;
-    var isMin = true;
-    for (var k = math.max(a, j - 3); k <= math.min(b - 1, j + 3); k++) {
-      if (energy[k] < energy[j] - 0.01) {
-        isMin = false;
-        break;
-      }
-    }
-    if (isMin) {
-      var leftMax = -1e9, rightMax = -1e9;
-      for (var k = math.max(a, j - r); k < j; k++) {
-        leftMax = math.max(leftMax, energy[k]);
-      }
-      for (var k = j + 1; k <= math.min(b - 1, j + r); k++) {
-        rightMax = math.max(rightMax, energy[k]);
-      }
-      final depth = math.min(leftMax, rightMax) - energy[j];
-      if (depth >= 2) score += math.min(depth, 12) / 3;
-    }
-    // Pitch change between the frames before and after j.
-    final left = <double>[], right = <double>[];
-    for (var k = math.max(a, j - 8); k < j; k++) {
-      if (t.voiced(k)) left.add(t.midi[k]);
-    }
-    for (var k = j; k < math.min(b, j + 8); k++) {
-      if (t.voiced(k)) right.add(t.midi[k]);
-    }
-    if (left.length >= 3 && right.length >= 3) {
-      final d = (median(right) - median(left)).abs();
-      if (d >= 0.7) score += math.min(d, 4) * 0.6;
-    }
-    return score;
-  }
-
-  double _durationPenalty(int frames, double avg) {
-    final d = frames * hop;
-    var p = 0.0;
-    if (d < 0.05) {
-      p += 20;
-    } else if (d < 0.09) {
-      p += 3;
-    }
-    if (d > o.maxTokenSeconds) p += 10 + (d - o.maxTokenSeconds) * 5;
-    final l = math.log(math.max(d, 1e-3) / avg);
-    return p + 0.4 * l * l;
-  }
-
-  /// Returns (startFrame, confidence) of every token.
-  List<(int, double)> _boundaries(List<LyricToken> tokens, int a, int b) {
-    final n = tokens.length;
-    if (n == 1) return [(a, 1.0)];
-    final g = o.gridFrames;
-    final grid = <int>[];
-    for (var j = a; j < b; j += g) {
-      grid.add(j);
-    }
-    final m = grid.length;
-    if (m < n) {
-      // Region too short: spread evenly.
-      final step = (b - a) / n;
-      return [for (var k = 0; k < n; k++) ((a + k * step).round(), 0.0)];
-    }
-    final base = Float64List(m);
-    for (var x = 0; x < m; x++) {
-      // Best onset evidence within the grid cell.
-      var s = 0.0;
-      for (var j = grid[x]; j < math.min(b, grid[x] + g); j++) {
-        s = math.max(s, _onsetScore(j, a, b));
-      }
-      base[x] = s;
-    }
-    final gapAt = List<bool>.generate(m, (x) {
-      final j = grid[x];
-      return j - 2 >= a && !t.voiced(j - 1) && !t.voiced(j - 2);
-    });
-    double score(int k, int x) {
-      // Token k starts at grid[x].
-      var s = base[x];
-      final tok = tokens[k];
-      if (tok.spaceBefore) s = gapAt[x] ? s * 1.5 + 1 : s - 1;
-      if (tok.time != null && (sec(grid[x]) - tok.time!).abs() < 0.08) s += 10;
-      return s;
-    }
-
-    final avg = (b - a) * hop / n;
-    final maxLen = math.max(1, (o.maxTokenSeconds * 1.5 / hop / g).ceil());
-    // Penalty by length in grid steps (all steps are `g` frames apart).
-    final pen = Float64List(m + 1);
-    for (var d = 1; d <= m; d++) {
-      pen[d] = _durationPenalty(d * g, avg);
-    }
-    const neg = -1e18;
-    // dp[k][x]: best score with token k starting at grid x.
-    final dp = List.generate(n, (_) => Float64List(m)..fillRange(0, m, neg));
-    final from = List.generate(n, (_) => Int32List(m));
-    dp[0][0] = 0;
-    for (var k = 1; k < n; k++) {
-      final prev = dp[k - 1];
-      final cur = dp[k];
-      final back = from[k];
-      // token k-1 occupies grid [i, x); need at least k-1 slots before.
-      for (var x = k; x <= m - (n - k); x++) {
-        var best = neg;
-        var arg = -1;
-        final lo = math.max(k - 1, x - maxLen);
-        for (var i = lo; i < x; i++) {
-          final pv = prev[i];
-          if (pv <= neg / 2) continue;
-          final v = pv - pen[x - i];
-          if (v > best) {
-            best = v;
-            arg = i;
-          }
-        }
-        if (arg >= 0) {
-          cur[x] = best + score(k, x);
-          back[x] = arg;
-        }
-      }
-    }
-    // Close the last token at b.
-    var best = neg;
-    var arg = -1;
-    for (var x = n - 1; x < m; x++) {
-      final pv = dp[n - 1][x];
-      if (pv <= neg / 2) continue;
-      final v = pv - _durationPenalty(b - grid[x], avg);
-      if (v > best) {
-        best = v;
-        arg = x;
-      }
-    }
-    if (arg < 0) {
-      final step = (b - a) / n;
-      return [for (var k = 0; k < n; k++) ((a + k * step).round(), 0.0)];
-    }
-    final xs = List<int>.filled(n, 0);
-    xs[n - 1] = arg;
-    for (var k = n - 1; k > 0; k--) {
-      xs[k - 1] = from[k][xs[k]];
-    }
-    return [
-      for (var k = 0; k < n; k++)
-        (k == 0 ? a : grid[xs[k]], k == 0 ? 1.0 : (base[xs[k]] / 4).clamp(0.0, 1.0).toDouble())
-    ];
-  }
-
   /// Splits the voiced frames of `[s, e)` into stable notes.
   List<RefNote> _notes(int s, int e) {
     final notes = <RefNote>[];
     final minFrames = math.max(2, (o.minNoteSeconds / hop).round());
-    for (final (rs, re) in runs(s, e)) {
+    for (final (rs, re) in _runs(s, e)) {
       var start = rs;
       final vals = <double>[t.midi[rs]];
       var i = rs + 1;
@@ -368,7 +515,6 @@ class _Aligner {
         final med = median(vals.length > 12 ? vals.sublist(vals.length - 12) : vals);
         final v = t.midi[i];
         if ((v - med).abs() > o.noteSplitSemitones) {
-          // Require the deviation to persist for a few frames.
           var persist = 0;
           for (var k = i; k < math.min(re, i + 4); k++) {
             if ((t.midi[k] - med).abs() > o.noteSplitSemitones) persist++;
@@ -384,8 +530,6 @@ class _Aligner {
       }
       notes.add(_makeNote(start, re));
     }
-    // Merge very short notes into their closest neighbour, then merge
-    // neighbours at (almost) the same pitch.
     var changed = true;
     while (changed && notes.length > 1) {
       changed = false;
@@ -424,6 +568,6 @@ class _Aligner {
 
   RefNote _makeNote(int s, int e) {
     final vals = <double>[for (var k = s; k < e; k++) t.midi[k]];
-    return RefNote(start: sec(s), end: sec(e), midi: median(vals));
+    return RefNote(start: s * hop, end: e * hop, midi: median(vals));
   }
 }

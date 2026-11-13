@@ -72,30 +72,10 @@ bogus line
   group('pitch analysis + per character alignment', () {
     // Two lines: 10 characters (mix of unvoiced and voiced onsets, one
     // melisma) and a 7 character line with a pause at the space.
-    const l1Start = 1.0;
-    final syl1 = <Syl>[];
-    final pitches1 = <double>[62.0, 64, 65, 67, 65, 64, 62, 60, 62, 64];
-    final voicedOnset1 = {2, 5, 8};
-    var t = l1Start + 0.12;
-    for (var i = 0; i < 10; i++) {
-      final double d = i == 9 ? 0.9 : (i.isEven ? 0.32 : 0.24);
-      final contiguous = voicedOnset1.contains(i);
-      if (!contiguous && i > 0) t += 0.07; // consonant gap
-      syl1.add(Syl(t, t + d, pitches1[i],
-          unvoicedOnset: !contiguous, glideTo: i == 6 ? 64 : null));
-      t += d;
-    }
-    const l2Start = 7.0;
-    final syl2 = <Syl>[];
-    final pitches2 = <double>[67.0, 69, 67, 72, 71, 69, 67];
-    t = l2Start + 0.1;
-    for (var i = 0; i < 7; i++) {
-      if (i == 3) t += 0.45; // the space in "下雨了 记得带伞"
-      if (i > 0 && i != 3) t += 0.07;
-      final double d = i == 2 || i == 6 ? 0.6 : 0.28;
-      syl2.add(Syl(t, t + d, pitches2[i]));
-      t += d;
-    }
+    final syl1 = sungLine('夜里的风慢慢吹过窗台', 1.12, [62, 64, 65, 67, 65, 64, 62, 60, 62, 64],
+        durations: [0.32, 0.24, 0.32, 0.24, 0.32, 0.24, 0.32, 0.24, 0.32, 0.9], glides: {6: 64});
+    final syl2 = sungLine('下雨了 记得带伞', 7.1, [67, 69, 67, 72, 71, 69, 67],
+        durations: [0.28, 0.28, 0.6, 0.28, 0.28, 0.28, 0.6], pauses: {3: 0.45});
     final audio = synthVoice([...syl1, ...syl2], 12);
     final track = analyzePitch(audio, 44100);
     final lrc = parseLrc('[00:01.00]夜里的风慢慢吹过窗台\n[00:07.00]下雨了 记得带伞\n');
@@ -149,14 +129,17 @@ bogus line
     });
 
     test('a line without singing gets evenly spaced, pitchless tokens', () {
-      // 5.05 .. 6.92 s lies between the two sung lines (line 1 ends at 5.0 s).
-      final silent = parseLrc('[00:05.40]没有声音\n[00:06.95]下一句');
+      // Line 1 ends near 4.8 s and line 2 starts at 7.1 s; nothing is sung
+      // in between, so the extra line gets no pitch and the sung lines are
+      // not disturbed.
+      final silent = parseLrc('[00:01.00]夜里的风慢慢吹过窗台\n[00:05.60]没有声音\n[00:07.00]下雨了 记得带伞\n');
       final r = buildReference(track, silent.lines);
-      final tokens = r.lines.first.tokens;
+      final tokens = r.lines[1].tokens;
       expect(tokens.length, 4);
-      expect(tokens.every((t) => t.notes.isEmpty && t.confidence == 0), isTrue);
-      expect(tokens.first.start, closeTo(5.4, 1e-9));
-      expect(r.lines[1].tokens.first.notes, isNotEmpty);
+      expect(tokens.where((t) => t.notes.isNotEmpty), isEmpty);
+      expect(tokens.every((t) => t.confidence == 0), isTrue);
+      expect(r.lines[0].tokens.last.start, closeTo(syl1.last.start, 0.06));
+      expect(r.lines[2].tokens.first.start, closeTo(syl2.first.start, 0.06));
     });
   });
 }
