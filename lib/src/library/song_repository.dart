@@ -68,8 +68,27 @@ class SongRepository {
   Future<SongReference> loadReference(String id) async => SongReference.fromJson(
       jsonDecode(await File(pathFor(id, referenceFile)).readAsString()) as Map<String, dynamic>);
 
-  Future<void> saveReference(String id, SongReference ref) =>
-      _writeAtomic(pathFor(id, referenceFile), jsonEncode(ref.toJson()));
+  Future<void> saveReference(String id, SongReference ref) {
+    _melodyCache.remove(id);
+    return _writeAtomic(pathFor(id, referenceFile), jsonEncode(ref.toJson()));
+  }
+
+  final _melodyCache = <String, List<(double, double, double)>>{};
+
+  /// (start, end, midi) of every reference note, for the library's melody
+  /// fingerprints. Cached per song.
+  Future<List<(double, double, double)>> loadMelody(String id) async {
+    final cached = _melodyCache[id];
+    if (cached != null) return cached;
+    try {
+      final ref = await loadReference(id);
+      final notes = [for (final n in ref.notes) (n.start, n.end, n.midi)];
+      _melodyCache[id] = notes;
+      return notes;
+    } catch (_) {
+      return const [];
+    }
+  }
 
   Future<void> savePitchTrack(String id, PitchTrack track) async {
     await File(pathFor(id, pitchFile)).writeAsBytes(encodePitchTrack(track), flush: true);
@@ -103,6 +122,7 @@ class SongRepository {
   }
 
   Future<void> delete(String id) async {
+    _melodyCache.remove(id);
     final d = dirFor(id);
     if (d.existsSync()) await d.delete(recursive: true);
   }

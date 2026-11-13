@@ -14,11 +14,11 @@ import '../separation/vr_separator.dart';
 
 enum ImportStage {
   decoding('读取音频'),
-  separatingVocals('分离人声 (MDX Voc_FT)'),
-  removingHarmony('去除和声 (VR Karaoke)'),
-  analyzingPitch('测量音高 (YIN)'),
-  aligning('逐字对齐'),
-  saving('保存到本地');
+  separatingVocals('分离人声'),
+  removingHarmony('去掉和声'),
+  analyzingPitch('测量音高'),
+  aligning('把每个字对到音高上'),
+  saving('保存到曲库');
 
   const ImportStage(this.label);
   final String label;

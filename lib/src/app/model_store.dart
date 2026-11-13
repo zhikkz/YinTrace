@@ -46,19 +46,19 @@ class ModelStore {
           kind = j['type'] == 'vr' ? ModelKind.vr : j['type'] == 'mdx' ? ModelKind.mdx : null;
         } catch (_) {}
       }
-      kind ??= _guessKind(f.path.split('/').last);
+      kind ??= guessKind(f.path.split('/').last);
       if (kind != null) out.add(ModelFile(f.path, kind, hasSidecar: side.existsSync()));
     }
     out.sort((a, b) => a.name.compareTo(b.name));
     return out;
   }
 
-  static ModelKind? _guessKind(String name) {
+  /// Guesses the kind from a file name (used when there is no sidecar).
+  /// Note "UVR" contains "vr", so MDX names are checked first.
+  static ModelKind? guessKind(String name) {
     final n = name.toLowerCase();
-    if (n.contains('karaoke') || n.contains('_hp') || n.contains('hp-') || n.contains('vr')) {
-      return ModelKind.vr;
-    }
-    if (n.contains('mdx') || n.contains('voc')) return ModelKind.mdx;
+    if (n.contains('mdx') || n.contains('voc_ft')) return ModelKind.mdx;
+    if (n.contains('karaoke') || RegExp(r'(^|[^a-z])\d*_?hp\d*[-_]').hasMatch(n)) return ModelKind.vr;
     return null;
   }
 

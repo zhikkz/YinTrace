@@ -159,7 +159,7 @@ void main() {
     await settleIo(tester);
     expect(find.text('夜航（示例）'), findsOneWidget);
     expect(find.text('82'), findsOneWidget);
-    expect(find.text('还没有导入分离模型'), findsOneWidget);
+    expect(find.text('准备模型'), findsOneWidget);
     await screenshot(tester, '1_library');
   });
 
@@ -177,15 +177,27 @@ void main() {
     phone(tester);
     await tester.pumpWidget(host(services, const ImportPage()));
     await tester.pump();
-    final start = find.widgetWithText(FilledButton, '分离人声并生成音高图');
+    final start = find.widgetWithText(FilledButton, '分离人声，生成音高图');
     expect(tester.widget<FilledButton>(start).onPressed, isNull);
     await tester.enterText(find.byType(TextField).last, lyrics);
     await tester.pump();
-    expect(find.text('识别到 2 句、17 个字'), findsOneWidget);
-    await tester.tap(find.text('这已经是分离好的纯人声'));
+    await tester.scrollUntilVisible(find.text('2 句，17 个字'), 200, scrollable: find.byType(Scrollable).first);
+    expect(find.text('2 句，17 个字'), findsOneWidget);
+    // Back to the top, then switch to "already separated vocals".
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('这是已经分离好的纯人声'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('生成逐字音高图'), findsOneWidget);
     await screenshot(tester, '5_import');
+  });
+
+  test('model kinds are recognised from file names', () {
+    expect(ModelStore.guessKind('UVR-MDX-NET-Voc_FT.onnx'), ModelKind.mdx);
+    expect(ModelStore.guessKind('6_HP-Karaoke-UVR.onnx'), ModelKind.vr);
+    expect(ModelStore.guessKind('5_HP-Karaoke-UVR.onnx'), ModelKind.vr);
+    expect(ModelStore.guessKind('9_HP2-UVR.onnx'), ModelKind.vr);
+    expect(ModelStore.guessKind('something.onnx'), isNull);
   });
 
   testWidgets('settings page lists model status and practice options', (tester) async {
@@ -196,9 +208,9 @@ void main() {
     addTearDown(() => File('${services.models.dir.path}/UVR-MDX-NET-Voc_FT.onnx').deleteSync());
     await tester.pumpWidget(host(services, const SettingsPage()));
     await tester.pump();
-    expect(find.text('人声分离：UVR-MDX-NET-Voc_FT'), findsOneWidget);
-    expect(find.text('UVR-MDX-NET-Voc_FT.onnx'), findsWidgets);
-    expect(find.text('未导入'), findsOneWidget); // the karaoke model
+    expect(find.text('人声分离'), findsOneWidget);
+    expect(find.textContaining('UVR-MDX-NET-Voc_FT.onnx'), findsWidgets);
+    expect(find.text('需要 6_HP-Karaoke-UVR'), findsOneWidget); // the karaoke model
     expect(find.text('忽略八度'), findsOneWidget);
     await screenshot(tester, '6_settings');
   });
@@ -246,7 +258,7 @@ void main() {
     }
 
     await runUntil(7.9);
-    expect(find.text('下雨了 记得带伞'), findsOneWidget);
+    expect(find.textContaining('记得带伞'), findsWidgets);
     await screenshot(tester, '3_practice');
     await runUntil(9.9);
     final results = session.scorer.results();
@@ -262,7 +274,7 @@ void main() {
     await tester.tap(find.byTooltip('查看评分'));
     await settleIo(tester, rounds: 40);
     await tester.pump(const Duration(seconds: 1));
-    expect(find.text('需要加强的字'), findsOneWidget);
+    expect(find.text('先练这几个字'), findsOneWidget);
     await screenshot(tester, '4_results');
     final history = await tester.runAsync(() => services.songs.loadHistory(song.id));
     expect(history!.length, 2);

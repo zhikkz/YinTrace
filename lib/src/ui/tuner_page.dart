@@ -7,9 +7,11 @@ import '../dsp/pitch.dart';
 import '../practice/live_pitch.dart';
 import '../practice/scoring.dart';
 import 'pitch_graph.dart';
+import 'theme.dart';
+import 'widgets.dart';
 
-/// Free practice: real-time YIN pitch with a scrolling trail and a cents
-/// meter, like a pitch monitor / tuner.
+/// Free practice: a live pitch monitor. The trace is coloured by how far
+/// the voice is from the nearest semitone.
 class TunerPage extends StatefulWidget {
   const TunerPage({super.key});
 
@@ -38,7 +40,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     final settings = AppScope.of(context).settings;
     try {
       if (await NativeAudio.requestMicPermission() == MicPermission.denied) {
-        setState(() => _error = '没有麦克风权限：请在系统设置中允许 YinTrace 使用麦克风');
+        setState(() => _error = '没有麦克风权限。到 系统设置 → 隐私与安全性 → 麦克风，打开 YinTrace。');
         return;
       }
       NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
@@ -48,7 +50,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
       e.start();
       _ticker.start();
     } catch (err) {
-      setState(() => _error = '无法打开麦克风：$err');
+      setState(() => _error = '麦克风打不开：$err');
     }
   }
 
@@ -58,11 +60,11 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     var changed = false;
     for (final b in e.readCapture()) {
       for (final p in tr.addBlock(b.samples, b.songFrame, b.clockFrame, false)) {
-        _points.add(UserPoint(p.clockTime, p.midi, PitchVerdict.noReference));
+        final cents = p.voiced ? (p.midi - p.midi.roundToDouble()) * 100 : null;
+        _points.add(UserPoint(p.clockTime, p.midi, PitchVerdict.noReference, cents));
         _now = p.clockTime;
         if (p.voiced) {
           _last = p;
-          // Follow the voice vertically.
           if (p.midi < _lo + 2) _lo = p.midi - 2;
           if (p.midi > _hi - 2) _hi = p.midi + 2;
         }
@@ -91,103 +93,81 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final p = context.yt;
     final last = _last;
     final recent = last != null && _now - last.clockTime < 0.4;
-    final cents = last == null ? 0.0 : (last.midi - last.midi.roundToDouble()) * 100;
+    final cents = recent ? (last.midi - last.midi.roundToDouble()) * 100 : null;
     return Scaffold(
       appBar: AppBar(title: const Text('自由练习')),
       body: _error != null
-          ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!)))
+          ? Padding(padding: const EdgeInsets.all(28), child: Text(_error!, style: context.type.bodyLarge))
           : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 12),
-                Text(recent ? noteName(last.midi) : '—',
-                    style: theme.textTheme.displayLarge?.copyWith(fontWeight: FontWeight.w700)),
-                Text(recent ? '${last.frequency.toStringAsFixed(1)} Hz · 简谱 ${solfegeName(last.midi)}' : '对着麦克风唱一个音',
-                    style: theme.textTheme.titleMedium),
-                const SizedBox(height: 12),
-                _CentsMeter(cents: recent ? cents : null),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: CustomPaint(
-                        size: Size.infinite,
-                        painter: PitchGraphPainter(
-                          reference: null,
-                          t0: _now - 6,
-                          t1: _now + 0.3,
-                          midiLo: _lo,
-                          midiHi: _hi,
-                          colors: PitchGraphColors.of(context),
-                          user: _points,
-                          playhead: _now,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(recent ? noteName(last.midi) : '–',
+                          style: context.type.displayLarge?.copyWith(fontSize: 76, fontWeight: FontWeight.w300)),
+                      const SizedBox(width: 14),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(recent ? '简谱 ${solfegeName(last.midi)}' : '对着麦克风唱一个长音',
+                                style: context.type.titleMedium),
+                            Text(recent ? '${last.frequency.toStringAsFixed(1)} Hz' : '音高会实时画在下面',
+                                style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
+                          ],
                         ),
                       ),
+                      const Spacer(),
+                      if (cents != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Text('${cents >= 0 ? '+' : ''}${cents.round()}',
+                              style: context.type.headlineSmall?.copyWith(
+                                  color: p.deviation(cents, tolerance: 15), fontFeatures: tabular)),
+                        ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                  child: PitchMeter(cents: cents, tolerance: 15, range: 50),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Row(children: [
+                    Text('偏低', style: context.type.labelSmall?.copyWith(color: p.azurite)),
+                    const Spacer(),
+                    Text('±50 音分', style: context.type.labelSmall),
+                    const Spacer(),
+                    Text('偏高', style: context.type.labelSmall?.copyWith(color: p.cinnabar)),
+                  ]),
+                ),
+                Expanded(
+                  child: CustomPaint(
+                    size: Size.infinite,
+                    painter: PitchGraphPainter(
+                      reference: null,
+                      t0: _now - 6,
+                      t1: _now + 0.4,
+                      midiLo: _lo,
+                      midiHi: _hi,
+                      style: PitchGraphStyle.of(context, tolerance: 15),
+                      user: _points,
+                      playhead: _now,
+                      live: true,
                     ),
                   ),
                 ),
+                const SizedBox(height: 16),
               ],
             ),
     );
   }
-}
-
-class _CentsMeter extends StatelessWidget {
-  const _CentsMeter({required this.cents});
-  final double? cents;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = PitchGraphColors.of(context);
-    final c = cents;
-    final color = c == null
-        ? Theme.of(context).colorScheme.outline
-        : (c.abs() <= 15 ? colors.great : (c.abs() <= 30 ? colors.ok : colors.off));
-    return SizedBox(
-      height: 44,
-      width: 300,
-      child: CustomPaint(
-        painter: _MeterPainter(c, color, Theme.of(context).colorScheme.onSurface),
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 26),
-            child: Text(c == null ? '' : '${c >= 0 ? '+' : ''}${c.round()} 音分',
-                style: TextStyle(color: color, fontWeight: FontWeight.w600)),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MeterPainter extends CustomPainter {
-  _MeterPainter(this.cents, this.color, this.ink);
-  final double? cents;
-  final Color color;
-  final Color ink;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final y = 12.0;
-    final p = Paint()
-      ..color = ink.withValues(alpha: 0.25)
-      ..strokeWidth = 2;
-    canvas.drawLine(Offset(0, y), Offset(size.width, y), p);
-    for (var k = -50; k <= 50; k += 10) {
-      final x = size.width / 2 + k / 50 * size.width / 2;
-      canvas.drawLine(Offset(x, y - (k == 0 ? 10 : 5)), Offset(x, y + (k == 0 ? 10 : 5)), p);
-    }
-    final c = cents;
-    if (c != null) {
-      final x = size.width / 2 + c.clamp(-50, 50) / 50 * size.width / 2;
-      canvas.drawCircle(Offset(x, y), 8, Paint()..color = color);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_MeterPainter old) => old.cents != cents || old.color != color;
 }

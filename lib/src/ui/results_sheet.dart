@@ -4,11 +4,12 @@ import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../library/song.dart';
 import '../practice/scoring.dart';
-import 'app.dart';
 import 'pitch_graph.dart';
+import 'theme.dart';
+import 'widgets.dart';
 
-/// Per-line / per-character feedback after (or during) a run. Pops with a
-/// line index when the user wants to loop that line.
+/// Feedback after (or during) a run: the overall score, the characters that
+/// need work, and every sung line. Pops with a line index to loop that line.
 class ResultsSheet extends StatelessWidget {
   const ResultsSheet({super.key, required this.scorer, this.record, this.contour});
 
@@ -21,107 +22,215 @@ class ResultsSheet extends StatelessWidget {
     final results = scorer.results();
     final overall = scorer.overallScore(results);
     final attempted = results.where((r) => r.attempted).toList();
-    final theme = Theme.of(context);
-    final colors = PitchGraphColors.of(context);
-    final problems = attempted.expand((r) => r.problems).toList()
-      ..sort((a, b) => a.score.compareTo(b.score));
+    final p = context.yt;
+    final problems = attempted.expand((r) => r.problems).toList()..sort((a, b) => a.score.compareTo(b.score));
     return DraggableScrollableSheet(
       expand: false,
-      initialChildSize: 0.75,
+      initialChildSize: 0.8,
       maxChildSize: 0.95,
       builder: (context, controller) => ListView(
         controller: controller,
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(formatScore(overall),
-                  style: theme.textTheme.displayMedium?.copyWith(
-                      color: overall.isNaN ? null : colors.score(overall), fontWeight: FontWeight.w700)),
-              const SizedBox(width: 8),
+              Text(overall.isNaN ? '–' : overall.round().toString(),
+                  style: context.type.displayLarge?.copyWith(fontFeatures: tabular)),
+              const SizedBox(width: 6),
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: Text(attempted.isEmpty ? '还没有唱到有音高的句子' : '已唱 ${attempted.length} 句'),
+                child: Text('分', style: context.type.titleMedium?.copyWith(color: p.inkSoft)),
+              ),
+              const Spacer(),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  attempted.isEmpty ? '还没唱到有音高的句子' : '唱了 ${attempted.length} 句',
+                  style: context.type.bodyMedium,
+                ),
               ),
             ],
           ),
-          if (record != null) Text('已保存到练习记录', style: theme.textTheme.bodySmall),
-          if (problems.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text('需要加强的字', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final p in problems.take(16))
-                  Chip(
-                    avatar: CircleAvatar(
-                        backgroundColor: colors.score(p.score),
-                        child: Text(p.token.text, style: const TextStyle(color: Colors.white, fontSize: 12))),
-                    label: Text(p.summary),
-                  ),
-              ],
+          if (!overall.isNaN)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: _ScoreBar(score: overall),
             ),
+          if (record != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text('已记入这首歌的练习记录', style: context.type.labelSmall),
+            ),
+          if (problems.isNotEmpty) ...[
+            const SizedBox(height: 28),
+            Text('先练这几个字', style: context.type.titleLarge),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [for (final t in problems.take(12)) _GlyphTile(result: t)],
+            ),
+            const SizedBox(height: 10),
+            _Legend(),
           ],
-          const SizedBox(height: 12),
-          for (final r in attempted) _LineCard(result: r, reference: scorer.reference, contour: contour),
+          if (attempted.isNotEmpty) ...[
+            const SizedBox(height: 28),
+            Text('每一句', style: context.type.titleLarge),
+            const SizedBox(height: 4),
+            Text('点一句，回到练习里单独循环它。', style: context.type.bodySmall),
+            const SizedBox(height: 8),
+            for (final r in attempted) _LineResultRow(result: r, reference: scorer.reference, contour: contour),
+          ],
         ],
       ),
     );
   }
 }
 
-class _LineCard extends StatelessWidget {
-  const _LineCard({required this.result, required this.reference, this.contour});
+class _ScoreBar extends StatelessWidget {
+  const _ScoreBar({required this.score});
+  final double score;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.yt;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(3),
+      child: SizedBox(
+        height: 5,
+        child: Row(children: [
+          Expanded(flex: score.round().clamp(0, 100), child: ColoredBox(color: p.score(score))),
+          Expanded(flex: 100 - score.round().clamp(0, 100), child: ColoredBox(color: p.staffStrong)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Colour of the main problem of a character.
+Color issueColor(YtPalette p, Set<TokenIssue> issues) {
+  if (issues.contains(TokenIssue.sharp)) return p.cinnabar;
+  if (issues.contains(TokenIssue.flat)) return p.azurite;
+  if (issues.contains(TokenIssue.unstable)) return p.gamboge;
+  if (issues.contains(TokenIssue.missed)) return p.inkFaint;
+  return p.inkSoft;
+}
+
+String _shortIssue(TokenResult t) {
+  final i = t.issues;
+  final c = t.medianCents?.abs().round();
+  if (i.contains(TokenIssue.sharp)) return '高 $c';
+  if (i.contains(TokenIssue.flat)) return '低 $c';
+  if (i.contains(TokenIssue.missed)) return '没唱出';
+  if (i.contains(TokenIssue.unstable)) return '不稳';
+  if (i.contains(TokenIssue.late)) return '进晚了';
+  if (i.contains(TokenIssue.early)) return '抢拍';
+  return '';
+}
+
+class _GlyphTile extends StatelessWidget {
+  const _GlyphTile({required this.result});
+  final TokenResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.yt;
+    final color = issueColor(p, result.issues);
+    final timing = result.issues.contains(TokenIssue.late) || result.issues.contains(TokenIssue.early);
+    return Tooltip(
+      message: result.summary,
+      child: Container(
+        width: 68,
+        padding: const EdgeInsets.fromLTRB(4, 10, 4, 8),
+        decoration: BoxDecoration(
+          color: p.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.55), width: 1.4),
+        ),
+        child: Column(
+          children: [
+            Text(result.token.text,
+                style: TextStyle(fontSize: 30, height: 1.1, fontWeight: FontWeight.w600, color: color)),
+            const SizedBox(height: 6),
+            Text(_shortIssue(result),
+                style: context.type.labelSmall?.copyWith(color: p.inkSoft, fontFeatures: tabular)),
+            if (timing && (result.issues.contains(TokenIssue.sharp) || result.issues.contains(TokenIssue.flat)))
+              Text(result.issues.contains(TokenIssue.late) ? '进晚了' : '抢拍', style: context.type.labelSmall),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Legend extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final p = context.yt;
+    Widget item(Color c, String t) => Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 8, height: 8, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+          const SizedBox(width: 5),
+          Text(t, style: context.type.labelSmall),
+        ]);
+    return Wrap(spacing: 14, runSpacing: 6, children: [
+      item(p.cinnabar, '唱高了'),
+      item(p.azurite, '唱低了'),
+      item(p.gamboge, '不稳'),
+      item(p.inkFaint, '没唱出来'),
+      Text('数字是音分，100 音分 = 半音', style: context.type.labelSmall),
+    ]);
+  }
+}
+
+class _LineResultRow extends StatelessWidget {
+  const _LineResultRow({required this.result, required this.reference, this.contour});
   final LineResult result;
   final SongReference reference;
   final PitchTrack? contour;
 
   @override
   Widget build(BuildContext context) {
-    final colors = PitchGraphColors.of(context);
-    final theme = Theme.of(context);
+    final p = context.yt;
     final scores = <RefToken, double>{
       for (final t in result.tokens)
         if (t.attempted && !t.score.isNaN) t.token: t.score
     };
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => Navigator.of(context).pop(result.line.index),
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ListTile(
-                dense: true,
-                title: Text.rich(TextSpan(children: [
-                  for (final t in result.tokens)
-                    TextSpan(
-                      text: '${t.token.spaceBefore ? ' ' : ''}${t.token.text}',
-                      style: TextStyle(
-                        fontSize: 17,
-                        color: t.attempted && !t.score.isNaN ? colors.score(t.score) : theme.colorScheme.outline,
+    final problems = result.problems.toList();
+    return InkWell(
+      onTap: () => Navigator.of(context).pop(result.line.index),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text.rich(TextSpan(children: [
+                    for (final t in result.tokens)
+                      TextSpan(
+                        text: '${t.token.spaceBefore ? '　' : ''}${t.token.text}',
+                        style: context.type.titleMedium?.copyWith(
+                          color: !t.attempted || t.score.isNaN
+                              ? p.inkFaint
+                              : (t.issues.isEmpty ? p.ink : issueColor(p, t.issues)),
+                        ),
                       ),
-                    ),
-                ])),
-                trailing: Text(formatScore(result.score),
-                    style: theme.textTheme.titleLarge?.copyWith(color: colors.score(result.score))),
-                subtitle: Text(result.problems.isEmpty
-                    ? '这一句唱得很好'
-                    : result.problems.map((p) => '「${p.token.text}」${p.summary}').join('；')),
-              ),
-              LinePitchGraph(reference: reference, line: result.line, contour: contour, tokenScores: scores, height: 70),
-              Padding(
-                padding: const EdgeInsets.only(right: 12, top: 4),
-                child: Text('点这里单句循环练习', textAlign: TextAlign.right, style: theme.textTheme.labelSmall),
-              ),
-            ],
-          ),
+                  ])),
+                ),
+                ScoreNumeral(score: result.score, size: 22),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              problems.isEmpty ? '这一句唱得很准' : problems.map((t) => '「${t.token.text}」${t.summary}').join('；'),
+              style: context.type.bodySmall,
+            ),
+            const SizedBox(height: 6),
+            LinePitchGraph(reference: reference, line: result.line, contour: contour, tokenScores: scores, height: 76),
+          ],
         ),
       ),
     );

@@ -42,12 +42,15 @@ class ScoringOptions {
 
 /// A point of the singer's pitch trail as drawn on the graph.
 class UserPoint {
-  const UserPoint(this.time, this.midi, this.verdict);
+  const UserPoint(this.time, this.midi, this.verdict, [this.cents]);
   final double time;
 
   /// 0 = no voice.
   final double midi;
   final PitchVerdict verdict;
+
+  /// Signed deviation from the reference (null without a reference note).
+  final double? cents;
 }
 
 class ScoredSample {

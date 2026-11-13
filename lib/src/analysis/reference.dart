@@ -148,6 +148,19 @@ class SongReference {
     return null;
   }
 
+  /// The first note starting after [t] (within [within] seconds).
+  RefNote? nextNoteAfter(double t, {double within = 2}) {
+    RefNote? best;
+    for (final l in lines) {
+      if (l.end < t) continue;
+      if (l.start > t + within) break;
+      for (final n in l.notes) {
+        if (n.start > t && n.start <= t + within && (best == null || n.start < best.start)) best = n;
+      }
+    }
+    return best;
+  }
+
   Map<String, dynamic> toJson() => {
         'version': 1,
         'duration': _r(duration),

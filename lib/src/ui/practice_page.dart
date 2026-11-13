@@ -5,15 +5,15 @@ import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../app/screen_awake.dart';
 import '../app/services.dart';
-import '../dsp/pitch.dart';
 import '../library/song.dart';
 import '../practice/practice_session.dart';
-import 'app.dart';
 import 'pitch_graph.dart';
 import 'results_sheet.dart';
+import 'theme.dart';
+import 'widgets.dart';
 
-/// The main practice screen: the per-character pitch map scrolls under a
-/// playhead while the singer's live YIN pitch is drawn on top of it.
+/// The practice screen: the melody scrolls under a playhead on score paper
+/// while the singer's live YIN pitch is traced over it.
 class PracticePage extends StatefulWidget {
   const PracticePage({
     super.key,
@@ -41,6 +41,7 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
   late final Ticker _ticker;
   final _started = Stopwatch();
   bool _shownResults = false;
+  bool _init = false;
 
   @override
   void initState() {
@@ -48,7 +49,6 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     _ticker = createTicker((_) => _session.tick());
   }
 
-  bool _init = false;
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -96,7 +96,6 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     final line = await showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
       builder: (_) => ResultsSheet(scorer: _session.scorer, record: record, contour: widget.contour),
     );
     _shownResults = false;
@@ -120,40 +119,43 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
         actions: [
           IconButton(
             tooltip: '练习设置',
-            icon: const Icon(Icons.tune),
+            icon: const Icon(Icons.tune_rounded),
             onPressed: () => showModalBottomSheet<void>(
               context: context,
-              showDragHandle: true,
+              isScrollControlled: true,
               builder: (_) => _MixSheet(session: _session),
             ),
           ),
           IconButton(
             tooltip: '查看评分',
-            icon: const Icon(Icons.insights),
+            icon: const Icon(Icons.insights_rounded),
             onPressed: () => _showResults(saveRecord: true),
           ),
+          const SizedBox(width: 4),
         ],
       ),
       body: ListenableBuilder(
         listenable: _session,
         builder: (context, _) {
           if (_session.error != null) {
-            return Center(
-                child: Padding(padding: const EdgeInsets.all(24), child: Text(_session.error!)));
+            return Padding(
+              padding: const EdgeInsets.all(28),
+              child: Text(_session.error!, style: context.type.bodyLarge),
+            );
           }
           if (!_session.started) {
-            return const Center(
+            return Center(
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 12),
-                Text('正在载入伴奏和导唱…'),
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text('正在载入伴奏和原唱', style: context.type.bodyMedium),
               ]),
             );
           }
           return Column(
             children: [
-              _LiveReadout(session: _session),
-              Expanded(child: _Graph(session: _session, contour: widget.contour)),
+              _LiveMeter(session: _session),
+              Expanded(child: _Stage(session: _session, contour: widget.contour)),
               _Lyrics(session: _session),
               _Transport(session: _session, onPlay: _togglePlay),
             ],
@@ -164,62 +166,89 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
   }
 }
 
-class _LiveReadout extends StatelessWidget {
-  const _LiveReadout({required this.session});
+/// Target note, sung note and a cents meter, readable at arm's length.
+class _LiveMeter extends StatelessWidget {
+  const _LiveMeter({required this.session});
   final PracticeSession session;
 
   @override
   Widget build(BuildContext context) {
-    final s = session.lastSample;
-    final colors = PitchGraphColors.of(context);
-    final theme = Theme.of(context);
-    final voiced = s != null && s.pitch.voiced;
-    final target = session.reference.noteAt(session.position);
-    String dev = '';
-    Color devColor = theme.colorScheme.onSurfaceVariant;
-    if (voiced && s.deviationCents != null) {
-      final c = s.deviationCents!.round();
-      dev = c == 0 ? '准' : (c > 0 ? '高 $c' : '低 ${-c}');
-      devColor = colors.verdict(s.verdict);
+    final p = context.yt;
+    final s = session.lastVoiced;
+    final fresh = s != null && session.isPlaying && session.clockTime - s.pitch.clockTime < 0.5;
+    final current = session.reference.noteAt(session.position);
+    final target = current ?? session.reference.nextNoteAfter(session.position);
+    final cents = fresh ? s.deviationCents : null;
+    String verdict = '';
+    Color verdictColor = p.inkFaint;
+    final tol = session.settings.toleranceCents.toDouble();
+    if (cents != null) {
+      final c = cents.round();
+      verdict = c.abs() <= tol ? '准' : (c > 0 ? '高了 $c 音分' : '低了 ${-c} 音分');
+      verdictColor = p.deviation(cents, tolerance: tol);
     }
+    final big = TextStyle(
+        fontSize: 26, fontWeight: FontWeight.w500, height: 1.15, color: p.ink, fontFeatures: tabular);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+      child: Column(
         children: [
-          _chip(context, '目标', target == null ? '—' : noteName(target.midi)),
-          const SizedBox(width: 8),
-          _chip(context, '你', voiced ? noteName(s.pitch.midi) : '—'),
-          const SizedBox(width: 8),
-          Text(dev, style: theme.textTheme.titleMedium?.copyWith(color: devColor)),
-          const Spacer(),
-          Text(session.loopLine != null ? '单句循环' : '整首',
-              style: theme.textTheme.labelMedium),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _NoteReadout(
+                  label: current != null || target == null ? '原唱' : '下一个',
+                  value: noteLabel(target?.midi),
+                  style: current == null ? big.copyWith(color: p.inkFaint) : big),
+              const Spacer(),
+              Text(verdict, style: context.type.titleSmall?.copyWith(color: verdictColor)),
+              const Spacer(),
+              _NoteReadout(
+                  label: '你', value: fresh ? noteLabel(s.pitch.midi) : '–', style: big, alignEnd: true),
+            ],
+          ),
+          const SizedBox(height: 6),
+          PitchMeter(cents: cents, tolerance: tol),
+          Row(
+            children: [
+              Text('低', style: context.type.labelSmall?.copyWith(color: p.azurite)),
+              const Spacer(),
+              Text('高', style: context.type.labelSmall?.copyWith(color: p.cinnabar)),
+            ],
+          ),
         ],
       ),
     );
   }
-
-  Widget _chip(BuildContext context, String label, String value) {
-    final theme = Theme.of(context);
-    return Row(children: [
-      Text('$label ', style: theme.textTheme.labelMedium),
-      Text(value, style: theme.textTheme.titleMedium?.copyWith(fontFeatures: const [FontFeature.tabularFigures()])),
-    ]);
-  }
 }
 
-class _Graph extends StatelessWidget {
-  const _Graph({required this.session, this.contour});
+class _NoteReadout extends StatelessWidget {
+  const _NoteReadout({required this.label, required this.value, this.style, this.alignEnd = false});
+  final String label;
+  final String value;
+  final TextStyle? style;
+  final bool alignEnd;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Text(label, style: context.type.labelMedium),
+          Text(value, style: style),
+        ],
+      );
+}
+
+class _Stage extends StatelessWidget {
+  const _Stage({required this.session, this.contour});
   final PracticeSession session;
   final PitchTrack? contour;
 
   @override
   Widget build(BuildContext context) {
-    final settings = session.settings;
     final ph = session.position;
-    final span = settings.practiceWindowSeconds;
-    final t0 = ph - span * 0.35, t1 = ph + span * 0.65;
-    // Vertical range: the notes around the visible window.
+    final span = session.settings.practiceWindowSeconds;
+    final t0 = ph - span * 0.3, t1 = ph + span * 0.7;
     var lo = double.infinity, hi = -double.infinity;
     for (final line in session.reference.lines) {
       if (line.end < t0 - 2 || line.start > t1 + 2) continue;
@@ -234,25 +263,21 @@ class _Graph extends StatelessWidget {
       hi = r.$2;
     }
     final (a, b) = paddedRange(lo, hi, minSpan: 14);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: CustomPaint(
-          size: Size.infinite,
-          painter: PitchGraphPainter(
-            reference: session.reference,
-            contour: contour,
-            t0: t0,
-            t1: t1,
-            midiLo: a,
-            midiHi: b,
-            colors: PitchGraphColors.of(context),
-            user: session.points,
-            playhead: ph,
-            tokenScores: session.tokenScores(),
-          ),
-        ),
+    return CustomPaint(
+      size: Size.infinite,
+      painter: PitchGraphPainter(
+        reference: session.reference,
+        contour: contour,
+        t0: t0,
+        t1: t1,
+        midiLo: a,
+        midiHi: b + 1.5,
+        style: PitchGraphStyle.of(context, tolerance: session.settings.toleranceCents.toDouble()),
+        user: session.points,
+        playhead: ph,
+        tokenScores: session.tokenScores(),
+        glyphSize: 16,
+        live: true,
       ),
     );
   }
@@ -266,35 +291,34 @@ class _Lyrics extends StatelessWidget {
   Widget build(BuildContext context) {
     final ref = session.reference;
     final li = session.currentLine;
-    if (li < 0) return const SizedBox(height: 72);
+    if (li < 0) return const SizedBox(height: 84);
     final line = ref.lines[li];
     final next = li + 1 < ref.lines.length ? ref.lines[li + 1] : null;
     final ph = session.position;
-    final theme = Theme.of(context);
-    final colors = PitchGraphColors.of(context);
+    final p = context.yt;
     final scores = session.tokenScores();
-    final base = theme.textTheme.headlineSmall!;
+    final base = context.type.headlineSmall!.copyWith(fontWeight: FontWeight.w500, height: 1.2);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text.rich(
             TextSpan(children: [
               for (final t in line.tokens)
                 TextSpan(
-                  text: '${t.spaceBefore ? ' ' : ''}${t.text}',
+                  text: '${t.spaceBefore ? '　' : ''}${t.text}',
                   style: base.copyWith(
                     color: scores[t] != null
-                        ? colors.score(scores[t]!)
-                        : (ph >= t.start ? theme.colorScheme.primary : theme.colorScheme.onSurface),
+                        ? p.score(scores[t]!)
+                        : (ph >= t.start ? p.ink : p.inkFaint),
                     fontWeight: ph >= t.start && ph < t.end ? FontWeight.w800 : FontWeight.w500,
                   ),
                 ),
             ]),
-            textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 4),
-          Text(next?.text ?? '', style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.outline)),
+          const SizedBox(height: 6),
+          Text(next?.text ?? ' ', style: context.type.bodyMedium?.copyWith(color: p.inkFaint)),
         ],
       ),
     );
@@ -308,56 +332,63 @@ class _Transport extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = context.yt;
     final dur = session.duration;
     final pos = session.position.clamp(0, dur > 0 ? dur : 1).toDouble();
     final li = session.currentLine;
+    final looping = session.loopLine != null;
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
         child: Column(
           children: [
-            Row(
-              children: [
-                Text(formatDuration(pos)),
-                Expanded(
-                  child: Slider(
-                    value: pos,
-                    max: dur > 0 ? dur : 1,
-                    onChanged: (v) => session.seek(v),
-                  ),
-                ),
-                Text(formatDuration(dur)),
-              ],
+            _Timeline(
+              position: pos,
+              duration: dur,
+              lineStarts: [for (final l in session.reference.lines) l.start],
+              loop: looping ? session.reference.lines[session.loopLine!] : null,
+              onSeek: session.seek,
             ),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Text(clock(pos), style: context.type.labelSmall?.copyWith(fontFeatures: tabular)),
+                const Spacer(),
+                Text(clock(dur), style: context.type.labelSmall?.copyWith(fontFeatures: tabular)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 IconButton(
                   tooltip: '上一句',
-                  icon: const Icon(Icons.skip_previous),
+                  icon: const Icon(Icons.skip_previous_rounded, size: 30),
                   onPressed: () => session.seekToLine(li - 1),
                 ),
                 IconButton(
                   tooltip: '重唱这一句',
-                  icon: const Icon(Icons.replay),
+                  icon: const Icon(Icons.replay_rounded, size: 28),
                   onPressed: () => session.seekToLine(li),
                 ),
-                FilledButton(
-                  onPressed: onPlay,
-                  style: FilledButton.styleFrom(shape: const CircleBorder(), padding: const EdgeInsets.all(18)),
-                  child: Icon(session.isPlaying ? Icons.pause : Icons.play_arrow, size: 32),
+                SizedBox(
+                  width: 72,
+                  height: 72,
+                  child: FilledButton(
+                    onPressed: onPlay,
+                    style: FilledButton.styleFrom(shape: const CircleBorder(), padding: EdgeInsets.zero),
+                    child: Icon(session.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 38),
+                  ),
                 ),
                 IconButton(
                   tooltip: '下一句',
-                  icon: const Icon(Icons.skip_next),
+                  icon: const Icon(Icons.skip_next_rounded, size: 30),
                   onPressed: () => session.seekToLine(li + 1),
                 ),
                 IconButton(
-                  tooltip: session.loopLine == null ? '单句循环' : '取消循环',
-                  isSelected: session.loopLine != null,
-                  icon: const Icon(Icons.repeat_one),
-                  onPressed: () => session.setLoopLine(session.loopLine == null ? li : null),
+                  tooltip: looping ? '取消单句循环' : '单句循环',
+                  icon: Icon(Icons.repeat_one_rounded, size: 28, color: looping ? p.malachite : p.ink),
+                  onPressed: () => session.setLoopLine(looping ? null : li),
                 ),
               ],
             ),
@@ -366,6 +397,92 @@ class _Transport extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Progress line with a tick at the start of every lyric line.
+class _Timeline extends StatelessWidget {
+  const _Timeline({
+    required this.position,
+    required this.duration,
+    required this.lineStarts,
+    required this.onSeek,
+    this.loop,
+  });
+  final double position;
+  final double duration;
+  final List<double> lineStarts;
+  final RefLine? loop;
+  final void Function(double) onSeek;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.yt;
+    return LayoutBuilder(builder: (context, c) {
+      void seekAt(double dx) => onSeek((dx / c.maxWidth).clamp(0.0, 1.0) * duration);
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (d) => seekAt(d.localPosition.dx),
+        onHorizontalDragUpdate: (d) => seekAt(d.localPosition.dx),
+        child: SizedBox(
+          height: 26,
+          child: CustomPaint(
+            size: Size.infinite,
+            painter: _TimelinePainter(position, duration, lineStarts, loop, p),
+          ),
+        ),
+      );
+    });
+  }
+}
+
+class _TimelinePainter extends CustomPainter {
+  _TimelinePainter(this.position, this.duration, this.lineStarts, this.loop, this.p);
+  final double position;
+  final double duration;
+  final List<double> lineStarts;
+  final RefLine? loop;
+  final YtPalette p;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (duration <= 0) return;
+    final cy = size.height / 2;
+    double x(double t) => (t / duration).clamp(0.0, 1.0) * size.width;
+    canvas.drawLine(
+        Offset(0, cy),
+        Offset(size.width, cy),
+        Paint()
+          ..color = p.staffStrong
+          ..strokeWidth = 3
+          ..strokeCap = StrokeCap.round);
+    final l = loop;
+    if (l != null) {
+      canvas.drawLine(
+          Offset(x(l.start - 1.2), cy),
+          Offset(x(l.end + 0.6), cy),
+          Paint()
+            ..color = p.malachite.withValues(alpha: 0.5)
+            ..strokeWidth = 7
+            ..strokeCap = StrokeCap.round);
+    }
+    canvas.drawLine(
+        Offset(0, cy),
+        Offset(x(position), cy),
+        Paint()
+          ..color = p.ink
+          ..strokeWidth = 3
+          ..strokeCap = StrokeCap.round);
+    final tick = Paint()
+      ..color = p.paper.withValues(alpha: 0.7)
+      ..strokeWidth = 1;
+    for (final s in lineStarts) {
+      canvas.drawLine(Offset(x(s), cy - 1.5), Offset(x(s), cy + 1.5), tick);
+    }
+    canvas.drawCircle(Offset(x(position), cy), 6, Paint()..color = p.ink);
+  }
+
+  @override
+  bool shouldRepaint(_TimelinePainter old) => old.position != position || old.loop != loop || old.p != p;
 }
 
 class _MixSheet extends StatefulWidget {
@@ -386,39 +503,67 @@ class _MixSheetState extends State<_MixSheet> {
       setState(() {});
     }
 
+    Widget slider(String title, String value, Widget slider) => Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(children: [
+                Text(title, style: context.type.bodyLarge),
+                const Spacer(),
+                Text(value, style: context.type.bodyMedium?.copyWith(fontFeatures: tabular)),
+              ]),
+              slider,
+            ],
+          ),
+        );
+
     return SafeArea(
-      child: ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        children: [
-          Text('伴奏音量 ${(s.accompanimentVolume * 100).round()}%'),
-          Slider(value: s.accompanimentVolume, onChanged: (v) => set(() => s.accompanimentVolume = v)),
-          Text('原唱人声（导唱）音量 ${(s.guideVocalVolume * 100).round()}%'),
-          Slider(value: s.guideVocalVolume, onChanged: (v) => set(() => s.guideVocalVolume = v)),
-          Text('延迟补偿 ${s.latencyOffsetMs} ms（系统测得 ${(widget.session.latency * 1000).round()} ms）'),
-          Slider(
-            value: s.latencyOffsetMs.toDouble(),
-            min: -300,
-            max: 300,
-            divisions: 60,
-            onChanged: (v) => set(() => s.latencyOffsetMs = v.round()),
-          ),
-          Text('音准容差 ±${s.toleranceCents} 音分'),
-          Slider(
-            value: s.toleranceCents.toDouble(),
-            min: 20,
-            max: 100,
-            divisions: 16,
-            onChanged: (v) => set(() => s.toleranceCents = v.round()),
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('忽略八度（男女声互唱）'),
-            value: s.octaveTolerant,
-            onChanged: (v) => set(() => s.octaveTolerant = v),
-          ),
-          const Text('提示：戴耳机练习，麦克风就不会录到伴奏，音高检测更准。', style: TextStyle(fontSize: 12)),
-        ],
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('练习设置', style: context.type.headlineSmall),
+            slider('伴奏', '${(s.accompanimentVolume * 100).round()}%',
+                Slider(value: s.accompanimentVolume, onChanged: (v) => set(() => s.accompanimentVolume = v))),
+            slider('原唱导唱', '${(s.guideVocalVolume * 100).round()}%',
+                Slider(value: s.guideVocalVolume, onChanged: (v) => set(() => s.guideVocalVolume = v))),
+            slider(
+              '音准容差',
+              '±${s.toleranceCents} 音分',
+              Slider(
+                value: s.toleranceCents.toDouble(),
+                min: 20,
+                max: 100,
+                divisions: 16,
+                onChanged: (v) => set(() => s.toleranceCents = v.round()),
+              ),
+            ),
+            slider(
+              '延迟补偿',
+              '${s.latencyOffsetMs >= 0 ? '+' : ''}${s.latencyOffsetMs} ms',
+              Slider(
+                value: s.latencyOffsetMs.toDouble(),
+                min: -300,
+                max: 300,
+                divisions: 60,
+                onChanged: (v) => set(() => s.latencyOffsetMs = v.round()),
+              ),
+            ),
+            Text('系统测得的延迟 ${(widget.session.latency * 1000).round()} ms。你的音高线总比原唱靠右时，把补偿调大。',
+                style: context.type.bodySmall),
+            const SizedBox(height: 6),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('忽略八度'),
+              subtitle: const Text('男声唱女声的歌（或反过来）时打开'),
+              value: s.octaveTolerant,
+              onChanged: (v) => set(() => s.octaveTolerant = v),
+            ),
+            Text('戴耳机练习：外放时麦克风会录到伴奏，音高会测不准。', style: context.type.bodySmall),
+          ],
+        ),
       ),
     );
   }

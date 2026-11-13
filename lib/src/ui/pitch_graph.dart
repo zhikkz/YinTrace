@@ -1,70 +1,36 @@
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../dsp/pitch.dart';
 import '../practice/scoring.dart';
+import 'theme.dart';
 
-/// Colours of the pitch graph.
-class PitchGraphColors {
-  const PitchGraphColors({
-    required this.background,
-    required this.grid,
-    required this.gridStrong,
-    required this.label,
-    required this.note,
-    required this.noteActive,
-    required this.contour,
-    required this.lyric,
-    required this.great,
-    required this.ok,
-    required this.off,
-    required this.free,
-    required this.playhead,
-    this.textStyle = const TextStyle(),
-  });
+/// Visual parameters of the pitch graph, derived from the theme.
+class PitchGraphStyle {
+  const PitchGraphStyle({required this.palette, required this.textStyle, this.tolerance = 50});
 
-  final Color background, grid, gridStrong, label, note, noteActive, contour, lyric;
-  final Color great, ok, off, free, playhead;
+  final YtPalette palette;
 
-  /// Base style for text drawn by the painter (inherits the app font).
+  /// Base style for the glyphs drawn on the graph (inherits the app font).
   final TextStyle textStyle;
 
-  factory PitchGraphColors.of(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return PitchGraphColors(
-      background: dark ? const Color(0xFF101418) : const Color(0xFFF7F8FA),
-      grid: cs.onSurface.withValues(alpha: 0.06),
-      gridStrong: cs.onSurface.withValues(alpha: 0.16),
-      label: cs.onSurface.withValues(alpha: 0.55),
-      note: dark ? const Color(0xFF5B7FA8) : const Color(0xFF9DB6D6),
-      noteActive: cs.primary,
-      contour: cs.onSurface.withValues(alpha: 0.28),
-      lyric: cs.onSurface.withValues(alpha: 0.9),
-      great: const Color(0xFF22A06B),
-      ok: const Color(0xFFE2A400),
-      off: const Color(0xFFE5484D),
-      free: cs.tertiary,
-      playhead: cs.secondary,
-      textStyle: DefaultTextStyle.of(context).style.merge(Theme.of(context).textTheme.bodySmall),
-    );
-  }
+  /// "On pitch" half width in cents (colours the voice trace).
+  final double tolerance;
 
-  Color verdict(PitchVerdict v) => switch (v) {
-        PitchVerdict.great => great,
-        PitchVerdict.ok => ok,
-        PitchVerdict.off => off,
-        PitchVerdict.noReference => free,
-      };
-
-  /// Colour for a token's score (0..100).
-  Color score(double s) => s >= 80 ? great : (s >= 60 ? ok : off);
+  factory PitchGraphStyle.of(BuildContext context, {double tolerance = 50}) => PitchGraphStyle(
+        palette: context.yt,
+        textStyle: DefaultTextStyle.of(context).style.merge(Theme.of(context).textTheme.bodyMedium),
+        tolerance: tolerance,
+      );
 }
 
-/// Draws the reference melody (one bar per note, labelled with its
-/// character), the reference contour, the singer's trail and a playhead.
+/// Draws a melody as it would be written on score paper: one ink stroke per
+/// sustained note with its character set above it, the original singer's
+/// real contour as a hairline, and the practising singer's voice as a
+/// coloured trace (azurite = flat, malachite = on pitch, cinnabar = sharp).
 class PitchGraphPainter extends CustomPainter {
   PitchGraphPainter({
     required this.reference,
@@ -72,7 +38,7 @@ class PitchGraphPainter extends CustomPainter {
     required this.t1,
     required this.midiLo,
     required this.midiHi,
-    required this.colors,
+    required this.style,
     this.contour,
     this.user = const [],
     this.playhead,
@@ -80,33 +46,39 @@ class PitchGraphPainter extends CustomPainter {
     this.transpose = 0,
     this.showNoteLabels = true,
     this.gutter = 30,
-    super.repaint,
+    this.glyphSize = 15,
+    this.live = false,
   });
 
   final SongReference? reference;
   final double t0, t1;
   final double midiLo, midiHi;
-  final PitchGraphColors colors;
+  final PitchGraphStyle style;
   final PitchTrack? contour;
   final List<UserPoint> user;
   final double? playhead;
 
-  /// Scores per token (colours the bars after they were sung).
+  /// Scores per token: sung characters take the colour of their score.
   final Map<RefToken, double>? tokenScores;
   final int transpose;
   final bool showNoteLabels;
   final double gutter;
+  final double glyphSize;
+
+  /// Draw the head of the voice trace (practice / tuner).
+  final bool live;
 
   static final _textCache = <String, TextPainter>{};
 
   TextPainter _text(String s, double size, Color color, {FontWeight weight = FontWeight.w500}) {
-    final key = '$s|$size|${color.toARGB32()}|${weight.value}|${colors.textStyle.fontFamily}';
+    final key = '$s|$size|${color.toARGB32()}|${weight.value}|${style.textStyle.fontFamily}';
     return _textCache.putIfAbsent(key, () {
-      if (_textCache.length > 600) _textCache.clear();
+      if (_textCache.length > 800) _textCache.clear();
       return TextPainter(
         text: TextSpan(
             text: s,
-            style: colors.textStyle.copyWith(fontSize: size, color: color, fontWeight: weight, height: 1.0)),
+            style: style.textStyle
+                .copyWith(fontSize: size, color: color, fontWeight: weight, height: 1.0, letterSpacing: 0)),
         textDirection: TextDirection.ltr,
       )..layout();
     });
@@ -114,30 +86,31 @@ class PitchGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final p = style.palette;
     final w = size.width, h = size.height;
-    canvas.drawRect(Offset.zero & size, Paint()..color = colors.background);
+    canvas.drawRect(Offset.zero & size, Paint()..color = p.paper);
     final plotW = w - gutter;
     double x(double t) => gutter + (t - t0) / (t1 - t0) * plotW;
     double y(double m) => h - (m - midiLo) / (midiHi - midiLo) * h;
     final semitone = h / (midiHi - midiLo);
 
-    // Semitone grid with note names.
-    final grid = Paint()..strokeWidth = 1;
+    // Staff: a faint line per semitone, stronger on every C.
+    final line = Paint()..strokeWidth = 1;
     for (var m = midiLo.ceil(); m <= midiHi.floor(); m++) {
       final isC = m % 12 == 0;
-      grid.color = isC ? colors.gridStrong : colors.grid;
+      line.color = isC ? p.staffStrong : p.staff;
       final yy = y(m.toDouble());
-      canvas.drawLine(Offset(gutter, yy), Offset(w, yy), grid);
-      if (showNoteLabels && (isC || semitone >= 11 && const {0, 4, 7}.contains(m % 12))) {
-        final tp = _text(noteName(m.toDouble()), 9, colors.label);
-        tp.paint(canvas, Offset(2, yy - tp.height / 2));
+      canvas.drawLine(Offset(gutter, yy), Offset(w, yy), line);
+      if (showNoteLabels && (isC || (semitone >= 12 && m % 12 == 7))) {
+        final tp = _text(noteName(m.toDouble()), 10, p.inkFaint, weight: FontWeight.w500);
+        tp.paint(canvas, Offset(gutter - tp.width - 6, yy - tp.height / 2));
       }
     }
 
     canvas.save();
     canvas.clipRect(Rect.fromLTWH(gutter, 0, plotW, h));
 
-    // Reference contour.
+    // The original singer's real contour, as a hairline.
     final c = contour;
     if (c != null && c.length > 0) {
       final path = Path();
@@ -151,11 +124,11 @@ class PitchGraphPainter extends CustomPainter {
           open = false;
           continue;
         }
-        final p = Offset(x(f * c.hopSeconds), y(m + transpose));
+        final pt = Offset(x(f * c.hopSeconds), y(m + transpose));
         if (open) {
-          path.lineTo(p.dx, p.dy);
+          path.lineTo(pt.dx, pt.dy);
         } else {
-          path.moveTo(p.dx, p.dy);
+          path.moveTo(pt.dx, pt.dy);
           open = true;
         }
       }
@@ -163,71 +136,116 @@ class PitchGraphPainter extends CustomPainter {
           path,
           Paint()
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.4
-            ..color = colors.contour);
+            ..strokeWidth = 1
+            ..color = p.inkFaint.withValues(alpha: 0.7));
     }
 
-    // Reference notes + lyrics.
+    // Reference notes: ink strokes, characters above.
     final ref = reference;
+    final stroke = math.max(3.5, math.min(9.0, semitone * 0.5));
+    final placed = <Rect>[];
+    bool free(Rect r) => !placed.any((q) => q.overlaps(r.inflate(1)));
     if (ref != null) {
-      final barH = math.max(5.0, math.min(14.0, semitone * 0.8));
-      final notePaint = Paint();
-      for (final line in ref.lines) {
-        if (line.end < t0 - 1 || line.start > t1 + 1) continue;
-        for (final tok in line.tokens) {
+      final notePaint = Paint()
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = stroke;
+      for (final ln in ref.lines) {
+        if (ln.end < t0 - 1 || ln.start > t1 + 1) continue;
+        for (final tok in ln.tokens) {
           if (tok.end < t0 || tok.start > t1) continue;
           final active = playhead != null && playhead! >= tok.start && playhead! < tok.end;
           final scored = tokenScores?[tok];
-          final color = scored != null && !scored.isNaN
-              ? colors.score(scored)
-              : (active ? colors.noteActive : colors.note);
-          notePaint.color = color.withValues(alpha: active ? 1 : 0.85);
-          for (final n in tok.notes) {
-            final r = RRect.fromRectAndRadius(
-              Rect.fromLTRB(x(n.start), y(n.midi + transpose) - barH / 2, math.max(x(n.end), x(n.start) + 3),
-                  y(n.midi + transpose) + barH / 2),
-              Radius.circular(barH / 2),
-            );
-            canvas.drawRRect(r, notePaint);
+          final past = playhead != null && tok.end <= playhead!;
+          Color color;
+          if (scored != null && !scored.isNaN) {
+            // Sung: a light wash of the score colour, so the voice trace
+            // drawn on top stays the strongest mark.
+            color = Color.alphaBlend(p.score(scored).withValues(alpha: 0.38), p.paper);
+          } else if (active) {
+            color = p.ink;
+          } else {
+            color = past ? p.inkFaint : p.noteStrokeFuture;
           }
-          // Character label above its first note (or at the line baseline).
-          final anchorMidi = tok.notes.isNotEmpty ? tok.notes.first.midi + transpose : midiLo + 1.5;
-          final tp = _text(tok.text, 13, active ? colors.noteActive : colors.lyric,
+          notePaint.color = color;
+          for (final n in tok.notes) {
+            final yy = y(n.midi + transpose);
+            final x0 = x(n.start) + stroke / 2, x1 = math.max(x(n.end) - stroke / 2, x0 + 0.5);
+            if (active) {
+              canvas.drawLine(
+                  Offset(x0, yy),
+                  Offset(x1, yy),
+                  Paint()
+                    ..strokeCap = StrokeCap.round
+                    ..strokeWidth = stroke + 8
+                    ..color = p.ink.withValues(alpha: 0.08));
+            }
+            canvas.drawLine(Offset(x0, yy), Offset(x1, yy), notePaint);
+          }
+          final anchor = tok.notes.isNotEmpty ? tok.notes.first.midi + transpose : midiLo + 1.2;
+          final tp = _text(tok.text, glyphSize, past ? p.inkSoft : p.ink,
               weight: active ? FontWeight.w700 : FontWeight.w500);
           final lx = x(tok.start);
-          var ly = y(anchorMidi) - barH / 2 - tp.height - 2;
-          if (ly < 0) ly = y(anchorMidi) + barH / 2 + 2;
-          tp.paint(canvas, Offset(lx, ly));
+          final above = Rect.fromLTWH(lx, y(anchor) - stroke / 2 - tp.height - 4, tp.width, tp.height);
+          final below = Rect.fromLTWH(lx, y(anchor) + stroke / 2 + 4, tp.width, tp.height);
+          // Dense passages: move a label under its note, or leave it out.
+          final spot = above.top >= 2 && free(above) ? above : (free(below) ? below : null);
+          if (spot != null) {
+            tp.paint(canvas, spot.topLeft);
+            placed.add(spot);
+          }
         }
       }
     }
 
-    // Singer's trail.
+    // The singer's voice: a paper halo under the whole trace first, then
+    // the coloured trace, so it reads clearly on top of the notes.
     if (user.isNotEmpty) {
-      final dot = Paint()..strokeCap = StrokeCap.round;
-      final seg = Paint()
-        ..strokeWidth = 3
-        ..strokeCap = StrokeCap.round;
+      final segments = <(Offset, Offset, Color)>[];
+      final dots = <(Offset, Color)>[];
       UserPoint? prev;
-      for (final p in user) {
-        if (p.time < t0 - 0.05 || p.time > t1 + 0.05) {
+      UserPoint? head;
+      for (final pt in user) {
+        if (pt.time < t0 - 0.05 || pt.time > t1 + 0.05 || pt.midi <= 0) {
           prev = null;
           continue;
         }
-        if (p.midi <= 0) {
-          prev = null;
-          continue;
-        }
-        final pt = Offset(x(p.time), y(p.midi));
-        final col = colors.verdict(p.verdict);
-        if (prev != null && (p.time - prev.time) < 0.05 && (p.midi - prev.midi).abs() < 1.5) {
-          seg.color = col;
-          canvas.drawLine(Offset(x(prev.time), y(prev.midi)), pt, seg);
+        final cents = pt.cents;
+        final col = cents == null ? p.inkSoft : p.deviation(cents, tolerance: style.tolerance);
+        final o = Offset(x(pt.time), y(pt.midi));
+        if (prev != null && (pt.time - prev.time) < 0.05 && (pt.midi - prev.midi).abs() < 1.5) {
+          segments.add((Offset(x(prev.time), y(prev.midi)), o, col));
         } else {
-          dot.color = col;
-          canvas.drawCircle(pt, 2, dot);
+          dots.add((o, col));
         }
-        prev = p;
+        prev = pt;
+        head = pt;
+      }
+      final halo = Paint()
+        ..strokeWidth = 7
+        ..strokeCap = StrokeCap.round
+        ..color = p.paper;
+      for (final (a, b, _) in segments) {
+        canvas.drawLine(a, b, halo);
+      }
+      for (final (o, _) in dots) {
+        canvas.drawCircle(o, 3.5, halo);
+      }
+      final seg = Paint()
+        ..strokeWidth = 3.4
+        ..strokeCap = StrokeCap.round;
+      for (final (a, b, col) in segments) {
+        seg.color = col;
+        canvas.drawLine(a, b, seg);
+      }
+      for (final (o, col) in dots) {
+        canvas.drawCircle(o, 2, Paint()..color = col);
+      }
+      if (live && head != null && playhead != null && (playhead! - head.time) < 0.6) {
+        final o = Offset(x(head.time), y(head.midi));
+        final cents = head.cents;
+        final col = cents == null ? p.inkSoft : p.deviation(cents, tolerance: style.tolerance);
+        canvas.drawCircle(o, 9, Paint()..color = col.withValues(alpha: 0.18));
+        canvas.drawCircle(o, 4.5, Paint()..color = col);
       }
     }
 
@@ -239,8 +257,14 @@ class PitchGraphPainter extends CustomPainter {
           Offset(px, 0),
           Offset(px, h),
           Paint()
-            ..color = colors.playhead
-            ..strokeWidth = 2);
+            ..color = p.ink.withValues(alpha: 0.55)
+            ..strokeWidth = 1.2);
+      final tri = Path()
+        ..moveTo(px - 5, 0)
+        ..lineTo(px + 5, 0)
+        ..lineTo(px, 6)
+        ..close();
+      canvas.drawPath(tri, Paint()..color = p.ink);
     }
     canvas.restore();
   }
@@ -256,12 +280,13 @@ class PitchGraphPainter extends CustomPainter {
       old.user.length != user.length ||
       old.reference != reference ||
       old.tokenScores != tokenScores ||
-      old.transpose != transpose;
+      old.transpose != transpose ||
+      old.style.palette != style.palette;
 }
 
 /// Picks a comfortable vertical range around [lo]..[hi].
-(double, double) paddedRange(double lo, double hi, {double minSpan = 14}) {
-  var a = lo - 3, b = hi + 3;
+(double, double) paddedRange(double lo, double hi, {double minSpan = 14, double pad = 3}) {
+  var a = lo - pad, b = hi + pad;
   if (b - a < minSpan) {
     final mid = (a + b) / 2;
     a = mid - minSpan / 2;
@@ -270,7 +295,7 @@ class PitchGraphPainter extends CustomPainter {
   return (a, b);
 }
 
-/// A static image of a whole line (used in lists).
+/// A static strip of one lyric line (used in lists).
 class LinePitchGraph extends StatelessWidget {
   const LinePitchGraph({
     super.key,
@@ -278,7 +303,7 @@ class LinePitchGraph extends StatelessWidget {
     required this.line,
     this.contour,
     this.tokenScores,
-    this.height = 90,
+    this.height = 96,
   });
 
   final SongReference reference;
@@ -299,8 +324,9 @@ class LinePitchGraph extends StatelessWidget {
       lo = r.$1;
       hi = r.$2;
     }
-    final (a, b) = paddedRange(lo, hi, minSpan: 10);
-    final start = line.start - 0.25, end = math.max(line.end, line.start + 1) + 0.25;
+    // Leave room above the highest note for its character.
+    final (a, b) = paddedRange(lo, hi, minSpan: 9, pad: 2);
+    final start = line.start - 0.2, end = math.max(line.end, line.start + 1) + 0.2;
     return SizedBox(
       height: height,
       child: CustomPaint(
@@ -311,12 +337,75 @@ class LinePitchGraph extends StatelessWidget {
           t0: start,
           t1: end,
           midiLo: a,
-          midiHi: b,
-          colors: PitchGraphColors.of(context),
+          midiHi: b + 2.5,
+          style: PitchGraphStyle.of(context),
           tokenScores: tokenScores,
-          gutter: 26,
+          gutter: 0,
+          showNoteLabels: false,
+          glyphSize: 13,
         ),
       ),
     );
   }
+}
+
+/// The whole song's melody as a thin ink line ("fingerprint"), for lists.
+class MelodyFingerprint extends StatelessWidget {
+  const MelodyFingerprint({super.key, required this.notes, this.height = 22});
+
+  /// (start, end, midi) of every note.
+  final List<(double, double, double)> notes;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+      height: height, child: CustomPaint(size: Size.infinite, painter: _FingerprintPainter(notes, context.yt)));
+}
+
+class _FingerprintPainter extends CustomPainter {
+  _FingerprintPainter(this.notes, this.palette);
+  final List<(double, double, double)> notes;
+  final YtPalette palette;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (notes.isEmpty) return;
+    var lo = double.infinity, hi = -double.infinity, first = double.infinity, last = 0.0;
+    for (final n in notes) {
+      lo = math.min(lo, n.$3);
+      hi = math.max(hi, n.$3);
+      first = math.min(first, n.$1);
+      last = math.max(last, n.$2);
+    }
+    if (hi - lo < 6) {
+      final mid = (hi + lo) / 2;
+      lo = mid - 3;
+      hi = mid + 3;
+    }
+    final span = math.max(1e-3, last - first);
+    double x(double t) => (t - first) / span * size.width;
+    double y(double m) => size.height - 1.5 - (m - lo) / (hi - lo) * (size.height - 3);
+    final sorted = [...notes]..sort((a, b) => a.$1.compareTo(b.$1));
+    final path = Path();
+    (double, double, double)? prev;
+    for (final n in sorted) {
+      if (prev == null || n.$1 - prev.$2 > 0.6) {
+        path.moveTo(x(n.$1), y(n.$3));
+      } else {
+        path.lineTo(x(n.$1), y(n.$3));
+      }
+      path.lineTo(math.max(x(n.$2), x(n.$1) + 0.5), y(n.$3));
+      prev = n;
+    }
+    canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..strokeJoin = StrokeJoin.round
+          ..color = palette.ink.withValues(alpha: 0.55));
+  }
+
+  @override
+  bool shouldRepaint(_FingerprintPainter old) => old.notes != notes || old.palette != palette;
 }

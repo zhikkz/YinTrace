@@ -58,6 +58,9 @@ class PracticeSession extends ChangeNotifier {
   static const _keepSeconds = 30.0;
 
   ScoredSample? lastSample;
+
+  /// The most recent sample with a voice (held briefly by the UI).
+  ScoredSample? lastVoiced;
   String? error;
   bool finished = false;
   bool started = false;
@@ -215,9 +218,10 @@ class PracticeSession extends ChangeNotifier {
       for (final p in tr.addBlock(block.samples, block.songFrame, block.clockFrame, block.playing)) {
         final s = scorer.add(p);
         lastSample = s;
+        if (p.voiced) lastVoiced = s;
         _clock = p.clockTime;
         if (p.playing) {
-          points.add(UserPoint(p.songTime, p.midi, s.verdict));
+          points.add(UserPoint(p.songTime, p.midi, s.verdict, s.deviationCents));
         }
         changed = true;
       }

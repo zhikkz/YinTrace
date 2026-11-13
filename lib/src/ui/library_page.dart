@@ -3,13 +3,16 @@ import 'package:flutter/material.dart';
 import '../app/model_store.dart';
 import '../app/services.dart';
 import '../library/song.dart';
-import 'app.dart';
 import 'import_page.dart';
+import 'pitch_graph.dart';
 import 'settings_page.dart';
 import 'song_page.dart';
+import 'theme.dart';
 import 'tuner_page.dart';
+import 'widgets.dart';
 
-/// Home screen: the songs saved on this device.
+/// Home screen: the songs saved on this device, each with its melody drawn
+/// as a single ink line.
 class LibraryPage extends StatefulWidget {
   const LibraryPage({super.key});
 
@@ -43,60 +46,93 @@ class _LibraryPageState extends State<LibraryPage> {
   @override
   Widget build(BuildContext context) {
     final services = AppScope.of(context);
-    final songs = _songs ?? const [];
+    final songs = _songs;
     final missingModels = services.models.pathFor(ModelKind.mdx) == null;
+    final p = context.yt;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('YinTrace 唱歌练习'),
-        actions: [
-          IconButton(
-            tooltip: '自由练习（调音器）',
-            icon: const Icon(Icons.graphic_eq),
-            onPressed: () => _open(const TunerPage()),
-          ),
-          IconButton(
-            tooltip: '设置',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => _open(const SettingsPage()),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _open(const ImportPage()),
-        icon: const Icon(Icons.add),
-        label: const Text('导入歌曲'),
-      ),
       body: RefreshIndicator(
         onRefresh: _reload,
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: 96, top: 8),
-          children: [
+        color: p.ink,
+        child: CustomScrollView(
+          slivers: [
+            SliverAppBar.large(
+              title: const Text('曲库'),
+              actions: [
+                IconButton(
+                  tooltip: '自由练习',
+                  icon: const Icon(Icons.graphic_eq_rounded),
+                  onPressed: () => _open(const TunerPage()),
+                ),
+                IconButton(
+                  tooltip: '设置',
+                  icon: const Icon(Icons.tune_rounded),
+                  onPressed: () => _open(const SettingsPage()),
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
             if (missingModels)
-              Card(
-                color: Theme.of(context).colorScheme.tertiaryContainer,
-                child: ListTile(
-                  leading: const Icon(Icons.info_outline),
-                  title: const Text('还没有导入分离模型'),
-                  subtitle: const Text('导入整首歌需要 UVR-MDX-NET-Voc_FT 与 6_HP-Karaoke（ONNX）。'
-                      '已经分离好的纯人声可以直接导入。'),
+              SliverToBoxAdapter(
+                child: _Notice(
+                  text: '整首歌要先分离出人声，需要导入两个分离模型。已经分离好的纯人声可以直接导入。',
+                  action: '准备模型',
                   onTap: () => _open(const SettingsPage()),
                 ),
               ),
-            if (songs.isEmpty)
-              const Padding(
-                padding: EdgeInsets.fromLTRB(32, 80, 32, 0),
-                child: Column(
-                  children: [
-                    Icon(Icons.queue_music, size: 64),
-                    SizedBox(height: 16),
-                    Text('曲库是空的', style: TextStyle(fontSize: 18)),
-                    SizedBox(height: 8),
-                    Text('点“导入歌曲”，选择音频并粘贴带时间的歌词，\n生成逐字音高图后就可以开始练习。',
-                        textAlign: TextAlign.center),
-                  ],
-                ),
+            if (songs != null && songs.isEmpty)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: _EmptyLibrary(onImport: () => _open(const ImportPage())),
               ),
-            for (final s in songs) _SongTile(song: s, onTap: () => _open(SongPage(songId: s.id))),
+            if (songs != null && songs.isNotEmpty)
+              SliverList.separated(
+                itemCount: songs.length,
+                separatorBuilder: (_, _) => const Divider(indent: 20, endIndent: 20),
+                itemBuilder: (context, i) =>
+                    _SongRow(song: songs[i], onTap: () => _open(SongPage(songId: songs[i].id))),
+              ),
+            const SliverToBoxAdapter(child: SizedBox(height: 120)),
+          ],
+        ),
+      ),
+      bottomNavigationBar: songs == null || songs.isEmpty
+          ? null
+          : SafeArea(
+              minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+              child: FilledButton.icon(
+                onPressed: () => _open(const ImportPage()),
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('导入歌曲'),
+              ),
+            ),
+    );
+  }
+}
+
+class _Notice extends StatelessWidget {
+  const _Notice({required this.text, required this.action, required this.onTap});
+  final String text;
+  final String action;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.yt;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+        decoration: BoxDecoration(
+          color: p.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: p.hairline),
+        ),
+        child: Row(
+          children: [
+            Container(width: 3, height: 38, decoration: BoxDecoration(color: p.gamboge, borderRadius: BorderRadius.circular(2))),
+            const SizedBox(width: 12),
+            Expanded(child: Text(text, style: context.type.bodySmall)),
+            TextButton(onPressed: onTap, child: Text(action)),
           ],
         ),
       ),
@@ -104,39 +140,80 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 }
 
-class _SongTile extends StatelessWidget {
-  const _SongTile({required this.song, required this.onTap});
+class _EmptyLibrary extends StatelessWidget {
+  const _EmptyLibrary({required this.onImport});
+  final VoidCallback onImport;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 24, 28, 40),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text('从第一首歌开始', style: context.type.headlineMedium),
+          const SizedBox(height: 12),
+          Text('选一首想练的歌，贴上带时间的歌词。YinTrace 会分离出原唱人声，'
+              '把每个字的音高画出来，你唱的时候就能看到自己哪里高了、哪里低了。',
+              style: context.type.bodyMedium),
+          const SizedBox(height: 28),
+          FilledButton.icon(
+            onPressed: onImport,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('导入歌曲'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SongRow extends StatelessWidget {
+  const _SongRow({required this.song, required this.onTap});
   final SongMeta song;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final best = song.bestScore;
-    return Card(
-      child: ListTile(
-        onTap: onTap,
-        leading: CircleAvatar(
-          backgroundColor: cs.primaryContainer,
-          child: Text(song.title.isEmpty ? '?' : song.title.characters.first,
-              style: TextStyle(color: cs.onPrimaryContainer)),
-        ),
-        title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text([
-          if (song.artist.isNotEmpty) song.artist,
-          formatDuration(song.duration),
-          if (song.practiceCount > 0) '练习 ${song.practiceCount} 次',
-        ].join(' · ')),
-        trailing: best == null
-            ? const Icon(Icons.chevron_right)
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+    final repo = AppScope.of(context).songs;
+    final facts = <String>[
+      clock(song.duration),
+      if (song.practiceCount > 0) '练过 ${song.practiceCount} 次' else '还没练过',
+    ];
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(formatScore(best),
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(color: cs.primary)),
-                  Text('最高分', style: Theme.of(context).textTheme.labelSmall),
+                  Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.type.titleMedium),
+                  if (song.artist.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(song.artist, style: context.type.bodySmall),
+                    ),
+                  const SizedBox(height: 10),
+                  FutureBuilder<List<(double, double, double)>>(
+                    future: repo.loadMelody(song.id),
+                    builder: (context, snap) => MelodyFingerprint(notes: snap.data ?? const []),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(facts.join('，'), style: context.type.labelSmall?.copyWith(fontFeatures: tabular)),
                 ],
               ),
+            ),
+            if (song.bestScore != null) ...[
+              const SizedBox(width: 20),
+              ScoreNumeral(score: song.bestScore, label: '最高分'),
+            ],
+          ],
+        ),
       ),
     );
   }
