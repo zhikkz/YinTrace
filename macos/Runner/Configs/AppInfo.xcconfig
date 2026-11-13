@@ -12,3 +12,7 @@ PRODUCT_BUNDLE_IDENTIFIER = io.github.zhikkz.yintrace
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 io.github.zhikkz. All rights reserved.
+
+// The audio core is linked statically into the app; keep its C symbols
+// visible to dart:ffi.
+STRIP_STYLE = non-global

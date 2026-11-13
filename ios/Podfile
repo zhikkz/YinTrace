@@ -28,7 +28,11 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 flutter_ios_podfile_setup
 
 target 'Runner' do
-  use_frameworks!
+  # ONNX Runtime ships static binaries, so every pod is linked statically
+  # (see the flutter_onnxruntime README). The native audio core then lives in
+  # the Runner executable; Runner's STRIP_STYLE is "non-global" so that its
+  # C symbols stay visible to dart:ffi.
+  use_frameworks! :linkage => :static
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do

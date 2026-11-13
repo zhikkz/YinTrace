@@ -63,13 +63,29 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build ios --release --no-codesign
+      # An archive build runs the same strip step as a TestFlight/App Store build.
+      - run: flutter build ipa --release --no-codesign
+      - name: Check that the native audio core is reachable from dart:ffi
+        run: |
+          APP=build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app
+          BIN="$APP/Runner"
+          if [ -f "$APP/Frameworks/yintrace_audio.framework/yintrace_audio" ]; then
+            BIN="$APP/Frameworks/yintrace_audio.framework/yintrace_audio"
+          fi
+          echo "checking exported symbols of $BIN"
+          nm -gU "$BIN" > symbols.txt
+          missing=0
+          for s in $(grep -o "'yt_[a-z0-9_]*'" packages/yintrace_audio/lib/src/bindings.dart | tr -d "'" | sort -u); do
+            grep -q " _$s\$" symbols.txt || { echo "missing symbol: $s"; missing=1; }
+          done
+          [ "$missing" = 0 ] && echo "all yt_* symbols exported"
+          exit $missing
       - name: Package unsigned app
-        run: cd build/ios/iphoneos && zip -qr Runner-unsigned.zip Runner.app
+        run: cd build/ios/archive/Runner.xcarchive/Products/Applications && zip -qr "$GITHUB_WORKSPACE/Runner-unsigned.zip" Runner.app
       - uses: actions/upload-artifact@v4
         with:
           name: ios-unsigned
-          path: build/ios/iphoneos/Runner-unsigned.zip
+          path: Runner-unsigned.zip
 
   macos:
     name: macOS build

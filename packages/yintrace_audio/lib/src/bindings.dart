@@ -74,12 +74,11 @@ DynamicLibrary openYinTraceAudioLibrary() {
     return DynamicLibrary.open(override);
   }
   if (Platform.isIOS || Platform.isMacOS) {
-    try {
-      return DynamicLibrary.open('yintrace_audio.framework/yintrace_audio');
-    } on ArgumentError {
-      // Statically linked pods expose the symbols in the process itself.
-      return DynamicLibrary.process();
-    }
+    // Statically linked pods (the iOS app links every pod statically for
+    // ONNX Runtime) put the symbols into the process itself.
+    final process = DynamicLibrary.process();
+    if (process.providesSymbol('yt_api_version')) return process;
+    return DynamicLibrary.open('yintrace_audio.framework/yintrace_audio');
   }
   if (Platform.isAndroid || Platform.isLinux) {
     return DynamicLibrary.open('libyintrace_audio.so');
