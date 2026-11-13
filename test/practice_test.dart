@@ -81,10 +81,8 @@ void main() {
       final pipeline = ImportPipeline(
         audio: const WavAudioBackend(),
         repository: repo,
-        loadModel: (path, {inputName, outputName, useCoreML = false}) async => (
-          model: PassThroughModel(path.contains('mdx') ? 'mdx' : 'vr'),
-          inputShape: path.contains('vr') ? [1, 2, 673, 512] : null,
-        ),
+        loadModel: (path, {required inputName, required outputName, useCoreML = false}) async =>
+            PassThroughModel(path.contains('mdx') ? 'mdx' : 'vr'),
       );
       final meta = await pipeline.run(
         ImportRequest(
@@ -149,7 +147,7 @@ void main() {
       final pipeline = ImportPipeline(
         audio: const WavAudioBackend(),
         repository: repo,
-        loadModel: (path, {inputName, outputName, useCoreML = false}) =>
+        loadModel: (path, {required inputName, required outputName, useCoreML = false}) =>
             throw StateError('no models needed'),
       );
       final meta = await pipeline.run(

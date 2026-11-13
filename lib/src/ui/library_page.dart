@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../app/model_store.dart';
 import '../app/services.dart';
 import '../library/song.dart';
+import '../models/model_catalog.dart';
+import '../models/model_manager.dart';
 import 'import_page.dart';
+import 'model_setup.dart';
 import 'pitch_graph.dart';
 import 'settings_page.dart';
 import 'song_page.dart';
@@ -47,7 +49,6 @@ class _LibraryPageState extends State<LibraryPage> {
   Widget build(BuildContext context) {
     final services = AppScope.of(context);
     final songs = _songs;
-    final missingModels = services.models.pathFor(ModelKind.mdx) == null;
     final p = context.yt;
     return Scaffold(
       body: RefreshIndicator(
@@ -71,14 +72,12 @@ class _LibraryPageState extends State<LibraryPage> {
                 const SizedBox(width: 8),
               ],
             ),
-            if (missingModels)
-              SliverToBoxAdapter(
-                child: _Notice(
-                  text: '整首歌要先分离出人声，需要导入两个分离模型。已经分离好的纯人声可以直接导入。',
-                  action: '准备模型',
-                  onTap: () => _open(const SettingsPage()),
-                ),
+            SliverToBoxAdapter(
+              child: ListenableBuilder(
+                listenable: services.models,
+                builder: (context, _) => _ModelNotice(models: services.models),
               ),
+            ),
             if (songs != null && songs.isEmpty)
               SliverFillRemaining(
                 hasScrollBody: false,
@@ -109,15 +108,28 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 }
 
-class _Notice extends StatelessWidget {
-  const _Notice({required this.text, required this.action, required this.onTap});
-  final String text;
-  final String action;
-  final VoidCallback onTap;
+/// Says that the separation models still have to be downloaded (or are on
+/// their way). Hidden once they are installed.
+class _ModelNotice extends StatelessWidget {
+  const _ModelNotice({required this.models});
+  final ModelManager models;
 
   @override
   Widget build(BuildContext context) {
+    if (models.isReady) return const SizedBox.shrink();
     final p = context.yt;
+    final String text;
+    final String action;
+    if (models.busy) {
+      text = models.phase == ModelPhase.downloading
+          ? '正在下载分离模型，${(models.progress * 100).floor()}%'
+          : '正在准备分离模型…';
+      action = '查看';
+    } else {
+      text = '导入整首歌之前，要先下载两个分离模型（${formatMegabytes(models.totalBytes)}）。'
+          '已经分离好的纯人声可以直接导入。';
+      action = '下载';
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: Container(
@@ -131,8 +143,8 @@ class _Notice extends StatelessWidget {
           children: [
             Container(width: 3, height: 38, decoration: BoxDecoration(color: p.gamboge, borderRadius: BorderRadius.circular(2))),
             const SizedBox(width: 12),
-            Expanded(child: Text(text, style: context.type.bodySmall)),
-            TextButton(onPressed: onTap, child: Text(action)),
+            Expanded(child: Text(text, style: context.type.bodySmall?.copyWith(fontFeatures: tabular))),
+            TextButton(onPressed: () => ensureModels(context), child: Text(action)),
           ],
         ),
       ),

@@ -4,8 +4,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:yintrace_audio/yintrace_audio.dart';
+
 import '../library/song_repository.dart';
-import 'model_store.dart';
+import '../models/model_manager.dart';
+import '../models/model_recipe.dart';
 import 'settings.dart';
 
 /// Long-lived app objects.
@@ -14,19 +17,32 @@ class AppServices {
 
   final AppSettings settings;
   final SongRepository songs;
-  final ModelStore models;
+  final ModelManager models;
 
   static Future<AppServices> init() async {
-    final docs = await getApplicationDocumentsDirectory();
     final support = await getApplicationSupportDirectory();
     final songs = SongRepository(Directory('${support.path}/songs'));
     await songs.root.create(recursive: true);
-    final models = ModelStore(Directory('${docs.path}/models'));
-    await models.dir.create(recursive: true);
-    await models.installBundled(rootBundle);
+    final models = ModelManager(
+      dir: Directory('${support.path}/models'),
+      loadRecipe: loadBundledRecipe,
+      // The models can be downloaded again: keep them out of iCloud backups.
+      excludeFromBackup: (path) {
+        try {
+          NativeAudio.excludeFromBackup(path);
+        } catch (_) {}
+      },
+    );
     final settings = await AppSettings.load(File('${support.path}/settings.json'));
     return AppServices(settings: settings, songs: songs, models: models);
   }
+}
+
+/// The recipe bundled with the app that assembles the karaoke model.
+Future<ModelRecipe> loadBundledRecipe() async {
+  final json = await rootBundle.loadString('assets/models/karaoke_graph.json');
+  final graph = await rootBundle.load('assets/models/karaoke_graph.bin');
+  return ModelRecipe.parse(json, graph.buffer.asUint8List(graph.offsetInBytes, graph.lengthInBytes));
 }
 
 /// Makes [AppServices] available to the widget tree.

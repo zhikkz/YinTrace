@@ -101,6 +101,10 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
   return 0;
 }
 double yt_session_latency(void) { return 0.0; }
+int32_t yt_exclude_from_backup(const char* path) {
+  (void)path;
+  return 0;
+}
 int32_t yt_encode_m4a(const char* path, const float* data, int64_t frames,
                       int32_t sample_rate, int32_t channels, int32_t bitrate) {
   (void)path; (void)data; (void)frames; (void)sample_rate; (void)channels; (void)bitrate;

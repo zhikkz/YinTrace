@@ -104,23 +104,16 @@ class ImportJob {
       if (msg == 'cancel') cancelled = true;
     });
 
-    Future<LoadedModel> loader(String path,
-        {String? inputName, String? outputName, bool useCoreML = false}) async {
-      OnnxTensorModel model;
+    Future<TensorModel> loader(String path,
+        {required String inputName, required String outputName, bool useCoreML = false}) async {
       try {
-        model = await OnnxTensorModel.load(path,
+        return await OnnxTensorModel.load(path,
             inputName: inputName, outputName: outputName, useCoreML: useCoreML);
       } catch (_) {
         if (!useCoreML) rethrow;
-        model = await OnnxTensorModel.load(path, inputName: inputName, outputName: outputName);
+        // Core ML could not take the model: fall back to the CPU.
+        return OnnxTensorModel.load(path, inputName: inputName, outputName: outputName);
       }
-      List<int>? shape;
-      try {
-        final info = await model.inputInfo();
-        final s = info.isNotEmpty ? info.first['shape'] : null;
-        if (s is List) shape = [for (final d in s) d is int ? d : -1];
-      } catch (_) {}
-      return (model: model, inputShape: shape);
     }
 
     final pipeline = ImportPipeline(

@@ -1,36 +1,232 @@
 # Third-party notices
 
+YinTrace is built on the work listed here. The app shows the same credits
+under 设置 → 致谢与开源许可, together with the licenses of every Flutter
+package it links.
+
+What this repository does **not** contain: no model weights, no audio, and no
+lyrics of published songs (the lyrics in the tests and examples were written
+for this project).
+
+## Models: UVR-MDX-NET-Voc_FT and 6_HP-Karaoke-UVR
+
+Trained and published by the developers of Ultimate Vocal Remover,
+[Anjok07](https://github.com/anjok07) and [aufr33](https://github.com/aufr33).
+
+- The models are **not redistributed** by this project. The app downloads the
+  original files from UVR's official model repository
+  (`https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/`)
+  and checks their SHA-256.
+- UVR's README says: "For all third-party application developers who wish to
+  use our models, please honor the MIT license by providing credit to UVR and
+  its developers." YinTrace credits them in the app, in the model download
+  dialog and here.
+- `assets/models/karaoke_graph.bin` / `.json` hold the *graph* of the
+  6_HP-Karaoke-UVR network (its layer structure, exported from the network
+  definition below) and the byte offsets of the weight tensors inside the
+  official `.pth`. They contain no weight data.
+
 ## Ultimate Vocal Remover GUI (MIT License)
 
 https://github.com/Anjok07/ultimatevocalremovergui
 
-- `lib/src/separation/mdx_separator.dart` and `lib/src/separation/vr_separator.dart`
-  port the MDX-Net demixing and VR-architecture pre/post-processing of UVR
-  (`separate.py`, `lib_v5/spec_utils.py`).
-- `tools/prepare_models.py` re-implements the VR network definitions of
-  `lib_v5/vr_network` so that UVR state dicts load unchanged.
-- `tools/uvr_model_data.json` contains UVR's model metadata and VR band
-  configurations (`models/*/model_data/model_data.json`,
-  `lib_v5/vr_network/modelparams/*.json`).
-- The models `UVR-MDX-NET-Voc_FT` and `6_HP-Karaoke-UVR` are distributed by
-  the UVR project. The UVR authors ask third-party applications using their
-  models to credit UVR and its developers.
+- `lib/src/separation/mdx_separator.dart` and
+  `lib/src/separation/vr_separator.dart` port UVR's MDX-Net demixing and
+  VR-architecture pre/post-processing (`separate.py`, `lib_v5/spec_utils.py`).
+- `tools/build_karaoke_graph.py` re-implements the VR network definition
+  (`lib_v5/vr_network/nets.py`, `layers.py`) so that UVR's state dict loads
+  unchanged.
+- `lib/src/separation/model_config.dart` and
+  `tools/reference/vr_band_params.json` contain UVR's band configurations
+  (`lib_v5/vr_network/modelparams/`) and model parameters
+  (`models/*/model_data/model_data.json`).
+
+UVR's README states that its code is MIT-licensed. The license file last
+present in that repository reads:
+
+    MIT License
+
+    Copyright (c) 2022 Anjok07, Aufr33
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+## vocal-remover by tsurumeso (MIT License)
+
+https://github.com/tsurumeso/vocal-remover — the origin of UVR's VR
+architecture (network layers and multi-band spectrogram processing).
+
+    MIT License
+
+    Copyright (c) 2019 tsurumeso
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+## MDX-Net by Kuielab / Woosung Choi (MIT License)
+
+https://github.com/kuielab/mdx-net — the origin of the MDX-Net architecture
+and of the chunked STFT demixing procedure.
+
+    MIT License
+
+    Copyright (c) 2020 KINoAI
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
 
 ## miniaudio
 
 https://github.com/mackron/miniaudio — `packages/yintrace_audio/src/miniaudio.h`
-(version 0.11.25), available under your choice of the public domain (Unlicense)
-or MIT No Attribution. See the license text at the end of the header.
+(version 0.11.25), by David Reid. Available under the public domain
+(Unlicense) or MIT No Attribution, at your choice; the full text is at the end
+of the header. YinTrace uses it under MIT No Attribution.
 
-## pypinyin (MIT License)
+## ONNX Runtime (MIT License)
 
-https://github.com/mozillazg/python-pinyin — `lib/src/analysis/pinyin_initials.dart`
-(the onset class of each GB2312 character) is generated from pypinyin's data by
+https://github.com/microsoft/onnxruntime — linked through the
+`flutter_onnxruntime` plugin (MIT License, © MASIC AI).
+
+    MIT License
+
+    Copyright (c) Microsoft Corporation
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+## pypinyin and pinyin-data (MIT License)
+
+https://github.com/mozillazg/python-pinyin and
+https://github.com/mozillazg/pinyin-data — `lib/src/analysis/pinyin_initials.dart`
+(the onset class of each GB2312 character) is generated from their data by
 `tools/reference/make_pinyin_table.py`.
+
+    The MIT License (MIT)
+
+    Copyright (c) 2016 mozillazg, 闲耘 <hotoo.cn@gmail.com>
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy of
+    this software and associated documentation files (the "Software"), to deal in
+    the Software without restriction, including without limitation the rights to
+    use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+    the Software, and to permit persons to whom the Software is furnished to do so,
+    subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+    FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+    COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+    IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+    The MIT License (MIT)
+
+    Copyright (c) 2016 mozillazg
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+## YIN
+
+The pitch detector implements the algorithm published in A. de Cheveigné and
+H. Kawahara, "YIN, a fundamental frequency estimator for speech and music",
+J. Acoust. Soc. Am. 111 (4), 2002. The implementation in `lib/src/dsp/yin.dart`
+was written for this project from the paper.
 
 ## Flutter packages
 
-The app depends on Flutter packages listed in `pubspec.yaml` (e.g.
-`flutter_onnxruntime`, `fftea`, `file_picker`, `path_provider`,
-`wakelock_plus`, `ffi`), each under its own license as published on pub.dev.
-ONNX Runtime is © Microsoft Corporation (MIT License).
+Linked into the app, each under the license published with the package:
+
+| Package | License |
+|---|---|
+| Flutter SDK, `flutter_localizations` | BSD 3-Clause |
+| `flutter_onnxruntime` | MIT |
+| `file_picker` | MIT |
+| `fftea` | Apache 2.0 |
+| `crypto`, `ffi`, `path_provider` | BSD 3-Clause |
+| `wakelock_plus` (and `package_info_plus`) | BSD 3-Clause |
+| `cupertino_icons` | MIT |
+
+## Development-only tools
+
+Not part of the app: PyTorch, ONNX, NumPy, SciPy, librosa and pYIN (used by
+`tools/` to export the network graph and to produce reference values for the
+tests).

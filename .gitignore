@@ -47,10 +47,8 @@ app.*.map.json
 # Widget Preview related
 .widget_preview/
 
-# Separation models are large binaries supplied by the user (see README).
+# Model weights are downloaded by the app from the UVR project; they are
+# never committed. (assets/models only holds the graph + copy recipe.)
 *.onnx
 *.pth
 *.ckpt
-/build/models/
-/assets/models/*
-!/assets/models/README.md

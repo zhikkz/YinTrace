@@ -53,7 +53,7 @@ class ImportRequest {
   final String? accompanimentPath;
   final String? mdxModelPath;
 
-  /// Without a VR (karaoke) model the MDX vocals are used directly.
+  /// Null skips the harmony removal: the MDX vocals are used directly.
   final String? vrModelPath;
   final bool useCoreML;
   final bool keepOriginal;
@@ -92,11 +92,8 @@ class ImportProgress {
   final double overall;
 }
 
-/// A loaded model plus the input shape it declares (if known).
-typedef LoadedModel = ({TensorModel model, List<int>? inputShape});
-
-typedef ModelLoader = Future<LoadedModel> Function(String path,
-    {String? inputName, String? outputName, bool useCoreML});
+typedef ModelLoader = Future<TensorModel> Function(String path,
+    {required String inputName, required String outputName, bool useCoreML});
 
 class ImportException implements Exception {
   ImportException(this.message);
@@ -130,7 +127,7 @@ class ImportPipeline {
     }
     final separate = !r.vocalsOnly;
     if (separate && r.mdxModelPath == null) {
-      throw ImportException('缺少人声分离模型 UVR-MDX-NET-Voc_FT，请先在“设置 → 模型”中导入');
+      throw ImportException('还没有下载人声分离模型');
     }
     final stages = <ImportStage>[
       ImportStage.decoding,
@@ -163,30 +160,27 @@ class ImportPipeline {
       Float32List? accompaniment;
       final modelInfo = <String, String>{};
       if (separate) {
-        final mdxSide = readSidecar(r.mdxModelPath!);
-        final mdxCfg = mdxSide != null ? MdxConfig.fromJson(mdxSide) : MdxConfig.vocFt;
+        const mdxCfg = MdxConfig.vocFt;
         final mdx = await loadModel(r.mdxModelPath!,
             inputName: mdxCfg.inputName, outputName: mdxCfg.outputName, useCoreML: r.useCoreML);
         try {
-          vocals = await MdxSeparator(mdx.model, mdxCfg)
+          vocals = await MdxSeparator(mdx, mdxCfg)
               .separate(mix.samples, onProgress: (f) => report(ImportStage.separatingVocals, f));
         } finally {
-          await mdx.model.close();
+          await mdx.close();
         }
         modelInfo['mdx'] = mdxCfg.name;
         if (r.vrModelPath != null) {
-          final vrSide = readSidecar(r.vrModelPath!);
+          const vrCfg = VrConfig.karaoke6Hp;
           final vr = await loadModel(r.vrModelPath!,
-              inputName: vrSide?['input_name'] as String?,
-              outputName: vrSide?['output_name'] as String?,
-              useCoreML: r.useCoreML);
+              inputName: vrCfg.inputName, outputName: vrCfg.outputName, useCoreML: r.useCoreML);
           try {
-            final vrCfg = resolveVrConfig(r.vrModelPath!, vrSide, vr.inputShape);
-            vocals = await VrSeparator(vr.model, vrCfg).separate(vocals,
+            // The karaoke model's secondary stem is the lead vocal.
+            vocals = await VrSeparator(vr, vrCfg).separate(vocals,
                 stem: VrStem.secondary, onProgress: (f) => report(ImportStage.removingHarmony, f));
             modelInfo['vr'] = vrCfg.name;
           } finally {
-            await vr.model.close();
+            await vr.close();
           }
         }
         accompaniment = MdxSeparator.secondaryStem(mix.samples, vocals);
@@ -262,18 +256,6 @@ class ImportPipeline {
     out.setRange(0, x.length < length ? x.length : length, x);
     return out;
   }
-}
-
-/// Picks the VR band configuration: from the sidecar JSON written by
-/// `tools/prepare_models.py`, or (without one) from the model's input
-/// height, which identifies the two UVR karaoke configurations.
-VrConfig resolveVrConfig(String path, Map<String, dynamic>? sidecar, List<int>? inputShape) {
-  if (sidecar != null && sidecar['params'] != null) return VrConfig.fromSidecar(sidecar);
-  final name = path.split('/').last.replaceAll('.onnx', '');
-  final bins = inputShape != null && inputShape.length == 4 ? inputShape[2] : null;
-  if (bins == 641) return VrConfig.karaoke3BandMsb2(name: name);
-  if (bins == null || bins == 673) return VrConfig.karaoke4BandV2Sn(name: name);
-  throw ImportException('无法识别 VR 模型的频带配置（输入高度 $bins），请用 tools/prepare_models.py 重新转换以生成 .json 配置');
 }
 
 /// Re-aligns an existing song after its lyrics changed (no re-separation).

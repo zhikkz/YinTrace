@@ -12,7 +12,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:yintrace/src/app/model_store.dart';
 import 'package:yintrace/src/app/services.dart';
 import 'package:yintrace/src/app/settings.dart';
 import 'package:yintrace/src/audio/audio_backend.dart';
@@ -20,7 +19,9 @@ import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace/src/import/import_pipeline.dart';
 import 'package:yintrace/src/library/song.dart';
 import 'package:yintrace/src/library/song_repository.dart';
+import 'package:yintrace/src/models/model_manager.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
+import 'package:yintrace/src/ui/about_page.dart';
 import 'package:yintrace/src/ui/app.dart';
 import 'package:yintrace/src/ui/import_page.dart';
 import 'package:yintrace/src/ui/library_page.dart';
@@ -114,7 +115,10 @@ void main() {
     services = AppServices(
       settings: AppSettings(null),
       songs: songs,
-      models: ModelStore(Directory('${tmp.path}/models')),
+      models: ModelManager(
+        dir: Directory('${tmp.path}/models'),
+        loadRecipe: () => throw StateError('unused'),
+      ),
     );
     // A "pure vocal" + accompaniment import (no models needed).
     final m = melody();
@@ -125,7 +129,7 @@ void main() {
     song = await ImportPipeline(
       audio: const WavAudioBackend(),
       repository: songs,
-      loadModel: (p, {inputName, outputName, useCoreML = false}) => throw StateError('unused'),
+      loadModel: (p, {required inputName, required outputName, useCoreML = false}) => throw StateError('unused'),
     ).run(ImportRequest(
       audioPath: '${tmp.path}/vocal.wav',
       accompanimentPath: '${tmp.path}/acc.wav',
@@ -159,7 +163,9 @@ void main() {
     await settleIo(tester);
     expect(find.text('夜航（示例）'), findsOneWidget);
     expect(find.text('82'), findsOneWidget);
-    expect(find.text('准备模型'), findsOneWidget);
+    // The separation models are not installed: the library offers them.
+    expect(find.textContaining('两个分离模型（194 MB）'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '下载'), findsOneWidget);
     await screenshot(tester, '1_library');
   });
 
@@ -192,27 +198,32 @@ void main() {
     await screenshot(tester, '5_import');
   });
 
-  test('model kinds are recognised from file names', () {
-    expect(ModelStore.guessKind('UVR-MDX-NET-Voc_FT.onnx'), ModelKind.mdx);
-    expect(ModelStore.guessKind('6_HP-Karaoke-UVR.onnx'), ModelKind.vr);
-    expect(ModelStore.guessKind('5_HP-Karaoke-UVR.onnx'), ModelKind.vr);
-    expect(ModelStore.guessKind('9_HP2-UVR.onnx'), ModelKind.vr);
-    expect(ModelStore.guessKind('something.onnx'), isNull);
-  });
-
-  testWidgets('settings page lists model status and practice options', (tester) async {
+  testWidgets('settings page shows the model status and practice options', (tester) async {
     phone(tester);
-    File('${services.models.dir.path}/UVR-MDX-NET-Voc_FT.onnx')
-      ..createSync(recursive: true)
-      ..writeAsStringSync('x');
-    addTearDown(() => File('${services.models.dir.path}/UVR-MDX-NET-Voc_FT.onnx').deleteSync());
     await tester.pumpWidget(host(services, const SettingsPage()));
     await tester.pump();
-    expect(find.text('人声分离'), findsOneWidget);
-    expect(find.textContaining('UVR-MDX-NET-Voc_FT.onnx'), findsWidgets);
-    expect(find.text('需要 6_HP-Karaoke-UVR'), findsOneWidget); // the karaoke model
+    expect(find.text('人声分离和去和声'), findsOneWidget);
+    expect(find.text('还没有下载（194 MB）'), findsOneWidget);
     expect(find.text('忽略八度'), findsOneWidget);
     await screenshot(tester, '6_settings');
+    // The download sheet names both models and credits their authors.
+    await tester.tap(find.widgetWithText(TextButton, '下载'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('下载分离模型'), findsOneWidget);
+    expect(find.text('人声分离'), findsOneWidget);
+    expect(find.text('去和声'), findsOneWidget);
+    expect(find.textContaining('Ultimate Vocal Remover'), findsOneWidget);
+    await screenshot(tester, '7_model_download');
+  });
+
+  testWidgets('about page credits the models and opens the licenses', (tester) async {
+    phone(tester);
+    await tester.pumpWidget(host(services, const AboutPage()));
+    await tester.pump();
+    expect(find.textContaining('Anjok07 和 aufr33'), findsOneWidget);
+    expect(find.text('开源许可'), findsOneWidget);
+    await screenshot(tester, '8_about');
   });
 
   final lib = Platform.environment['YINTRACE_AUDIO_LIB'];

@@ -11,11 +11,11 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yintrace/src/analysis/reference.dart';
-import 'package:yintrace/src/app/model_store.dart';
 import 'package:yintrace/src/app/services.dart';
 import 'package:yintrace/src/app/settings.dart';
 import 'package:yintrace/src/library/song.dart';
 import 'package:yintrace/src/library/song_repository.dart';
+import 'package:yintrace/src/models/model_manager.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
 import 'package:yintrace/src/ui/import_page.dart';
 import 'package:yintrace/src/ui/library_page.dart';
@@ -51,7 +51,7 @@ void main() {
     tmp = Directory.systemTemp.createTempSync('yt_design');
     final repo = SongRepository(Directory('${tmp.path}/songs'));
     services = AppServices(
-        settings: AppSettings(null), songs: repo, models: ModelStore(Directory('${tmp.path}/models')));
+        settings: AppSettings(null), songs: repo, models: ModelManager(dir: Directory('${tmp.path}/models'), loadRecipe: () => throw StateError('unused')));
     final id = repo.newSongId();
     File('$dir/reference.json').copySync(repo.pathFor(id, SongRepository.referenceFile));
     File('$dir/pitch.bin').copySync(repo.pathFor(id, SongRepository.pitchFile));
@@ -111,7 +111,8 @@ void main() {
     testWidgets('practice $b', (tester) async {
       phone(tester);
       final contour = await tester.runAsync(() => services.songs.loadPitchTrack(song.id));
-      // A singer who follows the reference, sharp on some characters and flat on others.
+      // A singer who follows the reference, sharp on some characters and
+      // flat on others.
       final syls = <Syl>[];
       final rng = math.Random(5);
       for (final line in ref.lines) {

@@ -40,9 +40,6 @@ class OnnxTensorModel implements TensorModel {
     return OnnxTensorModel._(session, inName, outName);
   }
 
-  /// Input shapes declared by the model (dynamic dimensions are -1 / null).
-  Future<List<Map<String, dynamic>>> inputInfo() => _session.getInputInfo();
-
   @override
   Future<Float32List> run(Float32List input, List<int> shape) async {
     final value = await OrtValue.fromList(input, shape);

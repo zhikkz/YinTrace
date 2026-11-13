@@ -91,6 +91,16 @@ double yt_session_latency(void) {
 
 #pragma clang diagnostic pop
 
+int32_t yt_exclude_from_backup(const char* path) {
+  if (path == NULL) return -1;
+  @autoreleasepool {
+    NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
+    NSError* error = nil;
+    BOOL ok = [url setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&error];
+    return ok ? 0 : -2;
+  }
+}
+
 static void yt_client_format(AudioStreamBasicDescription* f, double rate, UInt32 channels) {
   memset(f, 0, sizeof(*f));
   f->mSampleRate = rate;

@@ -4,11 +4,12 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../analysis/lrc.dart';
-import '../app/model_store.dart';
 import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../import/import_job.dart';
 import '../import/import_pipeline.dart';
+import '../models/model_catalog.dart';
+import 'model_setup.dart';
 import 'song_page.dart';
 import 'theme.dart';
 
@@ -82,13 +83,12 @@ class _ImportPageState extends State<ImportPage> {
 
   Future<void> _start() async {
     final services = AppScope.of(context);
-    final mdx = services.models.pathFor(ModelKind.mdx);
-    final vr = services.models.pathFor(ModelKind.vr);
     if (_audioPath == null) return;
-    if (!_vocalsOnly && mdx == null) {
-      setState(() => _error = '缺少 UVR-MDX-NET-Voc_FT 模型，请先到“设置 → 模型”导入。');
-      return;
-    }
+    // Separating a whole song needs the two models; offer to download them.
+    if (!_vocalsOnly && !await ensureModels(context)) return;
+    if (!mounted) return;
+    final mdx = services.models.pathFor(vocalModel);
+    final vr = services.models.pathFor(karaokeModel);
     final request = ImportRequest(
       audioPath: _audioPath!,
       lyrics: _lyrics.text,
@@ -143,16 +143,14 @@ class _ImportPageState extends State<ImportPage> {
 
   @override
   Widget build(BuildContext context) {
-    final services = AppScope.of(context);
     final busy = _progress != null;
     final parsed = _parsed;
-    final hasVr = services.models.pathFor(ModelKind.vr) != null;
     final canStart = !busy && _audioPath != null && parsed.lines.isNotEmpty;
     return PopScope(
       canPop: !busy,
       child: Scaffold(
         appBar: AppBar(title: Text(busy ? '' : '导入歌曲')),
-        body: busy ? _buildProgress(context) : _buildForm(context, parsed, hasVr),
+        body: busy ? _buildProgress(context) : _buildForm(context, parsed),
         bottomNavigationBar: busy
             ? null
             : SafeArea(
@@ -218,7 +216,7 @@ class _ImportPageState extends State<ImportPage> {
     );
   }
 
-  Widget _buildForm(BuildContext context, LrcParseResult parsed, bool hasVr) {
+  Widget _buildForm(BuildContext context, LrcParseResult parsed) {
     final p = context.yt;
     final chars = parsed.lines.fold<int>(0, (s, l) => s + l.tokens.length);
     return ListView(
@@ -250,10 +248,10 @@ class _ImportPageState extends State<ImportPage> {
         if (!_vocalsOnly)
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            value: _skipHarmony || !hasVr,
-            onChanged: hasVr ? (v) => setState(() => _skipHarmony = v) : null,
+            value: _skipHarmony,
+            onChanged: (v) => setState(() => _skipHarmony = v),
             title: const Text('不去和声'),
-            subtitle: Text(hasVr ? '歌里没有和声时可以打开，处理更快' : '没有导入 6_HP-Karaoke 模型，只分离人声'),
+            subtitle: const Text('歌里没有和声时可以打开，处理更快'),
           ),
         _step(context, 2, '歌曲信息'),
         TextField(controller: _title, decoration: const InputDecoration(hintText: '歌名')),

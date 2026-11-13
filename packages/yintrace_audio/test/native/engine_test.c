@@ -237,6 +237,17 @@ int main(int argc, char** argv) {
   int64_t frames;
   CHECK(yt_decode_file("/nonexistent.mp3", 44100, 2, &frames, err, sizeof err) == NULL);
   CHECK(yt_encode_m4a("/tmp/x.m4a", NULL, 0, 44100, 2, 128000) < 0);
+  // Excluding from backups succeeds on an existing file (a no-op outside
+  // Apple platforms).
+  {
+    char marker[1024];
+    snprintf(marker, sizeof marker, "%s/yt_backup_test", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+    FILE* f = fopen(marker, "w");
+    CHECK(f != NULL);
+    if (f) fclose(f);
+    CHECK(yt_exclude_from_backup(marker) == 0);
+    remove(marker);
+  }
 #ifndef __APPLE__
   // No AAC encoder outside Apple platforms: callers fall back to WAV.
   float one[2] = {0, 0};

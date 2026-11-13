@@ -1,8 +1,10 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../app/model_store.dart';
 import '../app/services.dart';
+import '../models/model_catalog.dart';
+import '../models/model_manager.dart';
+import 'about_page.dart';
+import 'model_setup.dart';
 import 'theme.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -13,58 +15,14 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  bool _busy = false;
-
-  Future<void> _importModel() async {
-    final store = AppScope.of(context).models;
-    final messenger = ScaffoldMessenger.of(context);
-    final files = await FilePicker.pickFiles(type: FileType.any);
-    if (files.isEmpty || !mounted) return;
-    setState(() => _busy = true);
-    try {
-      var n = 0;
-      for (final f in files) {
-        final path = f.path;
-        if (path == null) continue;
-        final lower = f.name.toLowerCase();
-        if (!lower.endsWith('.onnx') && !lower.endsWith('.json')) {
-          messenger.showSnackBar(SnackBar(
-              content: Text('${f.name} 不是 .onnx 或 .json。.pth 要先在电脑上用 tools/prepare_models.py 转换。')));
-          continue;
-        }
-        await store.importFile(path);
-        n++;
-      }
-      if (n > 0) messenger.showSnackBar(SnackBar(content: Text('导入了 $n 个文件')));
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('导入失败：$e')));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final services = AppScope.of(context);
     final s = services.settings;
-    final models = services.models.list();
     final p = context.yt;
     Future<void> set(void Function() change) async {
       await s.update((_) => change());
       setState(() {});
-    }
-
-    Future<void> delete(ModelFile m) async {
-      await services.models.delete(m);
-      if (mounted) setState(() {});
-    }
-
-    String sizeOf(ModelFile m) {
-      try {
-        return '${(m.sizeBytes / 1e6).toStringAsFixed(0)} MB';
-      } catch (_) {
-        return '';
-      }
     }
 
     return Scaffold(
@@ -74,38 +32,19 @@ class _SettingsPageState extends State<SettingsPage> {
           SliverList.list(children: [
             const _Section('分离模型'),
             _Group(children: [
-              for (final kind in ModelKind.values)
-                _ModelRow(
-                  kind: kind,
-                  file: models.where((m) => m.path == services.models.pathFor(kind)).firstOrNull,
-                  size: sizeOf,
-                  onDelete: delete,
-                ),
-              for (final m in models.where((m) => m.path != services.models.pathFor(m.kind)))
-                _ModelRow(kind: m.kind, file: m, size: sizeOf, onDelete: delete, spare: true),
-            ]),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-              child: OutlinedButton.icon(
-                onPressed: _busy ? null : _importModel,
-                style: OutlinedButton.styleFrom(alignment: Alignment.center),
-                icon: _busy
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.file_open_outlined),
-                label: const Text('导入模型文件'),
+              ListenableBuilder(
+                listenable: services.models,
+                builder: (context, _) => _ModelsRow(models: services.models),
               ),
-            ),
-            _Footnote('UVR-MDX-NET-Voc_FT.onnx 可以直接导入。6_HP-Karaoke-UVR.pth 要先在电脑上运行 '
-                'tools/prepare_models.py，转成 .onnx 和同名 .json 后一起导入；'
-                '也可以用“文件”App 或访达把它们拷进 YinTrace 的 models 文件夹。'),
-            _Group(children: [
               SwitchListTile(
-                title: const Text('分离时用 Core ML 加速'),
-                subtitle: const Text('不兼容时自动改用 CPU'),
+                title: const Text('用 Core ML 加速'),
+                subtitle: const Text('试验功能；不兼容时自动改用 CPU'),
                 value: s.useCoreML,
                 onChanged: (v) => set(() => s.useCoreML = v),
               ),
             ]),
+            const _Footnote('导入整首歌时，用 UVR 的两个模型在手机上分离人声、去掉和声。'
+                '删除模型不影响已经导入的歌。'),
             const _Section('练习'),
             _Group(children: [
               _SliderRow(
@@ -169,11 +108,15 @@ class _SettingsPageState extends State<SettingsPage> {
             ]),
             _Footnote('你的音高线总比原唱靠右，就把延迟补偿调大；蓝牙耳机通常要 +150 到 +250 ms。'
                 '环境吵、音高线乱跳时，把麦克风门限调高。'),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
-              child: Text('YinTrace 的人声分离基于 Ultimate Vocal Remover 的模型。',
-                  style: context.type.labelSmall?.copyWith(color: p.inkFaint)),
-            ),
+            const _Section('关于'),
+            _Group(children: [
+              ListTile(
+                title: const Text('致谢与开源许可'),
+                trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AboutPage())),
+              ),
+            ]),
+            const SizedBox(height: 40),
           ]),
         ],
       ),
@@ -257,52 +200,65 @@ class _SliderRow extends StatelessWidget {
       );
 }
 
-class _ModelRow extends StatelessWidget {
-  const _ModelRow({required this.kind, required this.file, required this.size, required this.onDelete, this.spare = false});
-  final ModelKind kind;
-  final ModelFile? file;
-  final String Function(ModelFile) size;
-  final void Function(ModelFile) onDelete;
-  final bool spare;
+/// Status of the two separation models, with download / delete.
+class _ModelsRow extends StatelessWidget {
+  const _ModelsRow({required this.models});
+  final ModelManager models;
+
+  Future<void> _delete(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除分离模型？'),
+        content: Text('可以腾出 ${formatMegabytes(models.installedBytes)}。已经导入的歌不受影响；'
+            '下次导入整首歌时要重新下载。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok == true) await models.deleteAll();
+  }
 
   @override
   Widget build(BuildContext context) {
     final p = context.yt;
-    final f = file;
-    final ready = f != null;
+    final ready = models.isReady;
+    final busy = models.busy;
+    final String status;
+    if (ready) {
+      status = '已下载，占用 ${formatMegabytes(models.installedBytes)}';
+    } else if (busy) {
+      status = models.phase == ModelPhase.downloading
+          ? '正在下载，${(models.progress * 100).floor()}%'
+          : '正在准备…';
+    } else {
+      status = '还没有下载（${formatMegabytes(models.totalBytes)}）';
+    }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 12, 14),
+      padding: const EdgeInsets.fromLTRB(20, 12, 8, 12),
       child: Row(
         children: [
           Container(
             width: 9,
             height: 9,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: spare ? p.staffStrong : (ready ? p.malachite : p.cinnabar),
-            ),
+            decoration: BoxDecoration(shape: BoxShape.circle, color: ready ? p.malachite : p.gamboge),
           ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(spare ? '备用：${kind.label}' : kind.label, style: context.type.bodyLarge),
-                Text(
-                  ready ? '${f.name}，${size(f)}${f.hasSidecar ? '' : '，没有配置文件'}' : '需要 ${kind.recommended}',
-                  style: context.type.bodySmall,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text('人声分离和去和声', style: context.type.bodyLarge),
+                Text(status, style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
               ],
             ),
           ),
-          if (ready)
-            IconButton(
-              tooltip: '删除',
-              icon: Icon(Icons.delete_outline_rounded, color: p.inkFaint),
-              onPressed: () => onDelete(f),
-            ),
+          TextButton(
+            onPressed: () => ready ? _delete(context) : ensureModels(context),
+            child: Text(ready ? '删除' : (busy ? '查看' : '下载')),
+          ),
         ],
       ),
     );

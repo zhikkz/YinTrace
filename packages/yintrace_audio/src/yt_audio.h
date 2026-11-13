@@ -58,6 +58,11 @@ YT_EXPORT int32_t yt_encode_m4a(const char* path, const float* data,
                                 int64_t frames, int32_t sample_rate,
                                 int32_t channels, int32_t bitrate);
 
+// Marks a file or directory as excluded from device backups (iCloud/iTunes).
+// For data the app can download again. Returns 0 on success or where the
+// platform has no such concept, < 0 on error.
+YT_EXPORT int32_t yt_exclude_from_backup(const char* path);
+
 // ---------------------------------------------------------------------------
 // Audio session / permissions (meaningful on iOS and macOS, no-ops elsewhere)
 // ---------------------------------------------------------------------------

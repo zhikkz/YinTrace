@@ -34,15 +34,27 @@ jobs:
         run: |
           flutter pub get
           YINTRACE_AUDIO_LIB=$GITHUB_WORKSPACE/build/host/libyintrace_audio.so flutter test
+      - name: Cache the UVR models
+        uses: actions/cache@v4
+        with:
+          path: build/uvr-models
+          key: uvr-models-534b2070-4ce7eaaa
+      - name: Fetch the UVR models (same files the app downloads)
+        run: tools/fetch_models.sh build/uvr-models
+      # MODELS_DIR turns on the test that assembles the real karaoke model
+      # with the recipe bundled in the app and checks its SHA-256.
       - name: App tests
-        run: YINTRACE_AUDIO_LIB=$GITHUB_WORKSPACE/build/host/libyintrace_audio.so SCREENSHOT_DIR=build/screenshots flutter test
+        run: >
+          YINTRACE_AUDIO_LIB=$GITHUB_WORKSPACE/build/host/libyintrace_audio.so
+          MODELS_DIR=$GITHUB_WORKSPACE/build/uvr-models
+          SCREENSHOT_DIR=build/screenshots flutter test
       - uses: actions/upload-artifact@v4
         with:
           name: screenshots
           path: build/screenshots
 
   model-tools:
-    name: Model converter self-test
+    name: Model recipe (PyTorch vs ONNX Runtime)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +62,16 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install onnx onnxscript onnxruntime numpy
-      - run: python tools/prepare_models.py selftest
+      - name: Round trip with random weights
+        run: python tools/build_karaoke_graph.py selftest
+      - name: Cache the UVR models
+        uses: actions/cache@v4
+        with:
+          path: build/uvr-models
+          key: uvr-models-534b2070-4ce7eaaa
+      - run: tools/fetch_models.sh build/uvr-models
+      - name: Assemble the real model from the bundled recipe and compare with PyTorch
+        run: python tools/build_karaoke_graph.py verify build/uvr-models/6_HP-Karaoke-UVR.pth
 
   ios:
     name: iOS build (no codesign)

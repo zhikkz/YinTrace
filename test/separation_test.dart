@@ -9,6 +9,8 @@ import 'package:yintrace/src/separation/model_config.dart';
 import 'package:yintrace/src/separation/tensor_model.dart';
 import 'package:yintrace/src/separation/vr_separator.dart';
 
+import 'support/vr_configs.dart';
+
 /// Produced by tools/reference/make_separation_fixtures.py from UVR's code.
 final Map<String, dynamic> ref = jsonDecode(
     File('test/fixtures/separation_reference.json').readAsStringSync());
@@ -122,8 +124,8 @@ void main() {
   });
 
   for (final cfg in [
-    ('4band_v2_sn', VrConfig.karaoke4BandV2Sn()),
-    ('3band_44100_msb2', VrConfig.karaoke3BandMsb2()),
+    ('4band_v2_sn', vr4BandV2Sn),
+    ('3band_44100_msb2', VrConfig.karaoke6Hp),
   ]) {
     test('VR ${cfg.$1} matches UVR (primary and secondary stems)', () async {
       final sep = VrSeparator(FakeVrModel(), cfg.$2);
@@ -135,34 +137,9 @@ void main() {
     });
   }
 
-  test('VR sidecar JSON from tools/prepare_models.py parses', () {
-    final data = jsonDecode(File('tools/uvr_model_data.json').readAsStringSync());
-    final params = data['vr_params']['4band_v2_sn'];
-    final cfg = VrConfig.fromSidecar({
-      'name': 'x',
-      'primary_stem': 'Instrumental',
-      'is_karaoke': true,
-      'window_size': 512,
-      'offset': 128,
-      'params': params,
-    });
-    final builtin = VrConfig.karaoke4BandV2Sn();
-    expect(cfg.bins, builtin.bins);
-    expect(cfg.bands.length, builtin.bands.length);
-    for (var i = 0; i < cfg.bands.length; i++) {
-      expect(cfg.bands[i].sr, builtin.bands[i].sr);
-      expect(cfg.bands[i].cropStop, builtin.bands[i].cropStop);
-      expect(cfg.bands[i].hpfStop, builtin.bands[i].hpfStop);
-      expect(cfg.bands[i].lpfStop, builtin.bands[i].lpfStop);
-    }
-    final msb2 = VrConfig.fromSidecar({'params': data['vr_params']['3band_44100_msb2']});
-    expect(msb2.midSideB2, isTrue);
-    expect(msb2.bins, 640);
-  });
-
   test('VR segmented processing matches single-pass processing', () async {
     final long = synth(40.0);
-    final cfg = VrConfig.karaoke4BandV2Sn();
+    const cfg = vr4BandV2Sn;
     final single = await VrSeparator(FakeVrModel(), cfg, segmentSeconds: 100)
         .separate(long);
     final seg = await VrSeparator(FakeVrModel(), cfg,

@@ -9,7 +9,7 @@ Windows / macOS / Android 保留了可移植性。
    `6_HP-Karaoke-UVR` 去掉和声，得到纯净的主唱人声。全部在手机本地完成。
 2. **逐字逐句音高图**：根据你输入的带时间歌词（`[00:12.40]夜里的风慢慢吹过窗台`），
    测量纯人声里每一句、每一个字的音高，在音高表里画出一段一段的线条，并保存在本地曲库。
-3. **演唱练习（主打功能）**：像 Pitch Witch 一样用 **YIN 算法**实时分析你唱的音高，
+3. **演唱练习（主打功能）**：用 **YIN 算法**实时分析你唱的音高，
    和第 2 步生成的逐字音高图对齐显示，唱完告诉你哪个字唱高了、唱低了、没唱出来、
    不稳、抢拍或进晚了，可以单句循环练到唱准为止。
 
@@ -22,7 +22,7 @@ Windows / macOS / Android 保留了可移植性。
 ## 目录
 
 - [快速开始（iOS）](#快速开始ios)
-- [准备分离模型](#准备分离模型)
+- [分离模型](#分离模型)
 - [使用说明](#使用说明)
 - [歌词格式](#歌词格式)
 - [工作原理](#工作原理)
@@ -51,44 +51,33 @@ flutter run --release            # 连接 iPhone 后运行（人声分离很吃�
 - 第一次练习时系统会请求**麦克风权限**。
 - 所有插件都通过 CocoaPods 集成（`pubspec.yaml` 里关闭了 Swift Package Manager）。
 
-## 准备分离模型
+## 分离模型
 
-模型文件很大（每个 60–130 MB），不包含在仓库里。你已经下载好的两个模型需要这样处理：
+YinTrace 只用 Ultimate Vocal Remover 的两个模型，**不需要你手动准备**：第一次导入整首歌时，
+App 会提示下载（一共 194 MB，只下载一次，支持断点续传），下载后校验 SHA-256。
 
-| 模型 | 原始文件 | App 需要的文件 |
-|---|---|---|
-| 人声分离 | `UVR-MDX-NET-Voc_FT.onnx` | 原文件 + `UVR-MDX-NET-Voc_FT.json` |
-| 去和声 | `6_HP-Karaoke-UVR.pth`（PyTorch） | **转换后的** `6_HP-Karaoke-UVR.onnx` + `.json` |
+| 用途 | 模型 | 下载的文件 | 大小 |
+|---|---|---|---|
+| 人声分离 | UVR-MDX-NET Voc FT | `UVR-MDX-NET-Voc_FT.onnx` | 67 MB |
+| 去和声 | 6_HP-Karaoke-UVR | `6_HP-Karaoke-UVR.pth` | 127 MB |
 
-`6_HP-Karaoke-UVR.pth` 是 PyTorch 权重，手机上的 ONNX Runtime 不能直接加载，
-需要在电脑上转换一次：
+下载地址是 UVR 官方模型库（`github.com/TRvlvr/model_repo` 的 release）。权重文件不在这个仓库里，
+也不打包进 App。
 
-```bash
-pip install torch onnx onnxscript onnxruntime numpy
-python tools/prepare_models.py mdx ~/Downloads/UVR-MDX-NET-Voc_FT.onnx --out-dir build/models
-python tools/prepare_models.py vr  ~/Downloads/6_HP-Karaoke-UVR.pth   --out-dir build/models
-```
-
-转换脚本会：
-
-- 按 UVR 的方式计算模型哈希，查出它的频带配置（6_HP-Karaoke 属于 UVR 的两种
-  karaoke 配置之一：`4band_v2_sn` 或 `3band_44100_msb2`），也可以用 `--param` 手动指定；
-- 按文件大小选择 UVR 的网络结构（VR v5 / v5.1），重建网络并加载权重；
-- 导出 ONNX（输入 `[1, 2, bins+1, 512]` 的幅度谱，输出掩码），并和 PyTorch 的结果逐元素比对；
-- 写出同名 `.json`，里面是 App 做前后处理需要的全部参数。
-
-然后把 `build/models` 里的 4 个文件放进 App，任选一种方式：
-
-1. App 里 **设置 → 导入模型文件**（可多选 `.onnx` 和 `.json`）；
-2. 用 iPhone 的“文件”App 或 Mac 的访达，把它们拷到 **YinTrace → models** 文件夹；
-3. 放进仓库的 `assets/models/` 再构建，App 首次启动时会自动安装（会让安装包变大）。
-
-> 只有纯人声、不需要分离的歌，可以完全不导入模型（导入时打开“这已经是分离好的纯人声”）。
+- `6_HP-Karaoke-UVR.pth` 是 PyTorch 权重，手机上的 ONNX Runtime 不能直接读。App 里带了这个网络的
+  结构（约 130 KB）和一份“拷贝配方”，下载完成后按配方从 `.pth` 里把每个权重张量的字节拷出来，
+  拼成 ONNX 模型——不需要 PyTorch，结果和在电脑上用 PyTorch 导出的逐字节相同
+  （见 `assets/models/README.md` 和 `tools/build_karaoke_graph.py`）。
+- 网络连不上 GitHub 时，可以用别的办法把这两个文件弄到手机上，然后在下载窗口里点
+  “已经有这两个文件？从‘文件’里选”。App 按内容（SHA-256）识别，只接受这两个原版文件。
+- 模型保存在 App 的 Application Support 目录，不参与 iCloud 备份；可以在设置里删除以腾出空间，
+  已经导入的歌不受影响。
+- 只有纯人声、不需要分离的歌，完全不需要模型（导入时打开“这是已经分离好的纯人声”）。
 
 ## 使用说明
 
 1. **导入歌曲**：曲库页点“导入歌曲”，选择音频（mp3 / m4a / wav / flac / aiff …），
-   填写歌名，粘贴带时间的歌词，点“分离人声并生成音高图”。
+   填写歌名，粘贴带时间的歌词，点“分离人声，生成音高图”。第一次会先提示下载分离模型。
    - 处理在后台线程进行，进度条会显示当前阶段（读取 → 分离人声 → 去和声 → 测音高 → 逐字对齐 → 保存）
      和剩余时间。一首 4 分钟的歌在新款 iPhone 上大约需要几分钟，请保持 App 在前台。
    - 已经是纯人声的文件可以跳过分离，并可另外选择一个伴奏文件用于练习。
@@ -103,7 +92,7 @@ python tools/prepare_models.py vr  ~/Downloads/6_HP-Karaoke-UVR.pth   --out-dir 
    - 点右上角的评分按钮或唱完整首，会看到总分、每句得分，以及“需要加强的字”
      （偏高 / 偏低 / 没唱出来 / 不稳 / 抢拍 / 进晚了）。点任意一句就进入该句的循环练习。
    - 每次练习都会保存到这首歌的练习记录里。
-4. **自由练习**：曲库右上角的波形按钮，是一个实时音高监视器（类似 Pitch Witch），
+4. **自由练习**：曲库右上角的波形按钮，是一个实时音高监视器，
    显示音名、频率、简谱唱名、音分偏差和滚动的音高轨迹。
 
 **建议戴耳机练习**：外放时麦克风会录到伴奏和导唱，音高检测会受干扰。
@@ -192,14 +181,15 @@ lib/
     import/       导入流水线（后台 isolate）
     library/      本地曲库（每首歌一个目录）与练习记录
     practice/     实时音高跟踪、评分、练习会话
-    app/          设置、模型管理、全局服务
+    models/       两个分离模型的下载、校验、.pth → ONNX 组装
+    app/          设置、全局服务、第三方许可登记
     ui/           曲库 / 导入 / 歌曲 / 练习 / 评分 / 自由练习 / 设置 页面，音高图绘制
 packages/yintrace_audio/   原生音频核心（C + miniaudio，dart:ffi）
   src/yt_audio.c            解码、全双工练习引擎、采集环形缓冲（带歌曲帧号）
   src/yt_platform_apple.inc AVAudioSession、麦克风权限、ExtAudioFile 解码、AAC 编码
 tools/
-  prepare_models.py         模型准备：VR .pth → ONNX、生成配置
-  uvr_model_data.json       UVR 的模型哈希表与频带配置
+  build_karaoke_graph.py    生成 assets/models 里的网络结构和拷贝配方，并与 PyTorch 对照验证
+  fetch_models.sh           给测试和工具用：下载两个模型并校验
   reference/                生成测试参考数据的脚本（numpy / torch / librosa / UVR 原代码）
 test/                       单元测试、对照测试、端到端 UI 测试
 ```
@@ -209,7 +199,7 @@ test/                       单元测试、对照测试、端到端 UI 测试
 - 曲库在 App 的 Application Support 目录 `songs/<id>/`：`song.json`（信息与歌词）、
   `reference.json`（逐字音高图）、`pitch.bin`（音高曲线）、`vocals.m4a`（主唱）、
   `accompaniment.m4a`（伴奏）、`original.*`（原文件）、`history.json`（练习记录）。
-- 模型在 Documents 目录 `models/`（“文件”App 可见）。
+- 模型在 Application Support 目录 `models/`（不参与 iCloud 备份）。
 
 ## 测试
 
@@ -222,8 +212,14 @@ cmake -S packages/yintrace_audio/src -B build/host -DCMAKE_BUILD_TYPE=Release &&
 YINTRACE_AUDIO_LIB=$PWD/build/host/libyintrace_audio.so flutter test
 # 加上 SCREENSHOT_DIR=build/screenshots 会把界面截图写出来
 
-# 模型转换工具自检（随机权重，验证网络结构与 ONNX 导出）
-python tools/prepare_models.py selftest
+# 模型配方：随机权重的往返自检；用真实模型按配方组装并与 PyTorch 对照
+python tools/build_karaoke_graph.py selftest
+tools/fetch_models.sh build/uvr-models
+python tools/build_karaoke_graph.py verify build/uvr-models/6_HP-Karaoke-UVR.pth
+# Dart 侧用同一份配方组装真实模型并核对 SHA-256
+MODELS_DIR=$PWD/build/uvr-models flutter test test/models_test.dart
+# 用 App 自己的下载代码从官方地址下载、校验、组装（194 MB）
+LIVE_MODEL_DOWNLOAD=1 flutter test test/models_test.dart
 ```
 
 `.github/workflows/ci.yml` 在 Linux 上跑以上测试，并在 macOS 上做 **iOS 无签名构建** 和

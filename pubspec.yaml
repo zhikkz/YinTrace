@@ -1,7 +1,7 @@
 name: yintrace
 description: "YinTrace 唱歌练习：人声分离 + 逐字音高图 + YIN 实时音高对比"
 publish_to: 'none'
-version: 0.1.0+1
+version: 1.0.0+1
 
 environment:
   sdk: ^3.13.7
@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  crypto: ^3.0.6
   cupertino_icons: ^1.0.8
   fftea: ^1.5.0
   ffi: ^2.1.3
@@ -28,10 +29,12 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  # Separation models may optionally be bundled into the app here
-  # (see assets/models/README.md). They are copied to Documents/models.
+  # Only the graph of the karaoke network and its copy recipe are bundled;
+  # the model weights are downloaded from the UVR project on first use
+  # (see assets/models/README.md).
   assets:
-    - assets/models/
+    - assets/models/karaoke_graph.bin
+    - assets/models/karaoke_graph.json
   config:
     # All plugins are integrated through CocoaPods (the native audio core
     # ships a podspec only).

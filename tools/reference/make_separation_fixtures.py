@@ -196,7 +196,7 @@ def main():
     ap.add_argument('--out', default='test/fixtures/separation_reference.json')
     args = ap.parse_args()
     here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, '..', 'uvr_model_data.json')) as f:
+    with open(os.path.join(here, 'vr_band_params.json')) as f:
         data = json.load(f)
 
     mix = synth(8.0)
@@ -205,7 +205,7 @@ def main():
 
     su = import_spec_utils(args.uvr)
     for name in ['4band_v2_sn', '3band_44100_msb2']:
-        mp = MP(data['vr_params'][name])
+        mp = MP(data[name])
         y, v = vr_separate(su, mix, mp)
         fx[f'vr_{name}_primary'] = probes(y)
         fx[f'vr_{name}_secondary'] = probes(v)

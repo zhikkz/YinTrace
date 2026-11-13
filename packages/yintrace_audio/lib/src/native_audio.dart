@@ -155,6 +155,17 @@ class NativeAudio {
 
   /// Input + output hardware latency reported by the OS, in seconds.
   static double get sessionLatency => _b.sessionLatency();
+
+  /// Excludes a file or directory from device backups (for data that can be
+  /// downloaded again). Returns whether the platform accepted it.
+  static bool excludeFromBackup(String path) {
+    final p = path.toNativeUtf8();
+    try {
+      return _b.excludeFromBackup(p.cast()) == 0;
+    } finally {
+      malloc.free(p);
+    }
+  }
 }
 
 /// A full-duplex practice engine: plays up to four tracks in sync and
