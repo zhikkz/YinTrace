@@ -1,3 +1,4 @@
-## 0.0.1
+## 0.1.0
 
-* TODO: Describe initial release.
+* Decoding, AAC encoding (Apple), audio session helpers and a full-duplex
+  practice engine with song-position tagged microphone capture.

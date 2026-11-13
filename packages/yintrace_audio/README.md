@@ -1,92 +1,25 @@
 # yintrace_audio
 
-A new Flutter FFI plugin project.
+YinTrace's native audio core, used through `dart:ffi`.
 
-## Getting Started
+- **Decoding** (`NativeAudio.decodeFile`): Core Audio `ExtAudioFile` on iOS/macOS
+  (mp3, aac/m4a, alac, wav, aiff, caf, flac), miniaudio elsewhere (wav, mp3, flac).
+- **AAC encoding** (`NativeAudio.encodeM4a`): Apple platforms; returns `false` elsewhere.
+- **Audio session / microphone permission** on iOS and macOS.
+- **`PracticeEngine`**: a full-duplex engine on miniaudio that plays up to four
+  in-memory tracks (stored as int16) with per-track gains, seeking and A–B looping,
+  and captures the microphone. Every captured block is tagged with the song frame
+  that was being rendered in the same audio callback, so the app can map each
+  sung sample to a song position exactly (loop jumps split blocks).
+  Nothing calls back into Dart: captured audio is polled with `readCapture()`.
 
-This project is a starting point for a Flutter
-[FFI plugin](https://flutter.dev/to/ffi-package),
-a specialized package that includes native code directly invoked with Dart FFI.
+The C sources live in `src/` and are shared by all platforms:
+CocoaPods compiles them as Objective-C through the forwarders in
+`ios/Classes` and `macos/Classes`; Android and Windows use `src/CMakeLists.txt`.
 
-## Project structure
+Tests:
 
-This template uses the following structure:
-
-* `src`: Contains the native source code, and a CmakeFile.txt file for building
-  that source code into a dynamic library.
-
-* `lib`: Contains the Dart code that defines the API of the plugin, and which
-  calls into the native code using `dart:ffi`.
-
-* platform folders (`android`, `ios`, `windows`, etc.): Contains the build files
-  for building and bundling the native code library with the platform application.
-
-## Building and bundling native code
-
-The `pubspec.yaml` specifies FFI plugins as follows:
-
-```yaml
-  plugin:
-    platforms:
-      some_platform:
-        ffiPlugin: true
+```bash
+tool/run_native_tests.sh   # C tests (engine + decoders); on macOS also the Core Audio path
+tool/run_dart_tests.sh     # builds the library for the host and runs the Dart tests
 ```
-
-This configuration invokes the native build for the various target platforms
-and bundles the binaries in Flutter applications using these FFI plugins.
-
-This can be combined with dartPluginClass, such as when FFI is used for the
-implementation of one platform in a federated plugin:
-
-```yaml
-  plugin:
-    implements: some_other_plugin
-    platforms:
-      some_platform:
-        dartPluginClass: SomeClass
-        ffiPlugin: true
-```
-
-A plugin can have both FFI and method channels:
-
-```yaml
-  plugin:
-    platforms:
-      some_platform:
-        pluginClass: SomeName
-        ffiPlugin: true
-```
-
-The native build systems that are invoked by FFI (and method channel) plugins are:
-
-* For Android: Gradle, which invokes the Android NDK for native builds.
-  * See the documentation in android/build.gradle.
-* For iOS and MacOS: Xcode, via CocoaPods.
-  * See the documentation in ios/yintrace_audio.podspec.
-  * See the documentation in macos/yintrace_audio.podspec.
-* For Linux and Windows: CMake.
-  * See the documentation in linux/CMakeLists.txt.
-  * See the documentation in windows/CMakeLists.txt.
-
-## Binding to native code
-
-To use the native code, bindings in Dart are needed.
-To avoid writing these by hand, they are generated from the header file
-(`src/yintrace_audio.h`) by `package:ffigen`.
-Regenerate the bindings by running `dart run ffigen --config ffigen.yaml`.
-
-## Invoking native code
-
-Very short-running native functions can be directly invoked from any isolate.
-For example, see `sum` in `lib/yintrace_audio.dart`.
-
-Longer-running functions should be invoked on a helper isolate to avoid
-dropping frames in Flutter applications.
-For example, see `sumAsync` in `lib/yintrace_audio.dart`.
-
-## Flutter help
-
-For help getting started with Flutter, view our
-[online documentation](https://docs.flutter.dev), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-

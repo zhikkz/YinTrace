@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.47.9'
+
+jobs:
+  test:
+    name: Tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg cmake fonts-wqy-zenhei
+      - name: Native audio core tests (C)
+        run: packages/yintrace_audio/tool/run_native_tests.sh
+      - name: Build native core for host
+        run: |
+          cmake -S packages/yintrace_audio/src -B build/host -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/host
+      - run: flutter pub get
+      - run: flutter analyze
+      - name: Plugin tests
+        working-directory: packages/yintrace_audio
+        run: |
+          flutter pub get
+          YINTRACE_AUDIO_LIB=$GITHUB_WORKSPACE/build/host/libyintrace_audio.so flutter test
+      - name: App tests
+        run: YINTRACE_AUDIO_LIB=$GITHUB_WORKSPACE/build/host/libyintrace_audio.so SCREENSHOT_DIR=build/screenshots flutter test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: build/screenshots
+
+  model-tools:
+    name: Model converter self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install onnx onnxscript onnxruntime numpy
+      - run: python tools/prepare_models.py selftest
+
+  ios:
+    name: iOS build (no codesign)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build ios --release --no-codesign
+      - name: Package unsigned app
+        run: cd build/ios/iphoneos && zip -qr Runner-unsigned.zip Runner.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned
+          path: build/ios/iphoneos/Runner-unsigned.zip
+
+  macos:
+    name: macOS build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Native audio core tests (C, Core Audio decode path)
+        run: packages/yintrace_audio/tool/run_native_tests.sh
+      - run: flutter pub get
+      - run: flutter build macos --debug

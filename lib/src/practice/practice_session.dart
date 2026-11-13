@@ -1,0 +1,284 @@
+import 'dart:isolate';
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
+import 'package:yintrace_audio/yintrace_audio.dart';
+
+import '../analysis/pitch_track.dart';
+import '../analysis/reference.dart';
+import '../app/settings.dart';
+import '../library/song.dart';
+import '../library/song_repository.dart';
+import 'live_pitch.dart';
+import 'scoring.dart';
+
+/// Track slots in the practice engine.
+abstract final class TrackSlot {
+  static const accompaniment = 0;
+  static const guideVocal = 1;
+}
+
+/// Drives one practice run: audio engine, live pitch tracking and scoring.
+class PracticeSession extends ChangeNotifier {
+  PracticeSession({
+    required this.meta,
+    required this.reference,
+    required this.repository,
+    required this.settings,
+    this.contour,
+    this.loopLine,
+    PracticeEngine Function()? engineFactory,
+    this.decodeInBackground = true,
+  }) : _engineFactory = engineFactory ?? (() => PracticeEngine.create(mode: EngineMode.duplex)) {
+    scorer = PracticeScorer(reference, options: _scoringOptions());
+  }
+
+  final SongMeta meta;
+  final SongReference reference;
+  final SongRepository repository;
+  final AppSettings settings;
+  final PitchTrack? contour;
+  final PracticeEngine Function() _engineFactory;
+
+  /// Decode the tracks in a background isolate (keeps the UI responsive).
+  final bool decodeInBackground;
+
+  /// When set, the run loops this line.
+  int? loopLine;
+
+  late PracticeScorer scorer;
+  PracticeEngine? _engine;
+  LivePitchTracker? _tracker;
+  int _endCount = 0;
+  double _latency = 0;
+  double _clock = 0;
+
+  /// Trail of the singer's pitch (last [_keepSeconds] seconds).
+  final List<UserPoint> points = [];
+  static const _keepSeconds = 30.0;
+
+  ScoredSample? lastSample;
+  String? error;
+  bool finished = false;
+  bool started = false;
+
+  PracticeEngine? get engine => _engine;
+  bool get isPlaying => _engine?.isPlaying ?? false;
+
+  /// Total compensation applied to captured audio (seconds).
+  double get latency => _latency;
+
+  /// Song position the singer currently hears.
+  double get position {
+    final e = _engine;
+    if (e == null) return 0;
+    return math.max(0, e.positionSeconds - _latency / 2);
+  }
+
+  double get duration => math.max(meta.duration, _engine?.lengthSeconds ?? 0);
+
+  ScoringOptions _scoringOptions() => ScoringOptions(
+        greatCents: settings.toleranceCents.toDouble(),
+        okCents: settings.toleranceCents * 2.0,
+        octaveTolerant: settings.octaveTolerant,
+      );
+
+  /// Opens the audio device and loads the tracks.
+  Future<void> start() async {
+    if (started) return;
+    try {
+      final perm = await NativeAudio.requestMicPermission();
+      if (perm == MicPermission.denied) {
+        error = '没有麦克风权限：请在 系统设置 → 隐私与安全性 → 麦克风 中允许 YinTrace';
+        notifyListeners();
+        return;
+      }
+      NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
+      final e = _engineFactory();
+      _engine = e;
+      final acc = meta.accompanimentFile ?? meta.originalFile;
+      final tracks = <int, String>{
+        if (acc != null) TrackSlot.accompaniment: repository.pathFor(meta.id, acc),
+        TrackSlot.guideVocal: repository.pathFor(meta.id, meta.vocalsFile),
+      };
+      for (final entry in tracks.entries) {
+        if (decodeInBackground) {
+          final path = entry.value;
+          final rate = e.sampleRate;
+          final audio = await Isolate.run(() => NativeAudio.decodeFile(path, sampleRate: rate));
+          if (_engine != e) return; // disposed while loading
+          e.loadTrackPcm(entry.key, audio.samples, audio.channels);
+        } else {
+          e.loadTrackFile(entry.key, entry.value);
+        }
+      }
+      applyMix();
+      final period = e.periodFrames / e.sampleRate;
+      _latency = NativeAudio.sessionLatency + period + settings.latencyOffsetMs / 1000.0;
+      _tracker = LivePitchTracker(
+        sampleRate: e.sampleRate,
+        options: LivePitchOptions(gateDb: settings.micGateDb, latencySeconds: _latency),
+      );
+      _endCount = e.endCount;
+      e.start();
+      started = true;
+      if (loopLine != null) {
+        setLoopLine(loopLine);
+      }
+      notifyListeners();
+    } catch (err) {
+      error = '无法启动音频：$err';
+      notifyListeners();
+    }
+  }
+
+  /// Re-applies volumes and scoring settings (after the user changed them).
+  void applyMix() {
+    final e = _engine;
+    if (e == null) return;
+    final hasAcc = meta.accompanimentFile != null || meta.originalFile != null;
+    e.setTrackGain(TrackSlot.accompaniment, settings.accompanimentVolume);
+    e.setTrackGain(TrackSlot.guideVocal, hasAcc ? settings.guideVocalVolume : math.max(0.6, settings.guideVocalVolume));
+    scorer.options = _scoringOptions();
+    final t = _tracker;
+    if (t != null) {
+      final period = e.periodFrames / e.sampleRate;
+      _latency = NativeAudio.sessionLatency + period + settings.latencyOffsetMs / 1000.0;
+      t.options = t.options.copyWith(gateDb: settings.micGateDb, latencySeconds: _latency);
+    }
+  }
+
+  void play() {
+    final e = _engine;
+    if (e == null) return;
+    if (finished || e.positionSeconds >= e.lengthSeconds - 0.05) {
+      finished = false;
+      seek(loopLine != null ? _loopRange(loopLine!).$1 : 0);
+    }
+    e.play();
+    notifyListeners();
+  }
+
+  void pause() {
+    _engine?.pause();
+    notifyListeners();
+  }
+
+  void togglePlay() => isPlaying ? pause() : play();
+
+  void seek(double seconds) {
+    final e = _engine;
+    if (e == null) return;
+    e.seek(Duration(microseconds: (math.max(0, seconds) * 1e6).round()));
+    e.flushCapture();
+    _tracker?.reset();
+    scorer.resetFrom(math.max(0, seconds));
+    points.removeWhere((p) => p.time >= seconds - 0.05);
+    notifyListeners();
+  }
+
+  (double, double) _loopRange(int line) {
+    final l = reference.lines[line];
+    return (math.max(0, l.start - 1.2), l.end + 0.6);
+  }
+
+  /// Loops one line (null = play the whole song).
+  void setLoopLine(int? line) {
+    loopLine = line;
+    final e = _engine;
+    if (e == null) return;
+    if (line == null) {
+      e.setLoop(null, null);
+    } else {
+      final (a, b) = _loopRange(line);
+      e.setLoop(a, b);
+      if (position < a || position > b) seek(a);
+    }
+    notifyListeners();
+  }
+
+  void seekToLine(int line) {
+    if (line < 0 || line >= reference.lines.length) return;
+    if (loopLine != null) setLoopLine(line);
+    seek(math.max(0, reference.lines[line].start - 1.0));
+  }
+
+  int get currentLine => reference.lineIndexAt(position);
+
+  /// Pulls captured audio, updates pitch and scores. Call once per frame.
+  void tick() {
+    final e = _engine;
+    final tr = _tracker;
+    if (e == null || tr == null) return;
+    var changed = false;
+    for (final block in e.readCapture()) {
+      for (final p in tr.addBlock(block.samples, block.songFrame, block.clockFrame, block.playing)) {
+        final s = scorer.add(p);
+        lastSample = s;
+        _clock = p.clockTime;
+        if (p.playing) {
+          points.add(UserPoint(p.songTime, p.midi, s.verdict));
+        }
+        changed = true;
+      }
+    }
+    if (points.length > 4000) {
+      final cut = points.indexWhere((p) => p.time > position - _keepSeconds);
+      if (cut > 0) points.removeRange(0, cut);
+    }
+    if (e.endCount != _endCount) {
+      _endCount = e.endCount;
+      finished = true;
+      changed = true;
+    }
+    if (changed || e.isPlaying) notifyListeners();
+  }
+
+  double get clockTime => _clock;
+
+  /// Scores of every token sung so far (for colouring the graph).
+  Map<RefToken, double> tokenScores() {
+    final out = <RefToken, double>{};
+    final p = position;
+    for (final line in scorer.results()) {
+      if (line.line.start > p) break;
+      for (final t in line.tokens) {
+        if (t.attempted && !t.score.isNaN && t.token.end < p) out[t.token] = t.score;
+      }
+    }
+    return out;
+  }
+
+  /// Stores the run in the song's history. Returns null when nothing was
+  /// sung.
+  Future<PracticeRecord?> save({double? elapsedSeconds}) async {
+    final results = scorer.results();
+    final lines = <int, double>{
+      for (var i = 0; i < results.length; i++)
+        if (results[i].attempted) i: results[i].score
+    };
+    if (lines.isEmpty) return null;
+    final record = PracticeRecord(
+      at: DateTime.now(),
+      score: scorer.overallScore(results),
+      lineScores: lines,
+      loopLine: loopLine,
+      durationSeconds: elapsedSeconds ?? 0,
+    );
+    await repository.addPractice(meta.id, record);
+    return record;
+  }
+
+  @override
+  void dispose() {
+    final e = _engine;
+    _engine = null;
+    if (e != null) {
+      try {
+        e.stop();
+      } catch (_) {}
+      e.dispose();
+    }
+    super.dispose();
+  }
+}

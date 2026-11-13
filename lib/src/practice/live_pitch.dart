@@ -75,9 +75,8 @@ class LivePitchOptions {
 /// recorded; the tracker keeps that mapping so every YIN frame gets an exact
 /// song position, which is what makes the per-character comparison work.
 class LivePitchTracker {
-  LivePitchTracker({required this.sampleRate, LivePitchOptions options = const LivePitchOptions()})
-      : _options = options,
-        _yin = Yin(
+  LivePitchTracker({required this.sampleRate, this.options = const LivePitchOptions()})
+      : _yin = Yin(
           sampleRate: sampleRate,
           frameSize: options.frameSize,
           minFrequency: options.minFrequency,
@@ -87,16 +86,15 @@ class LivePitchTracker {
   }
 
   final int sampleRate;
-  LivePitchOptions _options;
+
+  /// Can be changed while running (e.g. a new latency compensation).
+  LivePitchOptions options;
   final Yin _yin;
   late StreamingYin _stream;
   int _pushed = 0;
   final _segments = Queue<_Segment>();
   final _recent = <double>[];
   double _lastMidi = 0;
-
-  LivePitchOptions get options => _options;
-  set options(LivePitchOptions o) => _options = o;
 
   void reset() {
     _stream.reset();
@@ -122,11 +120,11 @@ class LivePitchTracker {
           orElse: () => _segments.last);
       final offset = center - seg.start;
       final songT = (seg.playing ? seg.songFrame + offset : seg.songFrame) / sampleRate -
-          _options.latencySeconds;
+          options.latencySeconds;
       final clockT = (seg.clockFrame + offset) / sampleRate;
       final levelDb = est.rms > 1e-9 ? 20 * math.log(est.rms) / math.ln10 : -120.0;
       var midi = 0.0;
-      if (est.frequency > 0 && est.aperiodicity <= _options.maxAperiodicity && levelDb >= _options.gateDb) {
+      if (est.frequency > 0 && est.aperiodicity <= options.maxAperiodicity && levelDb >= options.gateDb) {
         midi = _stabilise(hzToMidi(est.frequency));
       } else {
         _recent.clear();

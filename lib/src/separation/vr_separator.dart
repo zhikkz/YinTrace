@@ -38,7 +38,7 @@ class VrSeparator {
   VrSeparator(
     this.model,
     this.config, {
-    this.segmentSeconds = 20,
+    this.segmentSeconds = 30,
     this.marginSeconds = 3,
     this.crossfadeSeconds = 1,
   }) : _stfts = [

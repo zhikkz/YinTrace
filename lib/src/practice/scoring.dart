@@ -40,6 +40,16 @@ class ScoringOptions {
   final int transpose;
 }
 
+/// A point of the singer's pitch trail as drawn on the graph.
+class UserPoint {
+  const UserPoint(this.time, this.midi, this.verdict);
+  final double time;
+
+  /// 0 = no voice.
+  final double midi;
+  final PitchVerdict verdict;
+}
+
 class ScoredSample {
   const ScoredSample(this.pitch, this.verdict, this.deviationCents, this.referenceMidi);
   final LivePitch pitch;

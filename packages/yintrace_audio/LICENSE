@@ -1,1 +1,6 @@
-TODO: Add your license here.
+YinTrace native audio core.
+
+This package is part of the YinTrace repository; see the repository root for
+its license terms. It includes miniaudio (src/miniaudio.h), which is available
+under the public domain (Unlicense) or MIT No Attribution — see the end of that
+file. See ../../THIRD_PARTY_NOTICES.md for other third-party components.

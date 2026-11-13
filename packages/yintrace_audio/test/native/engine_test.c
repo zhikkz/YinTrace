@@ -207,16 +207,41 @@ static void test_decode(const char* path, int expect_frames_approx) {
   }
 }
 
+#ifdef __APPLE__
+static void test_aac_roundtrip(const char* dir) {
+  char path[1024];
+  snprintf(path, sizeof path, "%s/roundtrip.m4a", dir);
+  const int n = 44100 * 2;
+  float* pcm = malloc(sizeof(float) * n * 2);
+  for (int i = 0; i < n; i++) {
+    float v = 0.3f * sinf(2.0f * 3.14159265f * 440.0f * i / 44100.0f);
+    pcm[2 * i] = v;
+    pcm[2 * i + 1] = v;
+  }
+  CHECK(yt_encode_m4a(path, pcm, n, 44100, 2, 160000) == 0);
+  free(pcm);
+  test_decode(path, n);
+}
+#endif
+
 int main(int argc, char** argv) {
   CHECK(yt_api_version() == YT_API_VERSION);
   test_mix_seek_loop();
   test_big_block_split();
   test_null_device();
   for (int i = 1; i + 1 < argc; i += 2) test_decode(argv[i], atoi(argv[i + 1]));
+#ifdef __APPLE__
+  test_aac_roundtrip(getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+#endif
   char err[64];
   int64_t frames;
   CHECK(yt_decode_file("/nonexistent.mp3", 44100, 2, &frames, err, sizeof err) == NULL);
   CHECK(yt_encode_m4a("/tmp/x.m4a", NULL, 0, 44100, 2, 128000) < 0);
+#ifndef __APPLE__
+  // No AAC encoder outside Apple platforms: callers fall back to WAV.
+  float one[2] = {0, 0};
+  CHECK(yt_encode_m4a("/tmp/x.m4a", one, 1, 44100, 2, 128000) == -1);
+#endif
   if (failures == 0) printf("ALL NATIVE TESTS PASSED\n");
   return failures == 0 ? 0 : 1;
 }
