@@ -73,6 +73,41 @@ jobs:
       - name: Assemble the real model from the bundled recipe and compare with PyTorch
         run: python tools/build_karaoke_graph.py verify build/uvr-models/6_HP-Karaoke-UVR.pth
 
+  real-models:
+    name: Real models (Dart separation vs UVR)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install numpy scipy librosa soundfile onnxruntime
+      - name: Cache the UVR models
+        uses: actions/cache@v4
+        with:
+          path: build/uvr-models
+          key: uvr-models-534b2070-4ce7eaaa
+      - run: tools/fetch_models.sh build/uvr-models
+      - name: Get UVR's own inference code
+        run: |
+          git init -q build/uvr
+          git -C build/uvr remote add origin https://github.com/Anjok07/ultimatevocalremovergui
+          git -C build/uvr fetch -q --depth 1 --filter=blob:none origin a5f88453bfb2b38b05a965bcf67727243e0cbf19
+          git -C build/uvr checkout -q FETCH_HEAD -- lib_v5/spec_utils.py lib_v5/vr_network
+      - name: Separate a clip with UVR's code and the real models
+        run: python tools/reference/make_real_reference.py --uvr build/uvr --models build/uvr-models --out build/real-reference
+      - run: flutter pub get
+      - name: Separate the same clip with the app's Dart code and compare
+        run: >
+          MODELS_DIR=$GITHUB_WORKSPACE/build/uvr-models
+          REAL_REFERENCE=$GITHUB_WORKSPACE/build/real-reference
+          PYTHON=python flutter test test/real_models_test.dart
+
   ios:
     name: iOS build (no codesign)
     runs-on: macos-15

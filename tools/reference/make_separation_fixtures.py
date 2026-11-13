@@ -54,7 +54,9 @@ def fake_vr(x: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------- MDX (UVR separate.py)
-def mdx_demix(mix, n_fft=7680, hop=1024, dim_f=3072, dim_t=256, overlap=0.25, compensate=1.021):
+def mdx_demix(mix, n_fft=7680, hop=1024, dim_f=3072, dim_t=256, overlap=0.25, compensate=1.021, model=None):
+    """UVR's MDX demix loop. [model] maps a [1, 4, F, T] array to its prediction."""
+    model = model or fake_mdx
     import torch
     trim = n_fft // 2
     chunk_size = hop * (dim_t - 1)
@@ -91,7 +93,7 @@ def mdx_demix(mix, n_fft=7680, hop=1024, dim_f=3072, dim_t=256, overlap=0.25, co
             part = np.concatenate((part, np.zeros((2, (i + chunk_size) - end), dtype='float32')), axis=-1)
         spek = stft(torch.tensor(np.array([part]), dtype=torch.float32))
         spek[:, :, :3, :] *= 0
-        pred = torch.tensor(fake_mdx(spek.numpy()))
+        pred = torch.tensor(model(spek.numpy()))
         tar = istft(pred).numpy()
         tar[..., :actual] *= window
         divider[..., start:end] += window
@@ -147,7 +149,9 @@ class MP:
         self.param = p
 
 
-def vr_separate(su, wave, mp, window_size=512, offset=128, aggression=5, primary_stem='Instrumental'):
+def vr_separate(su, wave, mp, window_size=512, offset=128, aggression=5, primary_stem='Instrumental', model=None):
+    """UVR's VR inference. [model] maps a [1, 2, bins+1, W] magnitude window to its mask."""
+    model = model or fake_vr
     import librosa
     bands_n = len(mp.param['band'])
     X_wave, X_spec_s = {}, {}
@@ -171,7 +175,7 @@ def vr_separate(su, wave, mp, window_size=512, offset=128, aggression=5, primary
     for i in range(patches):
         start = i * roi_size
         win = X_mag_pad[None, :, :, start:start + window_size].astype(np.float32)
-        m = fake_vr(win)[:, :, :, offset:-offset]
+        m = model(win)[:, :, :, offset:-offset]
         masks.append(np.concatenate(m, axis=2))
     mask = np.concatenate(masks, axis=2)[:, :, :n_frame]
     aggressiveness = {'value': aggression / 100, 'split_bin': mp.param['band'][1]['crop_stop'],
