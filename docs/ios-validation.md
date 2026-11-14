@@ -1,5 +1,9 @@
 # iOS 验收（需要 Mac 和 iPhone）
 
+2026-11-14 的 [CI 实跑](https://github.com/zhikkz/YinTrace/actions/runs/43554773740) 已通过。
+iPhone 16 Pro 模拟器中，实际 Flutter/ORT 同进程峰值约 879.5 MB（短窗口推理），
+两个模型均连跑三次，AAC 往返、下载与组装及 AGPL 资产读取通过。
+
 CI 归档证明可编译、所有 FFI 符号可见；模拟器冒烟测试覆盖真实 ONNX
 推理、AAC 往返和运行中的 AGPL 资产。它们不能代替 iPhone 验收。
 请使用 Flutter 3.47.9，iOS 16+，在真机以 release 运行，记录机型、iOS、
