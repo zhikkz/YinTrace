@@ -7,6 +7,7 @@
 #include <math.h>
 #include <sys/sysctl.h>
 #if TARGET_OS_IOS
+#import <UIKit/UIKit.h>
 #include <os/lock.h>
 #include <os/proc.h>
 #endif
@@ -270,6 +271,53 @@ int32_t yt_thermal_state(void) {
       return 3;
   }
   return -1;
+}
+
+#if TARGET_OS_IOS
+// The view controller on top of the app's window (main thread only).
+static UIViewController* yt_top_view_controller(void) {
+  UIWindow* window = nil;
+  for (UIScene* scene in UIApplication.sharedApplication.connectedScenes) {
+    if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+    for (UIWindow* w in ((UIWindowScene*)scene).windows) {
+      if (w.isKeyWindow) {
+        window = w;
+        break;
+      }
+      if (window == nil) window = w;
+    }
+    if (window != nil && window.isKeyWindow) break;
+  }
+  UIViewController* top = window.rootViewController;
+  while (top.presentedViewController != nil) top = top.presentedViewController;
+  return top;
+}
+#endif
+
+int32_t yt_share_file(const char* path) {
+#if TARGET_OS_IOS
+  if (path == NULL) return -2;
+  NSString* p = [NSString stringWithUTF8String:path];
+  if (p == nil || ![[NSFileManager defaultManager] fileExistsAtPath:p]) return -2;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController* top = yt_top_view_controller();
+    if (top == nil) return;
+    UIActivityViewController* sheet =
+        [[UIActivityViewController alloc] initWithActivityItems:@[ [NSURL fileURLWithPath:p] ]
+                                          applicationActivities:nil];
+    // iPad shows the sheet as a popover, which needs an anchor.
+    UIPopoverPresentationController* pop = sheet.popoverPresentationController;
+    if (pop != nil) {
+      pop.sourceView = top.view;
+      pop.sourceRect = CGRectMake(CGRectGetMidX(top.view.bounds), CGRectGetMaxY(top.view.bounds) - 80, 1, 1);
+    }
+    [top presentViewController:sheet animated:YES completion:nil];
+  });
+  return 0;
+#else
+  (void)path;
+  return -1;
+#endif
 }
 
 int32_t yt_exclude_from_backup(const char* path) {

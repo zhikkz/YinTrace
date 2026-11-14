@@ -25,9 +25,12 @@ import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/models/model_manager.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
 import 'package:yintrace/src/practice/segment_player.dart';
+import 'package:yintrace/src/practice/take_recorder.dart';
+import 'package:yintrace/src/export/recordings.dart';
 import 'package:yintrace/src/ui/about_page.dart';
 import 'package:yintrace/src/ui/app.dart';
 import 'package:yintrace/src/ui/benchmark_page.dart';
+import 'package:yintrace/src/ui/export_page.dart';
 import 'package:yintrace/src/ui/import_page.dart';
 import 'package:yintrace/src/ui/library_page.dart';
 import 'package:yintrace/src/ui/pitch_editor_page.dart';
@@ -272,6 +275,69 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
 
+  testWidgets('a kept take becomes a finished track', (tester) async {
+    phone(tester);
+    final take = TakeRecorder(sampleRate: sr, lengthFrames: 10 * sr);
+    final a = sr, b = (9.5 * sr).round();
+    take.addAudio(Float32List.sublistView(singer, a, b), a, 0);
+    final rec = (await tester.runAsync(
+      () => keepTake(services.songs, song.id, take, score: 80, audio: const WavAudioBackend(), background: false),
+    ))!;
+    final out = Directory('${tmp.path}/exports');
+    String? shared;
+    late PracticeEngine engine;
+    await tester.pumpWidget(
+      host(
+        services,
+        ExportPage(
+          songId: song.id,
+          recordingId: rec.id,
+          engineFactory: () => engine = PracticeEngine.create(mode: EngineMode.offline),
+          background: false,
+          outputDir: out,
+          share: (path) {
+            shared = path;
+            return true;
+          },
+        ),
+      ),
+    );
+    await settleIo(tester, rounds: 20);
+    expect(find.text('人声 + 伴奏'), findsOneWidget);
+    expect(find.textContaining('80 分'), findsOneWidget);
+    await screenshot(tester, '4d_export');
+    // The preview plays the voice where it was sung.
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    expect(engine.isPlaying, isTrue);
+    engine.seek(const Duration(milliseconds: 1500));
+    final heard = engine.render(4096);
+    expect(heard.fold<double>(0, (m, v) => math.max(m, v.abs())), greaterThan(0.05));
+    engine.seek(const Duration(milliseconds: 400));
+    final before = engine.render(4096);
+    expect(before.fold<double>(0, (m, v) => math.max(m, v.abs())), lessThan(1e-3), reason: 'nothing sung yet');
+    await tester.tap(find.byIcon(Icons.pause_rounded));
+    await tester.pump();
+    // Move the voice 100 ms earlier and export.
+    final align = find.byType(Slider).at(4);
+    await tester.drag(align, const Offset(-60, 0));
+    await tester.pump();
+    await tester.scrollUntilVisible(find.text('导出成品'), 300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('导出成品'));
+    await settleIo(tester, rounds: 20);
+    expect(shared, isNotNull);
+    expect(File(shared!).existsSync(), isTrue);
+    expect(shared, contains('我的演唱'));
+    expect(find.textContaining('已导出'), findsOneWidget);
+    final mix = readWavFile(shared!);
+    expect(mix.channels, 2);
+    expect(mix.frames, greaterThanOrEqualTo(10 * sr));
+    await tester.pumpWidget(const SizedBox());
+    await settleIo(tester, rounds: 3);
+    final saved = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!.firstWhere((r) => r.id == rec.id);
+    expect(saved.mix.offsetMs, lessThan(0), reason: 'the alignment is remembered');
+  }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
+
   testWidgets('import page validates the timed lyrics as you type', (tester) async {
     phone(tester);
     await tester.pumpWidget(host(services, const ImportPage()));
@@ -366,6 +432,8 @@ void main() {
             settings: services.settings,
             engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
           ),
+          exportPageBuilder: (songId, id) => Scaffold(body: Text('成品 $id')),
+          backgroundWork: false,
         ),
       ),
     );
@@ -523,6 +591,16 @@ void main() {
       expect(after[i].score, linesBefore[i]);
     }
     expect(after[heardLine.index].attempted, isFalse);
+
+    // Keep the take and make a finished track of it.
+    await tester.tap(find.byTooltip('查看评分'));
+    await settleIo(tester, rounds: 20);
+    await tester.tap(find.text('制作成品'));
+    await settleIo(tester, rounds: 20);
+    final kept = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!;
+    expect(find.text('成品 ${kept.first.id}'), findsOneWidget);
+    expect(kept.first.start, closeTo(math.max(0, session.take!.startSeconds - 0.2), 0.01));
+    expect(session.isPlaying, isFalse);
     // Dispose the page (and with it the native engine).
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);

@@ -27,6 +27,11 @@ class ListenBackAction extends ResultsAction {
   final int? line;
 }
 
+/// Keep the take and make a finished track of it.
+class ExportTakeAction extends ResultsAction {
+  const ExportTakeAction();
+}
+
 /// Hear how the original singer sings a line.
 class ListenOriginalAction extends ResultsAction {
   const ListenOriginalAction(this.line);
@@ -94,10 +99,24 @@ class ResultsSheet extends StatelessWidget {
           if (canListen?.call(null) ?? false)
             Padding(
               padding: const EdgeInsets.only(top: 16),
-              child: OutlinedButton.icon(
-                onPressed: () => Navigator.of(context).pop(const ListenBackAction()),
-                icon: const Icon(Icons.headphones_rounded),
-                label: const Text('回听这一遍'),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).pop(const ListenBackAction()),
+                      icon: const Icon(Icons.headphones_rounded),
+                      label: const Text('回听这一遍'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).pop(const ExportTakeAction()),
+                      icon: const Icon(Icons.library_music_rounded),
+                      label: const Text('制作成品'),
+                    ),
+                  ),
+                ],
               ),
             ),
           if (problems.isNotEmpty) ...[

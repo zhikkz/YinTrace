@@ -44,6 +44,8 @@ typedef _LoadFileC = Int32 Function(Pointer<YtEngine>, Int32, Pointer<Char>, Poi
 typedef _LoadFileD = int Function(Pointer<YtEngine>, int, Pointer<Char>, Pointer<Char>, int);
 typedef _EngSlotC = Void Function(Pointer<YtEngine>, Int32);
 typedef _EngSlotD = void Function(Pointer<YtEngine>, int);
+typedef _EngSlotI64C = Void Function(Pointer<YtEngine>, Int32, Int64);
+typedef _EngSlotI64D = void Function(Pointer<YtEngine>, int, int);
 typedef _EngSlotGainC = Void Function(Pointer<YtEngine>, Int32, Float);
 typedef _EngSlotGainD = void Function(Pointer<YtEngine>, int, double);
 typedef _EngFloatC = Void Function(Pointer<YtEngine>, Float);
@@ -115,6 +117,7 @@ class YtBindings {
       physicalMemory = library.lookupFunction<_Int64C, _Int64D>('yt_physical_memory'),
       thermalState = library.lookupFunction<_VersionC, _VersionD>('yt_thermal_state'),
       excludeFromBackup = library.lookupFunction<_PathC, _PathD>('yt_exclude_from_backup'),
+      shareFile = library.lookupFunction<_PathC, _PathD>('yt_share_file'),
       audioLog = library.lookupFunction<_StringC, _StringD>('yt_audio_log'),
       audioLogAdd = library.lookupFunction<_LogAddC, _LogAddD>('yt_audio_log_add'),
       engineCreate = library.lookupFunction<_CreateC, _CreateD>('yt_engine_create'),
@@ -130,6 +133,7 @@ class YtBindings {
       engineLoadTrackPcm = library.lookupFunction<_LoadPcmC, _LoadPcmD>('yt_engine_load_track_pcm'),
       engineLoadTrackFile = library.lookupFunction<_LoadFileC, _LoadFileD>('yt_engine_load_track_file'),
       engineUnloadTrack = library.lookupFunction<_EngSlotC, _EngSlotD>('yt_engine_unload_track'),
+      engineSetTrackOffset = library.lookupFunction<_EngSlotI64C, _EngSlotI64D>('yt_engine_set_track_offset'),
       engineSetTrackGain = library.lookupFunction<_EngSlotGainC, _EngSlotGainD>('yt_engine_set_track_gain'),
       engineSetMonitorGain = library.lookupFunction<_EngFloatC, _EngFloatD>('yt_engine_set_monitor_gain'),
       engineSetPlaying = library.lookupFunction<_EngSetIntC, _EngSetIntD>('yt_engine_set_playing'),
@@ -159,6 +163,7 @@ class YtBindings {
   final int Function() physicalMemory;
   final int Function() thermalState;
   final int Function(Pointer<Char>) excludeFromBackup;
+  final int Function(Pointer<Char>) shareFile;
   final int Function(Pointer<Char>, int) audioLog;
   final void Function(Pointer<Char>) audioLogAdd;
   final _CreateD engineCreate;
@@ -172,6 +177,7 @@ class YtBindings {
   final _LoadPcmD engineLoadTrackPcm;
   final _LoadFileD engineLoadTrackFile;
   final _EngSlotD engineUnloadTrack;
+  final _EngSlotI64D engineSetTrackOffset;
   final _EngSlotGainD engineSetTrackGain;
   final _EngFloatD engineSetMonitorGain;
   final _EngSetIntD engineSetPlaying;

@@ -170,6 +170,10 @@ int32_t yt_encode_m4a(const char* path, const float* data, int64_t frames,
   (void)path; (void)data; (void)frames; (void)sample_rate; (void)channels; (void)bitrate;
   return -1;
 }
+int32_t yt_share_file(const char* path) {
+  (void)path;
+  return -1;
+}
 #endif
 
 // ---------------------------------------------------------------------------
@@ -253,6 +257,7 @@ typedef struct {
   int16_t* data;  // interleaved
   int64_t frames;
   int32_t channels;
+  int64_t offset;  // song frame of the first frame
 } yt_track;
 
 typedef struct {
@@ -355,22 +360,31 @@ static void yt_mix_tracks(yt_engine* e, float* out, ma_int64 pos, ma_uint32 n) {
     if (tr->data == NULL) continue;
     float g = ma_atomic_load_f32(&e->gains[t]);
     if (g == 0.0f) continue;
-    if (pos >= tr->frames) continue;
-    ma_int64 avail = tr->frames - pos;
-    ma_uint32 m = (avail < (ma_int64)n) ? (ma_uint32)avail : n;
+    ma_int64 start = pos - tr->offset;  // track frame under the first output frame
+    ma_uint32 skip = 0;
+    if (start < 0) {
+      if (-start >= (ma_int64)n) continue;
+      skip = (ma_uint32)(-start);
+      start = 0;
+    }
+    if (start >= tr->frames) continue;
+    ma_int64 avail = tr->frames - start;
+    ma_uint32 m = n - skip;
+    if (avail < (ma_int64)m) m = (ma_uint32)avail;
     const float k = g / 32768.0f;
+    float* o = out + (size_t)skip * 2;
     if (tr->channels == 1) {
-      const int16_t* src = tr->data + pos;
+      const int16_t* src = tr->data + start;
       for (ma_uint32 i = 0; i < m; i++) {
         float s = (float)src[i] * k;
-        out[2 * i] += s;
-        out[2 * i + 1] += s;
+        o[2 * i] += s;
+        o[2 * i + 1] += s;
       }
     } else {
-      const int16_t* src = tr->data + pos * 2;
+      const int16_t* src = tr->data + start * 2;
       for (ma_uint32 i = 0; i < m; i++) {
-        out[2 * i] += (float)src[2 * i] * k;
-        out[2 * i + 1] += (float)src[2 * i + 1] * k;
+        o[2 * i] += (float)src[2 * i] * k;
+        o[2 * i + 1] += (float)src[2 * i + 1] * k;
       }
     }
   }
@@ -622,7 +636,8 @@ int32_t yt_engine_period_frames(yt_engine* e) {
 static void yt_recompute_length(yt_engine* e) {
   ma_int64 len = 0;
   for (int i = 0; i < YT_MAX_TRACKS; i++) {
-    if (e->tracks[i].data != NULL && e->tracks[i].frames > len) len = e->tracks[i].frames;
+    const yt_track* t = &e->tracks[i];
+    if (t->data != NULL && t->offset + t->frames > len) len = t->offset + t->frames;
   }
   ma_atomic_store_i64(&e->length, len);
 }
@@ -633,9 +648,19 @@ static void yt_install_track(yt_engine* e, int32_t slot, int16_t* data, int64_t 
   e->tracks[slot].data = data;
   e->tracks[slot].frames = frames;
   e->tracks[slot].channels = channels;
+  e->tracks[slot].offset = 0;
   yt_recompute_length(e);
   yt_track_unlock(e);
   free(old);
+}
+
+void yt_engine_set_track_offset(yt_engine* e, int32_t slot, int64_t frame) {
+  if (e == NULL || slot < 0 || slot >= YT_MAX_TRACKS) return;
+  if (frame < 0) frame = 0;
+  yt_track_lock(e);
+  e->tracks[slot].offset = frame;
+  yt_recompute_length(e);
+  yt_track_unlock(e);
 }
 
 static inline int16_t yt_f2s(float v) {
