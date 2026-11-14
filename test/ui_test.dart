@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yintrace/src/analysis/reference.dart';
 import 'package:yintrace/src/app/services.dart';
 import 'package:yintrace/src/app/settings.dart';
 import 'package:yintrace/src/audio/audio_backend.dart';
@@ -23,11 +24,13 @@ import 'package:yintrace/src/library/song.dart';
 import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/models/model_manager.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
+import 'package:yintrace/src/practice/segment_player.dart';
 import 'package:yintrace/src/ui/about_page.dart';
 import 'package:yintrace/src/ui/app.dart';
 import 'package:yintrace/src/ui/benchmark_page.dart';
 import 'package:yintrace/src/ui/import_page.dart';
 import 'package:yintrace/src/ui/library_page.dart';
+import 'package:yintrace/src/ui/pitch_editor_page.dart';
 import 'package:yintrace/src/ui/settings_page.dart';
 import 'package:yintrace/src/ui/practice_page.dart';
 import 'package:yintrace/src/ui/score_trend.dart';
@@ -197,7 +200,77 @@ void main() {
     expect(find.text('得分趋势'), findsOneWidget);
     expect(find.text('最近 82 分，比第一次高 8 分'), findsOneWidget);
     expect(find.byType(LineScoreSparkline), findsNWidgets(2));
+    // Every line can be corrected.
+    expect(find.byTooltip('校正这一句的音高'), findsNWidgets(2));
   });
+
+  testWidgets('pitch editor moves a character, leaves it out of the score and restores it', (tester) async {
+    phone(tester);
+    late SegmentPlayer player;
+    await tester.pumpWidget(
+      host(
+        services,
+        PitchEditorPage(
+          songId: song.id,
+          line: 1,
+          decodeInBackground: false,
+          playerFactory: () => player = SegmentPlayer(
+            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+            configureSession: false,
+          ),
+        ),
+      ),
+    );
+    await settleIo(tester, rounds: 20);
+    expect(find.text('第 2 句，共 2 句'), findsOneWidget);
+    await tester.tap(find.text('记'));
+    await tester.pump();
+    expect(find.text('「记」'), findsOneWidget);
+    Future<RefToken> stored() async =>
+        (await tester.runAsync(() => services.songs.loadReference(song.id)))!.lines[1].tokens[3];
+    final detected = (await stored()).notes.first.midi;
+    await screenshot(tester, '2b_pitch_editor');
+
+    // Listen to the original: exactly the vocal around the character.
+    await tester.tap(find.text('听原唱'));
+    await settleIo(tester, rounds: 3);
+    final engine = player.engine!;
+    expect(engine.isPlaying, isTrue);
+    final ref = await tester.runAsync(() => services.songs.loadReference(song.id));
+    final from = ref!.lines[1].tokens[3].start - 0.12;
+    final vocal = readWavFile(services.songs.pathFor(song.id, song.vocalsFile)).samples;
+    final heard = engine.render(2048);
+    final a = (from * sr).round();
+    var err = 0.0;
+    for (var i = 0; i < 2048; i++) {
+      err = math.max(err, (heard[2 * i] - vocal[a + i]).abs());
+    }
+    expect(err, lessThan(1e-3));
+    engine.render(sr); // to its end
+    expect(engine.isPlaying, isFalse);
+
+    await tester.tap(find.text('升八度'));
+    await settleIo(tester, rounds: 5);
+    expect((await stored()).notes.first.midi, closeTo(detected + 12, 1e-6));
+    expect(find.textContaining('调高了 1 个八度'), findsOneWidget);
+    await tester.tap(find.text('降半音'));
+    await settleIo(tester, rounds: 5);
+    expect((await stored()).shift, 11);
+
+    await tester.scrollUntilVisible(find.text('这个字不计分'), 200, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('这个字不计分'));
+    await settleIo(tester, rounds: 5);
+    expect((await stored()).skip, isTrue);
+    expect(find.text('不计分'), findsOneWidget);
+
+    await tester.scrollUntilVisible(find.text('恢复自动识别'), 200, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('恢复自动识别'));
+    await settleIo(tester, rounds: 5);
+    final restored = await stored();
+    expect(restored.notes.first.midi, closeTo(detected, 1e-6));
+    expect(restored.corrected, isFalse);
+    await tester.pumpWidget(const SizedBox());
+  }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
 
   testWidgets('import page validates the timed lyrics as you type', (tester) async {
     phone(tester);
@@ -391,6 +464,7 @@ void main() {
     final practisedTo = engine.positionSeconds;
     await tester.tap(find.text('回听这一遍'));
     await settleIo(tester, rounds: 10);
+    await tester.pump(const Duration(milliseconds: 300)); // the sheet's exit
     expect(session.reviewing, isTrue);
     expect(session.isPlaying, isTrue);
     expect(find.text('回到练习'), findsOneWidget);
@@ -414,6 +488,41 @@ void main() {
     expect(session.reviewing, isFalse);
     expect(find.text('回到练习'), findsNothing);
     expect(engine.positionSeconds, closeTo(practisedTo, 0.02), reason: 'practice continues where it was');
+
+    // How does the line go? The original singer at full volume, nothing
+    // scored; afterwards practice waits at the start of that line.
+    final linesBefore = [for (final r in session.scorer.results()) r.score];
+    await tester.tap(find.text('听这句原唱'));
+    await tester.pump();
+    expect(session.listening, ListenKind.original);
+    expect(find.text('正在听原唱，听完回到这一句开头'), findsOneWidget);
+    final heardLine = ref.lines[session.originalLine!];
+    session.seek(heardLine.start + 0.2);
+    final vocalTrack = readWavFile(services.songs.pathFor(song.id, song.vocalsFile)).samples;
+    final at = engine.positionFrame;
+    final original = engine.render(2048);
+    var diff = 0.0, loud = 0.0;
+    for (var i = 0; i < 2048; i++) {
+      diff = math.max(diff, (original[2 * i] - vocalTrack[at + i]).abs());
+      loud = math.max(loud, vocalTrack[at + i].abs());
+    }
+    expect(loud, greaterThan(0.01));
+    expect(diff, lessThan(1e-3), reason: 'the original vocal, unattenuated');
+    await screenshot(tester, '4c_listen_original');
+    for (var i = 0; i < 400 && session.reviewing; i++) {
+      engine.render(512, input: Float32List(512));
+      await tester.pump(const Duration(milliseconds: 11));
+    }
+    expect(session.reviewing, isFalse);
+    expect(session.isPlaying, isFalse);
+    expect(engine.positionSeconds, closeTo(math.max(0, heardLine.start - 1.0), 0.02));
+    // Nothing was scored while the original played; the line heard is
+    // ready to be sung again, the lines before it keep their scores.
+    final after = session.scorer.results();
+    for (var i = 0; i < heardLine.index; i++) {
+      expect(after[i].score, linesBefore[i]);
+    }
+    expect(after[heardLine.index].attempted, isFalse);
     // Dispose the page (and with it the native engine).
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);

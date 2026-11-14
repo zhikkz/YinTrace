@@ -27,6 +27,12 @@ class ListenBackAction extends ResultsAction {
   final int? line;
 }
 
+/// Hear how the original singer sings a line.
+class ListenOriginalAction extends ResultsAction {
+  const ListenOriginalAction(this.line);
+  final int line;
+}
+
 /// Feedback after (or during) a run: the overall score, the characters that
 /// need work, and every sung line. Pops with a [ResultsAction].
 class ResultsSheet extends StatelessWidget {
@@ -113,7 +119,9 @@ class ResultsSheet extends StatelessWidget {
             Text('每一句', style: context.type.titleLarge),
             const SizedBox(height: 4),
             Text(
-              canListen == null ? '点一句，回到练习里单独循环它。' : '点一句，回到练习里单独循环它；点耳机听你唱的这一句。',
+              canListen == null
+                  ? '点一句，回到练习里单独循环它；点人像听原唱怎么唱。'
+                  : '点一句，回到练习里单独循环它；点耳机听你唱的这一句，点人像听原唱怎么唱。',
               style: context.type.bodySmall,
             ),
             const SizedBox(height: 8),
@@ -274,6 +282,12 @@ class _LineResultRow extends StatelessWidget {
                         ),
                       ),
                   ])),
+                ),
+                IconButton(
+                  tooltip: '听原唱这一句',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.record_voice_over_rounded),
+                  onPressed: () => Navigator.of(context).pop(ListenOriginalAction(result.line.index)),
                 ),
                 if (canListen)
                   IconButton(

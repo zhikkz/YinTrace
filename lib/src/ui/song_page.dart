@@ -7,6 +7,7 @@ import '../import/import_pipeline.dart';
 import '../library/song.dart';
 import 'import_page.dart' show lyricsHint;
 import 'lyrics_style.dart';
+import 'pitch_editor_page.dart';
 import 'pitch_graph.dart';
 import 'practice_page.dart';
 import 'score_trend.dart';
@@ -62,6 +63,13 @@ class _SongPageState extends State<SongPage> {
   Future<void> _practice({int? line}) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => PracticePage(meta: _meta!, reference: _ref!, contour: _track, loopLine: line),
+    ));
+    await _load();
+  }
+
+  Future<void> _correct(int line) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => PitchEditorPage(songId: widget.songId, line: line),
     ));
     await _load();
   }
@@ -150,8 +158,13 @@ class _SongPageState extends State<SongPage> {
             actions: [
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_horiz_rounded),
-                onSelected: (v) => v == 'edit' ? _editLyrics() : _delete(),
+                onSelected: (v) => switch (v) {
+                  'edit' => _editLyrics(),
+                  'pitch' => _correct(0),
+                  _ => _delete(),
+                },
                 itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'pitch', child: Text('校正音高')),
                   PopupMenuItem(value: 'edit', child: Text('修改歌词')),
                   PopupMenuItem(value: 'delete', child: Text('删除这首歌')),
                 ],
@@ -204,7 +217,8 @@ class _SongPageState extends State<SongPage> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-              child: Text('点任意一句，单独循环练这一句。', style: context.type.bodySmall),
+              child: Text('点任意一句，单独循环练这一句。哪个${ref.language.unit}的目标音不对，点那一句右边的笔校正。',
+                  style: context.type.bodySmall),
             ),
           ),
           SliverList.builder(
@@ -214,6 +228,7 @@ class _SongPageState extends State<SongPage> {
               final score = lastLineScores[line.index];
               final trend = lineScores(_history, line.index);
               final missing = line.tokens.where((t) => t.notes.isEmpty).length;
+              final corrected = line.tokens.where((t) => t.corrected).length;
               return InkWell(
                 onTap: () => _practice(line: line.index),
                 child: Padding(
@@ -239,8 +254,19 @@ class _SongPageState extends State<SongPage> {
                               child: LineScoreSparkline(scores: trend),
                             ),
                           if (score != null) ScoreNumeral(score: score, size: 20),
+                          IconButton(
+                            tooltip: '校正这一句的音高',
+                            visualDensity: VisualDensity.compact,
+                            icon: Icon(Icons.edit_rounded, size: 19, color: p.inkSoft),
+                            onPressed: () => _correct(line.index),
+                          ),
                         ],
                       ),
+                      if (corrected > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 44, top: 2),
+                          child: Text('校正过 $corrected 个${ref.language.unit}', style: context.type.labelSmall),
+                        ),
                       if (missing > 0)
                         Padding(
                           padding: const EdgeInsets.only(left: 44, top: 2),

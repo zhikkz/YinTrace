@@ -22,6 +22,15 @@ abstract final class TrackSlot {
   static const take = 2;
 }
 
+/// What is played instead of practising.
+enum ListenKind {
+  /// The singer's own take (the original singer muted).
+  take,
+
+  /// The original singer, loud, to hear how a line goes.
+  original,
+}
+
 /// Drives one practice run: audio engine, live pitch tracking and scoring.
 class PracticeSession extends ChangeNotifier {
   PracticeSession({
@@ -77,14 +86,22 @@ class PracticeSession extends ChangeNotifier {
 
   /// The song time span being played back, while listening back.
   (double, double)? _review;
+  ListenKind? _listenKind;
+  int? _originalLine; // the line played with the original singer
   double _resumeAt = 0; // where practice continues after listening back
   int _loadedTake = -1; // version of the take in the engine's take slot
 
   PracticeEngine? get engine => _engine;
   bool get isPlaying => _engine?.isPlaying ?? false;
 
-  /// Listening back to the singer's take instead of practising.
+  /// Listening (to the take or the original singer) instead of practising.
   bool get reviewing => _review != null;
+
+  /// What is being listened to (null while practising).
+  ListenKind? get listening => _review == null ? null : _listenKind;
+
+  /// The line being played with the original singer.
+  int? get originalLine => listening == ListenKind.original ? _originalLine : null;
 
   /// Whether there is a take to listen back to (of [line], when given).
   bool canListenBack({int? line}) {
@@ -96,11 +113,11 @@ class PracticeSession extends ChangeNotifier {
   }
 
   /// The singer's pitch trail to draw: live while practising, the recorded
-  /// one while listening back.
-  List<UserPoint> get displayPoints => reviewing ? take!.points : points;
+  /// one while listening back to it.
+  List<UserPoint> get displayPoints => listening == ListenKind.take ? take!.points : points;
 
   /// While listening back: what the singer sang at the current position.
-  UserPoint? get reviewPoint => reviewing ? take?.pointAt(position) : null;
+  UserPoint? get reviewPoint => listening == ListenKind.take ? take?.pointAt(position) : null;
 
   /// Total compensation applied to captured audio (seconds).
   double get latency => _latency;
@@ -187,13 +204,19 @@ class PracticeSession extends ChangeNotifier {
     final e = _engine;
     if (e == null) return;
     final hasAcc = meta.accompanimentFile != null || meta.originalFile != null;
+    final kind = listening;
     e.setTrackGain(TrackSlot.accompaniment, settings.accompanimentVolume);
     // Listening back: your own voice instead of the original singer's.
+    // Listening to the original: the original singer at full volume.
     e.setTrackGain(
       TrackSlot.guideVocal,
-      reviewing ? 0 : (hasAcc ? settings.guideVocalVolume : math.max(0.6, settings.guideVocalVolume)),
+      switch (kind) {
+        ListenKind.take => 0,
+        ListenKind.original => 1,
+        null => hasAcc ? settings.guideVocalVolume : math.max(0.6, settings.guideVocalVolume),
+      },
     );
-    e.setTrackGain(TrackSlot.take, reviewing ? 1 : 0);
+    e.setTrackGain(TrackSlot.take, kind == ListenKind.take ? 1 : 0);
     scorer.options = _scoringOptions();
     final t = _tracker;
     if (t != null) {
@@ -255,24 +278,57 @@ class PracticeSession extends ChangeNotifier {
       _loadedTake = t.version;
     }
     final range = line != null ? _loopRange(line) : (math.max(0.0, t.startSeconds - 0.5), t.endSeconds + 0.3);
+    if (listening == ListenKind.original) stopListening();
     if (_review == null) _resumeAt = e.positionSeconds;
     _review = range;
+    _listenKind = ListenKind.take;
     e.setLoop(null, null);
     applyMix();
     _seekEngine(range.$1);
     play();
   }
 
-  /// Back to practising (the take stays for another listen).
+  /// Plays [line] (by default the current one) with the original singer at
+  /// full volume, nothing scored or recorded. Afterwards practice is ready
+  /// at the start of that line, paused.
+  void listenOriginal({int? line}) {
+    final e = _engine;
+    final li = line ?? currentLine;
+    if (e == null || _suspended || li < 0 || li >= reference.lines.length) return;
+    if (listening == ListenKind.take) stopListening();
+    e.pause();
+    final (a, b) = _loopRange(li);
+    final range = (a, math.min(b, math.max(a, duration)));
+    _review = range;
+    _listenKind = ListenKind.original;
+    _originalLine = li;
+    e.setLoop(null, null);
+    applyMix();
+    _seekEngine(range.$1);
+    play();
+  }
+
+  /// Back to practising (the take stays for another listen). After the
+  /// original singer, practice continues at the start of that line.
   void stopListening() {
     final e = _engine;
     if (_review == null) return;
+    final kind = _listenKind;
     _review = null;
+    _listenKind = null;
     if (e != null) {
       e.pause();
-      e.unloadTrack(TrackSlot.take);
-      _loadedTake = -1;
+      if (kind == ListenKind.take) {
+        e.unloadTrack(TrackSlot.take);
+        _loadedTake = -1;
+      }
       applyMix();
+      if (kind == ListenKind.original && _originalLine != null) {
+        _tracker?.reset();
+        setLoopLine(loopLine);
+        seek(math.max(0, reference.lines[_originalLine!].start - 1.0));
+        return;
+      }
       _seekEngine(_resumeAt);
     }
     _tracker?.reset();
@@ -388,6 +444,11 @@ class PracticeSession extends ChangeNotifier {
       // The microphone would only hear the playback: nothing to score.
       e.flushCapture();
       _endCount = e.endCount; // reaching the end here is not a finished run
+      final atEnd = !e.isPlaying && e.positionSeconds >= e.lengthSeconds - 0.05;
+      if (_listenKind == ListenKind.original && (position >= review.$2 || atEnd)) {
+        stopListening(); // heard the line: ready to sing it
+        return;
+      }
       if (e.isPlaying && position >= review.$2) e.pause();
       if (e.isPlaying || position >= review.$2) notifyListeners();
       return;

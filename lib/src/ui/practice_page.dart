@@ -39,8 +39,7 @@ class PracticePage extends StatefulWidget {
   State<PracticePage> createState() => _PracticePageState();
 }
 
-class _PracticePageState extends State<PracticePage>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+class _PracticePageState extends State<PracticePage> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final PracticeSession _session;
   late final Ticker _ticker;
   final _started = Stopwatch();
@@ -137,6 +136,8 @@ class _PracticePageState extends State<PracticePage>
         _session.seekToLine(line);
       case ListenBackAction(:final line):
         _session.listenBack(line: line);
+      case ListenOriginalAction(:final line):
+        _session.listenOriginal(line: line);
       case null:
         break;
     }
@@ -213,7 +214,7 @@ class _PracticePageState extends State<PracticePage>
   }
 }
 
-/// Shown while listening back to the take.
+/// Shown while listening to the take or to the original singer.
 class _ReviewBar extends StatelessWidget {
   const _ReviewBar({required this.session});
   final PracticeSession session;
@@ -221,13 +222,14 @@ class _ReviewBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.yt;
+    final original = session.listening == ListenKind.original;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 8, 4),
       child: Row(
         children: [
-          Icon(Icons.headphones_rounded, size: 18, color: p.ink),
+          Icon(original ? Icons.record_voice_over_rounded : Icons.headphones_rounded, size: 18, color: p.ink),
           const SizedBox(width: 8),
-          Expanded(child: Text('正在回听你唱的，原唱已静音', style: context.type.bodyMedium)),
+          Expanded(child: Text(original ? '正在听原唱，听完回到这一句开头' : '正在回听你唱的，原唱已静音', style: context.type.bodyMedium)),
           TextButton(onPressed: session.stopListening, child: const Text('回到练习')),
         ],
       ),
@@ -262,13 +264,7 @@ class _LiveMeter extends StatelessWidget {
       verdict = c.abs() <= tol ? '准' : (c > 0 ? '高了 $c 音分' : '低了 ${-c} 音分');
       verdictColor = p.deviation(cents, tolerance: tol);
     }
-    final big = TextStyle(
-      fontSize: 26,
-      fontWeight: FontWeight.w500,
-      height: 1.15,
-      color: p.ink,
-      fontFeatures: tabular,
-    );
+    final big = TextStyle(fontSize: 26, fontWeight: FontWeight.w500, height: 1.15, color: p.ink, fontFeatures: tabular);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
       child: Column(
@@ -284,12 +280,7 @@ class _LiveMeter extends StatelessWidget {
               const Spacer(),
               Text(verdict, style: context.type.titleSmall?.copyWith(color: verdictColor)),
               const Spacer(),
-              _NoteReadout(
-                label: '你',
-                value: fresh ? noteLabel(sungMidi) : '–',
-                style: big,
-                alignEnd: true,
-              ),
+              _NoteReadout(label: '你', value: fresh ? noteLabel(sungMidi) : '–', style: big, alignEnd: true),
             ],
           ),
           const SizedBox(height: 6),
@@ -357,8 +348,11 @@ class _Stage extends StatelessWidget {
         t1: t1,
         midiLo: a,
         midiHi: b + 1.5,
-        style: PitchGraphStyle.of(context,
-            tolerance: session.settings.toleranceCents.toDouble(), language: session.reference.language),
+        style: PitchGraphStyle.of(
+          context,
+          tolerance: session.settings.toleranceCents.toDouble(),
+          language: session.reference.language,
+        ),
         user: session.displayPoints,
         playhead: ph,
         tokenScores: session.tokenScores(),
@@ -406,6 +400,20 @@ class _Lyrics extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(next?.text ?? ' ', style: lyricsStyle(context.type.bodyMedium?.copyWith(color: p.inkFaint), language)),
+          const SizedBox(height: 4),
+          // How does this line go? The original singer, then sing it.
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                visualDensity: VisualDensity.compact,
+              ),
+              onPressed: session.reviewing ? null : () => session.listenOriginal(line: li),
+              icon: const Icon(Icons.record_voice_over_rounded, size: 18),
+              label: const Text('听这句原唱'),
+            ),
+          ),
         ],
       ),
     );
@@ -519,10 +527,7 @@ class _Timeline extends StatelessWidget {
           onHorizontalDragUpdate: (d) => seekAt(d.localPosition.dx),
           child: SizedBox(
             height: 26,
-            child: CustomPaint(
-              size: Size.infinite,
-              painter: _TimelinePainter(position, duration, lineStarts, loop, p),
-            ),
+            child: CustomPaint(size: Size.infinite, painter: _TimelinePainter(position, duration, lineStarts, loop, p)),
           ),
         );
       },

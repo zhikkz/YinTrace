@@ -62,6 +62,8 @@ class PitchGraphPainter extends CustomPainter {
     this.gutter = 30,
     this.glyphSize = 15,
     this.live = false,
+    this.highlight,
+    this.revision = 0,
   });
 
   final SongReference? reference;
@@ -81,6 +83,12 @@ class PitchGraphPainter extends CustomPainter {
 
   /// Draw the head of the voice trace (practice / tuner).
   final bool live;
+
+  /// A time span to mark with a light band (the pitch editor's selection).
+  final (double, double)? highlight;
+
+  /// Bump to repaint after the reference was changed in place.
+  final int revision;
 
   static final _textCache = <String, TextPainter>{};
 
@@ -123,6 +131,13 @@ class PitchGraphPainter extends CustomPainter {
 
     canvas.save();
     canvas.clipRect(Rect.fromLTWH(gutter, 0, plotW, h));
+
+    final hl = highlight;
+    if (hl != null) {
+      canvas.drawRRect(
+          RRect.fromLTRBR(x(hl.$1) - 3, 2, x(hl.$2) + 3, h - 2, const Radius.circular(6)),
+          Paint()..color = p.ink.withValues(alpha: 0.07));
+    }
 
     // The original singer's real contour, as a hairline.
     final c = contour;
@@ -300,6 +315,8 @@ class PitchGraphPainter extends CustomPainter {
       old.reference != reference ||
       old.tokenScores != tokenScores ||
       old.transpose != transpose ||
+      old.highlight != highlight ||
+      old.revision != revision ||
       old.style.palette != style.palette;
 }
 
