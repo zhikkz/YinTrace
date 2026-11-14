@@ -42,7 +42,18 @@ class ResumableDownload {
 
   /// Downloads [url] into [partFile] (appending to what is already there).
   /// [onProgress] receives the number of bytes on disk.
-  Future<void> fetch(Uri url, File partFile, {required int expectedBytes, void Function(int received)? onProgress}) async {
+  ///
+  /// With [minBytesPerSecond], a transfer that stays slower than that over
+  /// [slowWindow] gives up with [ModelDownloadException] (so that another
+  /// route can be tried); the partial file is kept.
+  Future<void> fetch(
+    Uri url,
+    File partFile, {
+    required int expectedBytes,
+    void Function(int received)? onProgress,
+    int minBytesPerSecond = 0,
+    Duration slowWindow = const Duration(seconds: 30),
+  }) async {
     _cancelled = false;
     var have = partFile.existsSync() ? partFile.lengthSync() : 0;
     if (have > expectedBytes) {
@@ -68,7 +79,14 @@ class ResumableDownload {
       // The partial file does not fit the server's file: start over.
       await response.drain<void>();
       if (partFile.existsSync()) partFile.deleteSync();
-      return fetch(url, partFile, expectedBytes: expectedBytes, onProgress: onProgress);
+      return fetch(
+        url,
+        partFile,
+        expectedBytes: expectedBytes,
+        onProgress: onProgress,
+        minBytesPerSecond: minBytesPerSecond,
+        slowWindow: slowWindow,
+      );
     }
     if (response.statusCode == HttpStatus.ok) {
       have = 0; // The server ignored the range: write from the start.
@@ -91,6 +109,28 @@ class ResumableDownload {
     }
 
     arm();
+    // Bytes received at the start of each check period, oldest first.
+    final samples = <(Duration, int)>[];
+    final clock = Stopwatch()..start();
+    Timer? slow;
+    if (minBytesPerSecond > 0) {
+      final period = Duration(microseconds: slowWindow.inMicroseconds ~/ 6);
+      slow = Timer.periodic(period, (_) {
+        final now = clock.elapsed;
+        samples.add((now, received));
+        while (samples.length > 1 && now - samples[1].$1 >= slowWindow) {
+          samples.removeAt(0);
+        }
+        final (then, bytes) = samples.first;
+        final span = now - then;
+        if (span < slowWindow) return;
+        final rate = (received - bytes) / (span.inMicroseconds / 1e6);
+        if (rate < minBytesPerSecond) {
+          fail(ModelDownloadException('下载太慢（每秒 ${(rate / 1024).toStringAsFixed(0)} KB）'));
+        }
+      });
+      samples.add((Duration.zero, received));
+    }
     _body = response.listen(
       (chunk) {
         sink.writeFromSync(chunk);
@@ -108,6 +148,7 @@ class ResumableDownload {
       await done.future;
     } finally {
       idle?.cancel();
+      slow?.cancel();
       await _body?.cancel();
       _body = null;
       _done = null;
@@ -131,7 +172,9 @@ class ResumableDownload {
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
       if (from > 0) request.headers.set(HttpHeaders.rangeHeader, 'bytes=$from-');
       final response = await request.close().timeout(idleTimeout);
-      if (response.isRedirect) {
+      // Every redirect, including 308 (hf-mirror.com outside China), which
+      // HttpClientResponse.isRedirect does not count on every SDK.
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.statusCode != HttpStatus.notModified) {
         final location = response.headers.value(HttpHeaders.locationHeader);
         await response.drain<void>();
         if (location == null) throw ModelDownloadException('下载地址无效');

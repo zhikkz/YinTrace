@@ -3,9 +3,10 @@
 // the downloaded PyTorch weights into an ONNX model.
 //
 // Set MODELS_DIR to a folder holding the real `6_HP-Karaoke-UVR.pth` to also
-// assemble the real model with the recipe bundled in assets/models, and
+// assemble the real model with the recipe bundled in assets/models,
 // LIVE_MODEL_DOWNLOAD=1 to download both models from the UVR model
-// repository exactly like the app does (194 MB).
+// repository exactly like the app does (194 MB), and LIVE_MIRROR_CHECK=1 to
+// check that the backup route (hf-mirror.com) serves the official files.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -72,6 +73,15 @@ class FakeModelHost {
   int? breakAfter;
   bool ignoreRanges = false;
 
+  /// Status of the `/dl/` redirect (hf-mirror.com answers 308 abroad).
+  int redirectStatus = HttpStatus.found;
+
+  /// Answer every request with this status.
+  int? failWith;
+
+  /// Send the body in 1 kB pieces this far apart.
+  Duration? trickle;
+
   Future<void> start() async {
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen(_handle);
@@ -83,8 +93,13 @@ class FakeModelHost {
     final name = r.uri.pathSegments.last;
     final range = r.headers.value(HttpHeaders.rangeHeader);
     requests.add('${r.uri.path} ${range ?? '-'}');
+    if (failWith case final status?) {
+      r.response.statusCode = status;
+      await r.response.close();
+      return;
+    }
     if (r.uri.path.startsWith('/dl/')) {
-      r.response.statusCode = HttpStatus.found;
+      r.response.statusCode = redirectStatus;
       r.response.headers.set(HttpHeaders.locationHeader, '/blob/$name');
       await r.response.close();
       return;
@@ -115,6 +130,19 @@ class FakeModelHost {
       socket.add(data.sublist(from, from + cut));
       await socket.flush();
       socket.destroy();
+      return;
+    }
+    if (trickle case final pause?) {
+      try {
+        for (var i = from; i < data.length; i += 1024) {
+          r.response.add(data.sublist(i, i + 1024 < data.length ? i + 1024 : data.length));
+          await r.response.flush();
+          await Future<void>.delayed(pause);
+        }
+        await r.response.close();
+      } catch (_) {
+        // The client gave up.
+      }
       return;
     }
     r.response.add(data.sublist(from));
@@ -274,6 +302,34 @@ void main() {
       expect(host.requests.last, '/blob/a.bin bytes=$have-');
     });
 
+    test('follows a permanent (308) redirect', () async {
+      host.redirectStatus = HttpStatus.permanentRedirect;
+      final part = File('${tmp.path}/a.part');
+      final d = ResumableDownload();
+      await d.fetch(Uri.parse(host.url('a.bin')), part, expectedBytes: payload.length);
+      d.close();
+      expect(part.readAsBytesSync(), payload);
+      expect(host.requests, ['/dl/a.bin -', '/blob/a.bin -']);
+    });
+
+    test('gives up on a transfer that stays too slow, keeping what arrived', () async {
+      host.trickle = const Duration(milliseconds: 40); // about 25 kB/s
+      final part = File('${tmp.path}/a.part');
+      final d = ResumableDownload();
+      await expectLater(
+        d.fetch(
+          Uri.parse(host.url('a.bin')),
+          part,
+          expectedBytes: payload.length,
+          minBytesPerSecond: 200 * 1024,
+          slowWindow: const Duration(milliseconds: 600),
+        ),
+        throwsA(isA<ModelDownloadException>().having((e) => e.message, 'message', startsWith('下载太慢'))),
+      );
+      d.close();
+      expect(part.lengthSync(), inExclusiveRange(0, payload.length));
+    });
+
     test('starts over when the server ignores the range', () async {
       final part = File('${tmp.path}/a.part')..writeAsBytesSync(pseudoRandom(1000, 99));
       host.ignoreRanges = true;
@@ -301,6 +357,7 @@ void main() {
 
   group('model manager', () {
     late FakeModelHost host;
+    late FakeModelHost mirror;
     late ModelRecipe recipe;
     late Uint8List weights, onnx, plain;
     late List<ModelSpec> specs;
@@ -313,6 +370,8 @@ void main() {
       plain = pseudoRandom(180000, 5);
       host = FakeModelHost({'voc.onnx': plain, 'kara.pth': weights});
       await host.start();
+      mirror = FakeModelHost({'voc.onnx': plain, 'kara.pth': weights})..redirectStatus = HttpStatus.permanentRedirect;
+      await mirror.start();
       specs = [
         ModelSpec(
           id: 'vocals',
@@ -338,7 +397,10 @@ void main() {
         ),
       ];
     });
-    tearDown(() => host.stop());
+    tearDown(() async {
+      await host.stop();
+      await mirror.stop();
+    });
 
     ModelManager manager({List<String>? excluded}) => ModelManager(
       dir: Directory('${tmp.path}/models'),
@@ -442,6 +504,112 @@ void main() {
       expect(m.error, contains('校验失败'));
     });
 
+    group('backup route', () {
+      List<ModelSpec> withMirror(List<ModelSpec> specs) => [
+        for (final s in specs)
+          ModelSpec(
+            id: s.id,
+            title: s.title,
+            purpose: s.purpose,
+            fileName: s.fileName,
+            url: s.url,
+            bytes: s.bytes,
+            sha256: s.sha256,
+            installedName: s.installedName,
+            installedBytes: s.installedBytes,
+            mirrors: [mirror.url(s.fileName)],
+          ),
+      ];
+
+      setUp(() => specs = withMirror(specs));
+
+      test('the main route cannot be reached: everything comes from the mirror', () async {
+        final port = host.server.port;
+        await host.stop();
+        specs = [
+          for (final s in specs)
+            ModelSpec(
+              id: s.id,
+              title: s.title,
+              purpose: s.purpose,
+              fileName: s.fileName,
+              url: 'http://127.0.0.1:$port/dl/${s.fileName}',
+              bytes: s.bytes,
+              sha256: s.sha256,
+              installedName: s.installedName,
+              installedBytes: s.installedBytes,
+              mirrors: s.mirrors,
+            ),
+        ];
+        final m = manager();
+        final routes = <(String?, bool)>{};
+        m.addListener(() {
+          if (m.phase == ModelPhase.downloading) routes.add((m.route, m.onBackupRoute));
+        });
+        await m.install();
+        expect(m.error, isNull);
+        expect(m.isReady, isTrue);
+        expect(File(m.pathFor(specs[1])!).readAsBytesSync(), onnx);
+        expect(routes, contains(('127.0.0.1', true)));
+        expect(m.route, isNull);
+      });
+
+      test('a server error, then the second file goes straight to the route that worked', () async {
+        host.failWith = HttpStatus.serviceUnavailable;
+        final m = manager();
+        await m.install();
+        expect(m.error, isNull);
+        expect(m.isReady, isTrue);
+        expect(host.requests, ['/dl/voc.onnx -'], reason: 'the main route is not asked again for the second file');
+        expect(mirror.requests.where((r) => r.startsWith('/blob/')), hasLength(2));
+      });
+
+      test('a file that does not match its SHA-256 is fetched again from the mirror', () async {
+        host.files['kara.pth'] = Uint8List.fromList(weights)..[1234] ^= 0xff;
+        final m = manager();
+        await m.install();
+        expect(m.error, isNull);
+        expect(File(m.pathFor(specs[1])!).readAsBytesSync(), onnx);
+        expect(mirror.requests, ['/dl/kara.pth -', '/blob/kara.pth -']);
+      });
+
+      test('a download that breaks half way continues on the mirror', () async {
+        host.breakAfter = 60000;
+        final m = manager();
+        await m.install();
+        expect(m.error, isNull);
+        expect(m.isReady, isTrue);
+        expect(mirror.requests.first, '/dl/voc.onnx bytes=60000-');
+        expect(mirror.requests[1], '/blob/voc.onnx bytes=60000-');
+      });
+
+      test('test builds can download over the backup route only, once', () async {
+        final m = manager()..backupOnly = true;
+        final routes = <String?>{};
+        m.addListener(() {
+          if (m.phase == ModelPhase.downloading && m.onBackupRoute) routes.add(m.route);
+        });
+        await m.install();
+        expect(m.error, isNull);
+        expect(m.isReady, isTrue);
+        expect(host.requests, isEmpty);
+        expect(routes, {'127.0.0.1'});
+        expect(m.backupOnly, isFalse);
+      });
+
+      test('failing on both routes names both', () async {
+        host.failWith = HttpStatus.serviceUnavailable;
+        mirror.failWith = HttpStatus.notFound;
+        final m = manager();
+        await m.install();
+        expect(m.phase, ModelPhase.failed);
+        expect(m.error, startsWith('主线路和备用线路都下载不了，请检查网络后重试。（127.0.0.1：'));
+        expect(m.error, contains('（503）'));
+        expect(m.error, contains('（404）'));
+        expect(m.isInstalled(specs[0]), isFalse);
+      });
+    });
+
     test('deleting frees everything, including files from the fixed-window version', () async {
       final m = manager();
       await m.install();
@@ -487,15 +655,51 @@ void main() {
     timeout: const Timeout(Duration(minutes: 20)),
   );
 
-  test('the two models come from the UVR model repository', () {
+  test('the two models come from the UVR model repository, with hf-mirror.com as backup', () {
     for (final spec in separationModels) {
       expect(spec.url, startsWith('https://github.com/TRvlvr/model_repo/releases/download/'));
       expect(spec.url, endsWith('/${spec.fileName}'));
       expect(spec.sha256.length, 64);
+      expect(spec.mirrors, [
+        'https://hf-mirror.com/Blane187/all_public_uvr_models/resolve/fddec39677560e41e3194f24a9e4c4cd32ef0e83/${spec.fileName}',
+      ]);
+      expect(spec.sources.map(routeName), ['github.com', 'hf-mirror.com']);
     }
     expect(separationModels.map((s) => s.fileName), ['UVR-MDX-NET-Voc_FT.onnx', '6_HP-Karaoke-UVR.pth']);
     expect(formatMegabytes(separationModels.fold(0, (s, m) => s + m.bytes)), '194 MB');
   });
+
+  test(
+    'the backup route serves the official files',
+    () async {
+      // Follow the redirects with HEAD requests: Hugging Face states the
+      // file's SHA-256 and size in X-Linked-Etag / X-Linked-Size, so nothing
+      // has to be downloaded.
+      final client = HttpClient();
+      addTearDown(client.close);
+      for (final spec in separationModels) {
+        var url = Uri.parse(spec.mirrors.single);
+        String? sha, size;
+        for (var hop = 0; hop < 6 && sha == null; hop++) {
+          final request = await client.headUrl(url);
+          request.followRedirects = false;
+          final response = await request.close();
+          await response.drain<void>();
+          sha = response.headers.value('x-linked-etag')?.replaceAll('"', '');
+          size = response.headers.value('x-linked-size') ?? '${response.contentLength}';
+          final location = response.headers.value(HttpHeaders.locationHeader);
+          if (sha == null && location != null && response.statusCode >= 300 && response.statusCode < 400) {
+            url = url.resolve(location);
+          } else if (sha == null) {
+            fail('${spec.fileName}: ${response.statusCode} without a SHA-256 from $url');
+          }
+        }
+        expect(sha, spec.sha256, reason: spec.fileName);
+        expect(size, '${spec.bytes}', reason: spec.fileName);
+      }
+    },
+    skip: Platform.environment['LIVE_MIRROR_CHECK'] == null ? 'set LIVE_MIRROR_CHECK=1 to run' : false,
+  );
 
   test('the version shown in the app is the one in pubspec.yaml', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();

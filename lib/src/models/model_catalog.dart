@@ -1,7 +1,8 @@
 /// The two separation models YinTrace uses. Both come from the Ultimate
 /// Vocal Remover project and are downloaded from its official model
-/// repository on first use; they are not part of the app or of this
-/// repository.
+/// repository on first use (or, when that fails, from a copy of the same
+/// files on Hugging Face through hf-mirror.com); they are not part of the
+/// app or of this repository.
 class ModelSpec {
   const ModelSpec({
     required this.id,
@@ -13,6 +14,7 @@ class ModelSpec {
     required this.sha256,
     required this.installedName,
     required this.installedBytes,
+    this.mirrors = const [],
   });
 
   final String id;
@@ -31,11 +33,25 @@ class ModelSpec {
   final String installedName;
   final int installedBytes;
 
+  /// Other places with exactly the same file, tried in order when [url]
+  /// cannot be downloaded. Whatever the route, the file must have [sha256].
+  final List<String> mirrors;
+
+  /// [url] and then the [mirrors].
+  List<String> get sources => [url, ...mirrors];
+
   /// The download has to be turned into an ONNX model on the device.
   bool get needsAssembly => installedName != fileName;
 }
 
 const _releases = 'https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models';
+
+/// The backup route: a copy of UVR's public models on Hugging Face
+/// (Blane187/all_public_uvr_models) at a fixed commit, through hf-mirror.com
+/// (which answers from outside China with a redirect to huggingface.co).
+/// Checked on 2026-11-14: both files have the official size and SHA-256.
+const _hfMirror =
+    'https://hf-mirror.com/Blane187/all_public_uvr_models/resolve/fddec39677560e41e3194f24a9e4c4cd32ef0e83';
 
 /// MDX-Net "Voc FT": separates the vocals from the accompaniment.
 const vocalModel = ModelSpec(
@@ -48,6 +64,7 @@ const vocalModel = ModelSpec(
   sha256: '534b2070fcc7df514b13ef660dc8cbb328679c2374d04354a5c42bb14ecce111',
   installedName: 'UVR-MDX-NET-Voc_FT-dynamic.onnx',
   installedBytes: 66762490,
+  mirrors: ['$_hfMirror/UVR-MDX-NET-Voc_FT.onnx'],
 );
 
 /// VR architecture "6_HP-Karaoke": removes backing vocals from the vocals.
@@ -63,8 +80,12 @@ const karaokeModel = ModelSpec(
   sha256: '4ce7eaaa9e56f09366b788aebf6d3a72aec8145692c56f1e090e4e7e2d7ce65f',
   installedName: '6_HP-Karaoke-UVR-dynamic.onnx',
   installedBytes: 126741103,
+  mirrors: ['$_hfMirror/6_HP-Karaoke-UVR.pth'],
 );
 
 const separationModels = [vocalModel, karaokeModel];
 
 String formatMegabytes(int bytes) => '${(bytes / 1e6).round()} MB';
+
+/// The host of a download route, as shown to the user ("github.com").
+String routeName(String url) => Uri.tryParse(url)?.host ?? url;

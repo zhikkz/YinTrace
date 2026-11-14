@@ -16,7 +16,7 @@
 
 有两种跑法，测速代码相同（`lib/src/benchmark/`），报告也相同：
 
-- **只有手机**：装测试版（构建时加 `--dart-define=YINTRACE_BENCHMARK=true`，CI 产出的
+- **只有手机**：装测试版（构建时加 `--dart-define=YINTRACE_TEST_BUILD=true`，CI 产出的
   `YinTrace-test-unsigned.ipa` 就是），设置 → 测试版 → 性能测试，测完点“复制报告”。
   每测完一项都会保存，App 中途被系统关掉也能接着测，让 App 被关掉的设置会跳过并写进报告。
   步骤见 [只用 iPhone 测试](phone-testing.md)。

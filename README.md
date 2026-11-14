@@ -53,6 +53,9 @@ flutter run --release            # 连接 iPhone 后运行（人声分离很吃�
 
 - 部署目标是 iOS 16.0（ONNX Runtime 插件的要求）。
 - 第一次练习时系统会请求**麦克风权限**。
+- 上面是正式版。加上 `--dart-define=YINTRACE_TEST_BUILD=true` 是测试版（CI 产出的 `.ipa` 就是）：
+  设置里多一组“测试版”（性能测试、只用备用线路重新下载模型），下载模型时显示用的是哪条线路。
+  正式版里没有这些代码。
 - 所有插件都通过 CocoaPods 集成（`pubspec.yaml` 里关闭了 Swift Package Manager）。
 
 ## 分离模型
@@ -65,8 +68,11 @@ App 会提示下载（一共 194 MB，只下载一次，支持断点续传），
 | 人声分离 | UVR-MDX-NET Voc FT | `UVR-MDX-NET-Voc_FT.onnx` | 67 MB |
 | 去和声 | 6_HP-Karaoke-UVR | `6_HP-Karaoke-UVR.pth` | 127 MB |
 
-下载地址是 UVR 官方模型库（`github.com/TRvlvr/model_repo` 的 release）。权重文件不在这个仓库里，
-也不打包进 App。
+下载地址是 UVR 官方模型库（`github.com/TRvlvr/model_repo` 的 release）。连不上、服务器报错、
+下载中断、半分钟内一直慢于 48 KB/秒，或者文件校验不对时，App 自动改用备用线路
+`hf-mirror.com`（Hugging Face 镜像上 `Blane187/all_public_uvr_models` 固定提交的同名文件，
+已核对与官方文件的大小和 SHA-256 相同），已下载的部分接着续传；两条线路都失败才报错，并写明两边各自的原因。
+下一个文件先用刚才成功的线路。权重文件不在这个仓库里，也不打包进 App。
 
 - MDX 官方文件在安装时用 6 字节的配方将输入/输出时间轴改为动态，权重不变。
   使用 UVR 可选的 segment size 128（UVR 默认 256）和 UVR 默认的重叠 0.25：内存约为 256 的一半，
@@ -75,7 +81,7 @@ App 会提示下载（一共 194 MB，只下载一次，支持断点续传），
   结构（约 136 KB）和一份“拷贝配方”，下载完成后按配方从 `.pth` 里把每个权重张量的字节拷出来，
   拼成动态时间轴 ONNX 模型——不需要 PyTorch，结果和在电脑上用 PyTorch 导出的逐字节相同
   （见 `assets/models/README.md` 和 `tools/build_karaoke_graph.py`）。
-- 网络连不上 GitHub 时，可以用别的办法把这两个文件弄到手机上，然后在下载窗口里点
+- 两条线路都连不上时，可以用别的办法把这两个文件弄到手机上，然后在下载窗口里点
   “已经有这两个文件？从‘文件’里选”。App 按内容（SHA-256）识别，只接受这两个原版文件。
 - 模型保存在 App 的 Application Support 目录，不参与 iCloud 备份；可以在设置里删除以腾出空间，
   已经导入的歌不受影响。
