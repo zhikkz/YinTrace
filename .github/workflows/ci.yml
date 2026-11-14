@@ -184,10 +184,11 @@ jobs:
           xcrun simctl boot "$DEVICE" || true
           xcrun simctl bootstatus "$DEVICE" -b
           echo "YINTRACE_SIMULATOR=$DEVICE" >> "$GITHUB_ENV"
+      # tools/ci_simulator_run.sh restarts the simulator and tries again when
+      # the runner never launches the test app (simctl hangs after the build).
       - name: Exercise the Apple plugins with both real models
-        timeout-minutes: 30
-        run: flutter test integration_test/ios_smoke_test.dart -d "$YINTRACE_SIMULATOR" --reporter expanded
-      # Installing a second test app on the same simulator can hang in simctl.
+        timeout-minutes: 35
+        run: tools/ci_simulator_run.sh 900 flutter test integration_test/ios_smoke_test.dart -d "$YINTRACE_SIMULATOR" --reporter expanded
       - name: Restart the simulator
         run: |
           xcrun simctl shutdown "$YINTRACE_SIMULATOR" || true
@@ -197,9 +198,9 @@ jobs:
       # runs it: Core ML options reach ONNX Runtime, the import runs through
       # the background job, the report is written. Not iPhone numbers.
       - name: Device benchmark (quick, simulator)
-        timeout-minutes: 25
+        timeout-minutes: 45
         run: |
-          flutter drive -d "$YINTRACE_SIMULATOR" \
+          tools/ci_simulator_run.sh 1200 flutter drive -d "$YINTRACE_SIMULATOR" \
             --driver=test_driver/integration_test.dart \
             --target=integration_test/device_benchmark_test.dart \
             --dart-define=BENCH_QUICK=1
