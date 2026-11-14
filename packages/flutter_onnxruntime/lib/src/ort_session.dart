@@ -104,6 +104,10 @@ class OrtSessionOptions {
   // {'mlas.disable_kleidiai': '1'}. See onnxruntime_session_options_config_keys.h for the available keys:
   // https://github.com/microsoft/onnxruntime/blob/main/include/onnxruntime/core/session/onnxruntime_session_options_config_keys.h
   final Map<String, String>? sessionConfigs;
+  // YinTrace (iOS/macOS): options of the Core ML execution provider, passed to
+  // appendCoreMLExecutionProviderWithOptionsV2, e.g. {'ModelFormat': 'MLProgram',
+  // 'MLComputeUnits': 'CPUAndNeuralEngine'}. Used only with OrtProvider.CORE_ML.
+  final Map<String, String>? coreMLOptions;
 
   OrtSessionOptions({
     this.intraOpNumThreads,
@@ -112,6 +116,7 @@ class OrtSessionOptions {
     this.useArena,
     this.deviceId,
     this.sessionConfigs,
+    this.coreMLOptions,
   });
 
   Map<String, dynamic> toMap() {
@@ -122,6 +127,7 @@ class OrtSessionOptions {
       if (useArena != null) 'useArena': useArena,
       if (deviceId != null) 'deviceId': deviceId,
       if (sessionConfigs != null && sessionConfigs!.isNotEmpty) 'sessionConfigs': sessionConfigs,
+      if (coreMLOptions != null && coreMLOptions!.isNotEmpty) 'coreMLOptions': coreMLOptions,
     };
   }
 }

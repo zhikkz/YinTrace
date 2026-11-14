@@ -177,7 +177,12 @@ public class FlutterOnnxruntimePlugin: NSObject, FlutterPlugin {
               continue
             case "CORE_ML":
               do {
-                try sessionOptions.appendCoreMLExecutionProvider()
+                // YinTrace: ONNX Runtime's Core ML options (model format, compute units, ...).
+                if let coreML = options["coreMLOptions"] as? [String: String], !coreML.isEmpty {
+                  try SessionOptionsHelper.appendCoreML(sessionOptions, providerOptions: coreML)
+                } else {
+                  try sessionOptions.appendCoreMLExecutionProvider()
+                }
               } catch {
                 result(FlutterError(code: "SESSION_OPTIONS_ERROR",
                   message: "Failed to append CoreML execution provider: \(error.localizedDescription)", details: nil))

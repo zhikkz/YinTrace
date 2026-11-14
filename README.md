@@ -252,6 +252,10 @@ MODELS_DIR=$PWD/build/uvr-models flutter test test/models_test.dart
 LIVE_MODEL_DOWNLOAD=1 flutter test test/models_test.dart
 ```
 
+**真机测速**：iPhone 连到 Mac 后运行 `tools/device_benchmark.sh <设备 ID>`，测导入一首歌的实际耗时，
+并比较 CPU 与 Core ML 的速度、内存和结果差异，生成 `build/device-benchmark.md`，详见
+[真机测速](docs/device-benchmark.md)。
+
 `.github/workflows/ci.yml` 在 Linux 上跑以上测试，在 macOS 上做 **iOS 无签名归档**、
 iPhone 模拟器真实插件冒烟（两个真实模型、AAC 往返、AGPL 全文和进程峰值），
 并测试 Core Audio 解码与 AAC 编码；不再构建未适配的 macOS App。

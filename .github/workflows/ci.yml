@@ -186,6 +186,11 @@ jobs:
           echo "YINTRACE_SIMULATOR=$DEVICE" >> "$GITHUB_ENV"
       - name: Exercise the Apple plugins with both real models
         run: flutter test integration_test/ios_smoke_test.dart -d "$YINTRACE_SIMULATOR" --reporter expanded
+      # The device benchmark's short version: Core ML options reach ONNX
+      # Runtime, the import runs through the background job. Simulator
+      # numbers are not iPhone numbers.
+      - name: Device benchmark (quick, simulator)
+        run: flutter test integration_test/device_benchmark_test.dart -d "$YINTRACE_SIMULATOR" --dart-define=BENCH_QUICK=1 --reporter expanded
       - name: Package unsigned app
         run: cd build/ios/archive/Runner.xcarchive/Products/Applications && zip -qr "$GITHUB_WORKSPACE/Runner-unsigned.zip" Runner.app
       - uses: actions/upload-artifact@v6

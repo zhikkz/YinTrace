@@ -8,5 +8,10 @@
 NS_ASSUME_NONNULL_BEGIN
 @interface SessionOptionsHelper : NSObject
 + (BOOL)disableCpuArena:(ORTSessionOptions *)options error:(NSError **)error;
+/// Appends the Core ML execution provider with ONNX Runtime's string options
+/// (ModelFormat, MLComputeUnits, RequireStaticInputShapes, ModelCacheDirectory, ...).
++ (BOOL)appendCoreML:(ORTSessionOptions *)options
+     providerOptions:(NSDictionary<NSString *, NSString *> *)providerOptions
+               error:(NSError **)error;
 @end
 NS_ASSUME_NONNULL_END
