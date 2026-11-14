@@ -1,7 +1,7 @@
 // Separation speed and memory on this device: one complete import through
 // the app's own background job, then both models with the CPU and with
 // several Core ML set-ups. It runs from the 性能测试 page of test builds
-// (built with --dart-define=YINTRACE_BENCHMARK=true) and from
+// (see isTestBuild) and from
 // integration_test/device_benchmark_test.dart (tools/device_benchmark.sh).
 //
 // Only the two UVR files the app downloads and a song synthesized here are
@@ -26,12 +26,6 @@ import '../separation/model_config.dart';
 import '../separation/onnx_model.dart';
 import '../separation/tensor_model.dart';
 import '../separation/vr_separator.dart';
-
-const _flag = String.fromEnvironment('YINTRACE_BENCHMARK');
-
-/// Whether this build shows the 性能测试 page: test builds made with
-/// `--dart-define=YINTRACE_BENCHMARK=true`.
-const benchmarkEnabled = _flag == 'true' || _flag == '1';
 
 /// Core ML set-ups worth comparing for the vocal model (ONNX Runtime's
 /// Core ML provider options), the app's own first. On an iPhone

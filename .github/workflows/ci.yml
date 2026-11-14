@@ -60,6 +60,11 @@ jobs:
         with:
           name: screenshots
           path: build/screenshots
+      # The backup download route (hf-mirror.com) still serves the official
+      # files: HEAD requests only. An outage there does not fail the build.
+      - name: Check the backup model download route
+        continue-on-error: true
+        run: LIVE_MIRROR_CHECK=1 flutter test test/models_test.dart --plain-name 'the backup route serves the official files'
 
   model-tools:
     name: Model recipe (PyTorch vs ONNX Runtime)
@@ -152,7 +157,7 @@ jobs:
       # An archive build runs the same strip step as a TestFlight/App Store
       # build. It is the test build (设置 → 性能测试), packaged below as an
       # unsigned .ipa that a tester signs with their own Apple ID.
-      - run: flutter build ipa --release --no-codesign --dart-define=YINTRACE_BENCHMARK=true
+      - run: flutter build ipa --release --no-codesign --dart-define=YINTRACE_TEST_BUILD=true
       - name: Check that the native audio core is reachable from dart:ffi
         run: |
           APP=build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app

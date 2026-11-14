@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../app/screen_awake.dart';
+import '../app/test_build.dart';
 import '../app/services.dart';
 import '../models/model_catalog.dart';
 import '../models/model_manager.dart';
@@ -142,7 +143,9 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
                 ),
               ),
             const SizedBox(height: 4),
-            Text('模型由 Ultimate Vocal Remover 项目（Anjok07、aufr33）训练并公开发布，从它的官方模型库下载。',
+            Text(
+                '模型由 Ultimate Vocal Remover 项目（Anjok07、aufr33）训练并公开发布，从它的官方模型库下载；'
+                '连不上时自动改用 hf-mirror.com 上的同一文件。下载后都会核对文件指纹（SHA-256）。',
                 style: context.type.labelSmall),
           ],
         ),
@@ -155,11 +158,13 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
     if (partial) return '已下载 $got';
     switch (m.phase) {
       case ModelPhase.downloading:
+        // The route switches by itself; only test builds say which one is used.
+        final route = isTestBuild && m.onBackupRoute ? '备用线路 ${m.route}，' : '';
         final speed = m.bytesPerSecond;
-        if (speed <= 0) return got;
+        if (speed <= 0) return '$route$got';
         final remain = ((m.totalBytes - m.receivedBytes) / speed).round();
         final eta = remain >= 60 ? '还要约 ${remain ~/ 60} 分钟' : '还要约 $remain 秒';
-        return '$got，${(speed / 1e6).toStringAsFixed(1)} MB/秒，$eta';
+        return '$route$got，${(speed / 1e6).toStringAsFixed(1)} MB/秒，$eta';
       case ModelPhase.verifying:
         return '正在校验文件…';
       case ModelPhase.preparing:

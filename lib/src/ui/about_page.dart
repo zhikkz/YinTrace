@@ -37,7 +37,8 @@ class AboutPage extends StatelessWidget {
               const SizedBox(height: 14),
               credit('分离模型',
                   'UVR-MDX-NET-Voc_FT 和 6_HP-Karaoke-UVR，由 Ultimate Vocal Remover 的开发者 Anjok07 和 aufr33 训练并公开发布。'
-                      'YinTrace 不附带模型，而是从 UVR 的官方模型库下载。'),
+                      'YinTrace 不附带模型，而是从 UVR 的官方模型库下载；连不上时改用 hf-mirror.com'
+                      '（Hugging Face 的镜像）上的同一文件，两边下载的文件都要和官方的 SHA-256 一致才会使用。'),
               credit('分离算法',
                   '移植自 Ultimate Vocal Remover GUI（MIT 许可）。其中 VR 架构来自 tsurumeso 的 vocal-remover，'
                       'MDX-Net 来自 Kuielab 和 Woosung Choi。'),

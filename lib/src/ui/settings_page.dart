@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/services.dart';
-import '../benchmark/device_benchmark.dart' show benchmarkEnabled;
+import '../app/test_build.dart';
 import '../models/model_catalog.dart';
 import '../models/model_manager.dart';
 import 'about_page.dart';
@@ -125,7 +125,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 '你的音高线总比原唱靠右，就把延迟补偿调大；蓝牙耳机通常要 +150 到 +250 ms。'
                 '环境吵、音高线乱跳时，把麦克风门限调高。',
               ),
-              if (benchmarkEnabled) ...[
+              // Test builds only (isTestBuild): not compiled into releases.
+              if (isTestBuild) ...[
                 const _Section('测试版'),
                 _Group(
                   children: [
@@ -135,6 +136,12 @@ class _SettingsPageState extends State<SettingsPage> {
                       trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
                       onTap: () => Navigator.of(context)
                           .push(MaterialPageRoute<void>(builder: (_) => const BenchmarkPage())),
+                    ),
+                    ListTile(
+                      title: const Text('只用备用线路重新下载模型'),
+                      subtitle: const Text('删掉已下载的模型，再从 hf-mirror.com 下载一遍（194 MB），看备用线路能不能用'),
+                      trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+                      onTap: () => _redownloadFromBackup(context, services.models),
                     ),
                   ],
                 ),
@@ -158,6 +165,30 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
+}
+
+/// Test builds: removes the models and downloads them again over the backup
+/// route only.
+Future<void> _redownloadFromBackup(BuildContext context, ModelManager models) async {
+  if (models.busy) return;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('只用备用线路重新下载？'),
+      content: Text(
+        '已下载的模型会被删掉，再只从备用线路 hf-mirror.com 下载 ${formatMegabytes(models.totalBytes)}。'
+        '已经导入的歌不受影响。',
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+        TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('删掉并重新下载')),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  await models.deleteAll();
+  models.backupOnly = true;
+  if (context.mounted) await ensureModels(context);
 }
 
 class _Section extends StatelessWidget {
@@ -270,7 +301,9 @@ class _ModelsRow extends StatelessWidget {
     if (ready) {
       status = '已下载，占用 ${formatMegabytes(models.installedBytes)}';
     } else if (busy) {
-      status = models.phase == ModelPhase.downloading ? '正在下载，${(models.progress * 100).floor()}%' : '正在准备…';
+      status = models.phase == ModelPhase.downloading
+          ? '正在${isTestBuild && models.onBackupRoute ? '从备用线路' : ''}下载，${(models.progress * 100).floor()}%'
+          : '正在准备…';
     } else {
       status = '还没有下载（${formatMegabytes(models.totalBytes)}）';
     }

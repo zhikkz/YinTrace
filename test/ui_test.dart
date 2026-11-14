@@ -225,6 +225,10 @@ void main() {
     expect(find.text('人声分离和去和声'), findsOneWidget);
     expect(find.text('还没有下载（194 MB）'), findsOneWidget);
     expect(find.text('忽略八度'), findsOneWidget);
+    // Release builds have no tester tools.
+    expect(find.text('测试版'), findsNothing);
+    expect(find.text('性能测试'), findsNothing);
+    expect(find.text('只用备用线路重新下载模型'), findsNothing);
     await screenshot(tester, '6_settings');
     // The download sheet names both models and credits their authors.
     await tester.tap(find.widgetWithText(TextButton, '下载'));
