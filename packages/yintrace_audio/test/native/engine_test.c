@@ -224,11 +224,43 @@ static void test_aac_roundtrip(const char* dir) {
 }
 #endif
 
+static void test_audio_interruption(void) {
+  char err[256];
+  yt_engine* e = yt_engine_create(44100, YT_MODE_OFFLINE, 0, err, sizeof err);
+  CHECK(e != NULL);
+  float track[1024 * 2], input[128], out[128 * 2], capture[4096];
+  for (int i = 0; i < 1024 * 2; i++) track[i] = 0.2f;
+  for (int i = 0; i < 128; i++) input[i] = 0.1f;
+  CHECK(yt_engine_load_track_pcm(e, 0, track, 1024, 2) == 0);
+  yt_engine_set_playing(e, 1);
+  yt_engine_render(e, out, input, 128);
+  yt_engine_flush_capture(e);
+  int64_t position = yt_engine_position(e), song, clock;
+  int32_t flags;
+  yt_engine_signal_audio_event(e, 1);
+  CHECK(yt_engine_is_playing(e) == 0);
+  yt_engine_render(e, out, input, 128);
+  CHECK(yt_engine_position(e) == position);
+  for (int i = 0; i < 128 * 2; i++) CHECK(out[i] == 0);
+  CHECK(yt_engine_read_capture(e, capture, 4096, &song, &clock, &flags) == 0);
+  yt_engine_signal_audio_event(e, 2);
+  CHECK(yt_engine_take_audio_events(e) == 3);
+  CHECK(yt_engine_take_audio_events(e) == 0);
+  CHECK(yt_engine_start(e) == 0);
+  CHECK(yt_engine_is_playing(e) == 0);
+  yt_engine_set_playing(e, 1);
+  yt_engine_render(e, out, input, 128);
+  CHECK(yt_engine_position(e) == position + 128);
+  CHECK(yt_engine_read_capture(e, capture, 4096, &song, &clock, &flags) == 128);
+  yt_engine_destroy(e);
+}
+
 int main(int argc, char** argv) {
   CHECK(yt_api_version() == YT_API_VERSION);
   test_mix_seek_loop();
   test_big_block_split();
   test_null_device();
+  test_audio_interruption();
   for (int i = 1; i + 1 < argc; i += 2) test_decode(argv[i], atoi(argv[i + 1]));
 #ifdef __APPLE__
   test_aac_roundtrip(getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");

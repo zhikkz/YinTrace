@@ -59,60 +59,82 @@ void main() {
     if (keep != null) writeWavFile('$keep/$name.wav', stereo, 2, 44100);
   }
 
-  test('UVR-MDX-NET-Voc_FT: Dart demixing matches UVR', () async {
-    final mix = wav('mix');
-    final model = await PythonOrtModel.start('$models/${vocalModel.fileName}', python: python);
-    final watch = Stopwatch()..start();
-    final Float32List vocals;
-    try {
-      vocals = await MdxSeparator(model, MdxConfig.vocFt).separate(mix);
-    } finally {
-      await model.close();
-    }
-    final seconds = mix.length / 2 / 44100;
-    final agreement = snr(vocals, wav('uvr_vocals'));
-    // ignore: avoid_print
-    print('MDX: ${seconds.toStringAsFixed(1)} s of audio, ${model.calls} model runs, '
+  test(
+    'UVR-MDX-NET-Voc_FT: Dart demixing matches UVR',
+    () async {
+      final mix = wav('mix');
+      final recipe = ModelRecipe.parse(
+        File('assets/models/mdx_graph.json').readAsStringSync(),
+        File('assets/models/mdx_graph.bin').readAsBytesSync(),
+      );
+      final onnx = '${tmp.path}/${vocalModel.installedName}';
+      expect(recipe.assembleSync('$models/${vocalModel.fileName}', onnx), recipe.outputSha256);
+      final model = await PythonOrtModel.start(onnx, python: python);
+      final watch = Stopwatch()..start();
+      final Float32List vocals;
+      try {
+        vocals = await MdxSeparator(model, MdxConfig.vocFt).separate(mix);
+      } finally {
+        await model.close();
+      }
+      final seconds = mix.length / 2 / 44100;
+      final agreement = snr(vocals, wav('uvr_vocals'));
+      // ignore: avoid_print
+      print(
+        'MDX: ${seconds.toStringAsFixed(1)} s of audio, ${model.calls} model runs, '
         '${watch.elapsed.inMilliseconds / 1000} s total (${model.inference.inMilliseconds / 1000} s inference); '
-        'agreement with UVR ${agreement.toStringAsFixed(1)} dB');
-    save('dart_vocals', vocals);
-    expect(vocals.length, mix.length);
-    expect(agreement, greaterThan(60));
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 30)));
+        'agreement with UVR ${agreement.toStringAsFixed(1)} dB',
+      );
+      save('dart_vocals', vocals);
+      expect(vocals.length, mix.length);
+      expect(agreement, greaterThan(60));
+    },
+    skip: skip,
+    timeout: const Timeout(Duration(minutes: 30)),
+  );
 
-  test('6_HP-Karaoke-UVR: the model assembled on the device, Dart inference matches UVR', () async {
-    // Build the ONNX model exactly like the app does after downloading.
-    final recipe = ModelRecipe.parse(File('assets/models/karaoke_graph.json').readAsStringSync(),
-        File('assets/models/karaoke_graph.bin').readAsBytesSync());
-    final onnx = '${tmp.path}/${karaokeModel.installedName}';
-    expect(recipe.assembleSync('$models/${karaokeModel.fileName}', onnx), recipe.outputSha256);
+  test(
+    '6_HP-Karaoke-UVR: the model assembled on the device, Dart inference matches UVR',
+    () async {
+      // Build the ONNX model exactly like the app does after downloading.
+      final recipe = ModelRecipe.parse(
+        File('assets/models/karaoke_graph.json').readAsStringSync(),
+        File('assets/models/karaoke_graph.bin').readAsBytesSync(),
+      );
+      final onnx = '${tmp.path}/${karaokeModel.installedName}';
+      expect(recipe.assembleSync('$models/${karaokeModel.fileName}', onnx), recipe.outputSha256);
 
-    final vocals = wav('uvr_vocals');
-    final model = await PythonOrtModel.start(onnx, python: python);
-    final watch = Stopwatch()..start();
-    final Float32List lead, backing;
-    try {
-      final vr = VrSeparator(model, VrConfig.karaoke6Hp);
-      lead = await vr.separate(vocals, stem: VrStem.secondary);
-      backing = await vr.separate(vocals, stem: VrStem.primary);
-    } finally {
-      await model.close();
-    }
-    final leadAgreement = snr(lead, wav('uvr_lead'));
-    final backingAgreement = snr(backing, wav('uvr_backing'));
-    // ignore: avoid_print
-    print('VR: ${model.calls ~/ 2} model runs per pass, ${watch.elapsed.inMilliseconds / 2000} s per pass '
+      final vocals = wav('uvr_vocals');
+      final model = await PythonOrtModel.start(onnx, python: python);
+      final watch = Stopwatch()..start();
+      final Float32List lead, backing;
+      try {
+        final vr = VrSeparator(model, VrConfig.karaoke6Hp);
+        lead = await vr.separate(vocals, stem: VrStem.secondary);
+        backing = await vr.separate(vocals, stem: VrStem.primary);
+      } finally {
+        await model.close();
+      }
+      final leadAgreement = snr(lead, wav('uvr_lead'));
+      final backingAgreement = snr(backing, wav('uvr_backing'));
+      // ignore: avoid_print
+      print(
+        'VR: ${model.calls ~/ 2} model runs per pass, ${watch.elapsed.inMilliseconds / 2000} s per pass '
         '(${model.inference.inMilliseconds / 2000} s inference); agreement with UVR: '
-        'lead ${leadAgreement.toStringAsFixed(1)} dB, backing ${backingAgreement.toStringAsFixed(1)} dB');
-    save('dart_lead', lead);
-    save('dart_backing', backing);
-    expect(leadAgreement, greaterThan(40));
-    expect(backingAgreement, greaterThan(30));
-    // The two stems add up to the input.
-    final sum = Float32List(lead.length);
-    for (var i = 0; i < sum.length; i++) {
-      sum[i] = lead[i] + backing[i];
-    }
-    expect(snr(sum, Float32List.sublistView(vocals, 0, sum.length)), greaterThan(25));
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 30)));
+        'lead ${leadAgreement.toStringAsFixed(1)} dB, backing ${backingAgreement.toStringAsFixed(1)} dB',
+      );
+      save('dart_lead', lead);
+      save('dart_backing', backing);
+      expect(leadAgreement, greaterThan(40));
+      expect(backingAgreement, greaterThan(30));
+      // The two stems add up to the input.
+      final sum = Float32List(lead.length);
+      for (var i = 0; i < sum.length; i++) {
+        sum[i] = lead[i] + backing[i];
+      }
+      expect(snr(sum, Float32List.sublistView(vocals, 0, sum.length)), greaterThan(25));
+    },
+    skip: skip,
+    timeout: const Timeout(Duration(minutes: 30)),
+  );
 }

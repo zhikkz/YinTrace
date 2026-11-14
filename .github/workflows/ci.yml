@@ -7,13 +7,17 @@ on:
 
 env:
   FLUTTER_VERSION: '3.47.9'
+  BOT: 'true'
+  CI: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  ORT_DISABLE_TELEMETRY: '1'
 
 jobs:
   test:
     name: Tests (Linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -57,7 +61,7 @@ jobs:
     name: Model recipe (PyTorch vs ONNX Runtime)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -70,6 +74,11 @@ jobs:
           path: build/uvr-models
           key: uvr-models-534b2070-4ce7eaaa
       - run: tools/fetch_models.sh build/uvr-models
+      - name: Check the MDX dynamic-axis recipe
+        run: |
+          python tools/build_mdx_recipe.py build/uvr-models/UVR-MDX-NET-Voc_FT.onnx --out-dir build/mdx-recipe --out build/uvr-models/UVR-MDX-NET-Voc_FT-dynamic.onnx
+          cmp assets/models/mdx_graph.bin build/mdx-recipe/mdx_graph.bin
+          cmp assets/models/mdx_graph.json build/mdx-recipe/mdx_graph.json
       - name: Assemble the real model from the bundled recipe and compare with PyTorch
         run: python tools/build_karaoke_graph.py verify build/uvr-models/6_HP-Karaoke-UVR.pth
 
@@ -77,7 +86,7 @@ jobs:
     name: Real models (Dart separation vs UVR)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -102,17 +111,26 @@ jobs:
       - name: Separate a clip with UVR's code and the real models
         run: python tools/reference/make_real_reference.py --uvr build/uvr --models build/uvr-models --out build/real-reference
       - run: flutter pub get
+      - name: Build native core for the import pipeline
+        run: |
+          cmake -S packages/yintrace_audio/src -B build/host -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/host
       - name: Separate the same clip with the app's Dart code and compare
         run: >
           MODELS_DIR=$GITHUB_WORKSPACE/build/uvr-models
           REAL_REFERENCE=$GITHUB_WORKSPACE/build/real-reference
-          PYTHON=python flutter test test/real_models_test.dart
+          PYTHON=python
+          YINTRACE_AUDIO_LIB=$GITHUB_WORKSPACE/build/host/libyintrace_audio.so
+          REAL_IMPORT_AUDIO=$GITHUB_WORKSPACE/build/real-reference/mix.wav
+          REAL_IMPORT_LYRICS=$GITHUB_WORKSPACE/test/fixtures/import_example.lrc
+          REAL_IMPORT_REFERENCE=$GITHUB_WORKSPACE/build/real-reference/uvr_lead.wav
+          flutter test test/real_models_test.dart test/real_import_test.dart --concurrency=1
 
   ios:
     name: iOS build (no codesign)
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -136,6 +154,26 @@ jobs:
           done
           [ "$missing" = 0 ] && echo "all yt_* symbols exported"
           exit $missing
+      - name: Check that the bundled notices contain the AGPL v3
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          import gzip
+          assets = Path('build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app/Frameworks/App.framework/flutter_assets')
+          notices = assets / 'NOTICES.Z'
+          text = gzip.decompress(notices.read_bytes()).decode()
+          assert 'GNU AFFERO GENERAL PUBLIC LICENSE' in text
+          assert 'Version 3, 19 November 2007' in text
+          print('AGPL v3 bundled')
+          PYCODE
+      - name: Boot an iPhone simulator
+        run: |
+          DEVICE=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; print(next(d["udid"] for devices in json.load(sys.stdin)["devices"].values() for d in devices if d["name"].startswith("iPhone")))')
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          echo "YINTRACE_SIMULATOR=$DEVICE" >> "$GITHUB_ENV"
+      - name: Exercise the Apple plugins with both real models
+        run: flutter test integration_test/ios_smoke_test.dart -d "$YINTRACE_SIMULATOR" --reporter expanded
       - name: Package unsigned app
         run: cd build/ios/archive/Runner.xcarchive/Products/Applications && zip -qr "$GITHUB_WORKSPACE/Runner-unsigned.zip" Runner.app
       - uses: actions/upload-artifact@v4
@@ -144,16 +182,9 @@ jobs:
           path: Runner-unsigned.zip
 
   macos:
-    name: macOS build
+    name: Native tests (macOS)
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-      - name: Native audio core tests (C, Core Audio decode path)
+      - uses: actions/checkout@v5
+      - name: Native audio core tests (C, Core Audio decode and AAC encode)
         run: packages/yintrace_audio/tool/run_native_tests.sh
-      - run: flutter pub get
-      - run: flutter build macos --debug

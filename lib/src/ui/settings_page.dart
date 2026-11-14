@@ -29,95 +29,105 @@ class _SettingsPageState extends State<SettingsPage> {
       body: CustomScrollView(
         slivers: [
           const SliverAppBar.large(title: Text('设置')),
-          SliverList.list(children: [
-            const _Section('分离模型'),
-            _Group(children: [
-              ListenableBuilder(
-                listenable: services.models,
-                builder: (context, _) => _ModelsRow(models: services.models),
+          SliverList.list(
+            children: [
+              const _Section('分离模型'),
+              _Group(
+                children: [
+                  ListenableBuilder(
+                    listenable: services.models,
+                    builder: (context, _) => _ModelsRow(models: services.models),
+                  ),
+                ],
               ),
-              SwitchListTile(
-                title: const Text('用 Core ML 加速'),
-                subtitle: const Text('试验功能；不兼容时自动改用 CPU'),
-                value: s.useCoreML,
-                onChanged: (v) => set(() => s.useCoreML = v),
+              const _Footnote(
+                '导入整首歌时，用 UVR 的两个模型在手机上分离人声、去掉和声。'
+                '删除模型不影响已经导入的歌。',
               ),
-            ]),
-            const _Footnote('导入整首歌时，用 UVR 的两个模型在手机上分离人声、去掉和声。'
-                '删除模型不影响已经导入的歌。'),
-            const _Section('练习'),
-            _Group(children: [
-              _SliderRow(
-                title: '音准容差',
-                value: '±${s.toleranceCents} 音分',
-                slider: Slider(
-                  value: s.toleranceCents.toDouble(),
-                  min: 20,
-                  max: 100,
-                  divisions: 16,
-                  onChanged: (v) => set(() => s.toleranceCents = v.round()),
-                ),
+              const _Section('练习'),
+              _Group(
+                children: [
+                  _SliderRow(
+                    title: '音准容差',
+                    value: '±${s.toleranceCents} 音分',
+                    slider: Slider(
+                      value: s.toleranceCents.toDouble(),
+                      min: 20,
+                      max: 100,
+                      divisions: 16,
+                      onChanged: (v) => set(() => s.toleranceCents = v.round()),
+                    ),
+                  ),
+                  SwitchListTile(
+                    title: const Text('忽略八度'),
+                    subtitle: const Text('男声唱女声的歌（或反过来）时打开'),
+                    value: s.octaveTolerant,
+                    onChanged: (v) => set(() => s.octaveTolerant = v),
+                  ),
+                  _SliderRow(
+                    title: '练习画面宽度',
+                    value: '${s.practiceWindowSeconds.toStringAsFixed(0)} 秒',
+                    slider: Slider(
+                      value: s.practiceWindowSeconds,
+                      min: 3,
+                      max: 12,
+                      divisions: 9,
+                      onChanged: (v) => set(() => s.practiceWindowSeconds = v),
+                    ),
+                  ),
+                ],
               ),
-              SwitchListTile(
-                title: const Text('忽略八度'),
-                subtitle: const Text('男声唱女声的歌（或反过来）时打开'),
-                value: s.octaveTolerant,
-                onChanged: (v) => set(() => s.octaveTolerant = v),
+              const _Section('麦克风与延迟'),
+              _Group(
+                children: [
+                  _SliderRow(
+                    title: '延迟补偿',
+                    value: '${s.latencyOffsetMs >= 0 ? '+' : ''}${s.latencyOffsetMs} ms',
+                    slider: Slider(
+                      value: s.latencyOffsetMs.toDouble(),
+                      min: -300,
+                      max: 300,
+                      divisions: 60,
+                      onChanged: (v) => set(() => s.latencyOffsetMs = v.round()),
+                    ),
+                  ),
+                  _SliderRow(
+                    title: '麦克风门限',
+                    value: '${s.micGateDb.round()} dB',
+                    slider: Slider(
+                      value: s.micGateDb,
+                      min: -70,
+                      max: -25,
+                      onChanged: (v) => set(() => s.micGateDb = v),
+                    ),
+                  ),
+                  SwitchListTile(
+                    title: const Text('测量模式'),
+                    subtitle: const Text('关掉系统的自动增益，音高更稳；外放时音量可能变小'),
+                    value: s.measurementMode,
+                    onChanged: (v) => set(() => s.measurementMode = v),
+                  ),
+                ],
               ),
-              _SliderRow(
-                title: '练习画面宽度',
-                value: '${s.practiceWindowSeconds.toStringAsFixed(0)} 秒',
-                slider: Slider(
-                  value: s.practiceWindowSeconds,
-                  min: 3,
-                  max: 12,
-                  divisions: 9,
-                  onChanged: (v) => set(() => s.practiceWindowSeconds = v),
-                ),
+              _Footnote(
+                '你的音高线总比原唱靠右，就把延迟补偿调大；蓝牙耳机通常要 +150 到 +250 ms。'
+                '环境吵、音高线乱跳时，把麦克风门限调高。',
               ),
-            ]),
-            const _Section('麦克风与延迟'),
-            _Group(children: [
-              _SliderRow(
-                title: '延迟补偿',
-                value: '${s.latencyOffsetMs >= 0 ? '+' : ''}${s.latencyOffsetMs} ms',
-                slider: Slider(
-                  value: s.latencyOffsetMs.toDouble(),
-                  min: -300,
-                  max: 300,
-                  divisions: 60,
-                  onChanged: (v) => set(() => s.latencyOffsetMs = v.round()),
-                ),
+              const _Section('关于'),
+              _Group(
+                children: [
+                  ListTile(
+                    title: const Text('致谢与开源许可'),
+                    trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+                    onTap: () =>
+                        Navigator.of(context)
+                            .push(MaterialPageRoute<void>(builder: (_) => const AboutPage())),
+                  ),
+                ],
               ),
-              _SliderRow(
-                title: '麦克风门限',
-                value: '${s.micGateDb.round()} dB',
-                slider: Slider(
-                  value: s.micGateDb,
-                  min: -70,
-                  max: -25,
-                  onChanged: (v) => set(() => s.micGateDb = v),
-                ),
-              ),
-              SwitchListTile(
-                title: const Text('测量模式'),
-                subtitle: const Text('关掉系统的自动增益，音高更稳；外放时音量可能变小'),
-                value: s.measurementMode,
-                onChanged: (v) => set(() => s.measurementMode = v),
-              ),
-            ]),
-            _Footnote('你的音高线总比原唱靠右，就把延迟补偿调大；蓝牙耳机通常要 +150 到 +250 ms。'
-                '环境吵、音高线乱跳时，把麦克风门限调高。'),
-            const _Section('关于'),
-            _Group(children: [
-              ListTile(
-                title: const Text('致谢与开源许可'),
-                trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
-                onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AboutPage())),
-              ),
-            ]),
-            const SizedBox(height: 40),
-          ]),
+              const SizedBox(height: 40),
+            ],
+          ),
         ],
       ),
     );
@@ -130,9 +140,9 @@ class _Section extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 28, 20, 8),
-        child: Text(title, style: context.type.titleSmall?.copyWith(color: context.yt.inkSoft)),
-      );
+    padding: const EdgeInsets.fromLTRB(20, 28, 20, 8),
+    child: Text(title, style: context.type.titleSmall?.copyWith(color: context.yt.inkSoft)),
+  );
 }
 
 class _Footnote extends StatelessWidget {
@@ -141,9 +151,9 @@ class _Footnote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-        child: Text(text, style: context.type.bodySmall),
-      );
+    padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+    child: Text(text, style: context.type.bodySmall),
+  );
 }
 
 /// An inset group of rows on a white surface, separated by hairlines.
@@ -182,22 +192,24 @@ class _SliderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+    padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
           children: [
-            Row(children: [
-              Text(title, style: context.type.bodyLarge),
-              const Spacer(),
-              Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Text(value, style: context.type.bodyMedium?.copyWith(fontFeatures: tabular)),
-              ),
-            ]),
-            slider,
+            Text(title, style: context.type.bodyLarge),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Text(value, style: context.type.bodyMedium?.copyWith(fontFeatures: tabular)),
+            ),
           ],
         ),
-      );
+        slider,
+      ],
+    ),
+  );
 }
 
 /// Status of the two separation models, with download / delete.
@@ -210,8 +222,10 @@ class _ModelsRow extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除分离模型？'),
-        content: Text('可以腾出 ${formatMegabytes(models.installedBytes)}。已经导入的歌不受影响；'
-            '下次导入整首歌时要重新下载。'),
+        content: Text(
+          '可以腾出 ${formatMegabytes(models.installedBytes)}。已经导入的歌不受影响；'
+          '下次导入整首歌时要重新下载。',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('删除')),
@@ -230,9 +244,7 @@ class _ModelsRow extends StatelessWidget {
     if (ready) {
       status = '已下载，占用 ${formatMegabytes(models.installedBytes)}';
     } else if (busy) {
-      status = models.phase == ModelPhase.downloading
-          ? '正在下载，${(models.progress * 100).floor()}%'
-          : '正在准备…';
+      status = models.phase == ModelPhase.downloading ? '正在下载，${(models.progress * 100).floor()}%' : '正在准备…';
     } else {
       status = '还没有下载（${formatMegabytes(models.totalBytes)}）';
     }

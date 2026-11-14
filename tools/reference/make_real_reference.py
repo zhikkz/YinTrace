@@ -24,6 +24,7 @@ import argparse
 import importlib
 import json
 import os
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 import sys
 
 import numpy as np
@@ -85,9 +86,13 @@ def main():
     ap.add_argument('--models', required=True, help='folder with the two downloaded models')
     ap.add_argument('--audio', help='44.1 kHz stereo WAV (default: a synthetic clip)')
     ap.add_argument('--out', required=True)
+    ap.add_argument('--mdx-dim-t', type=int, default=128)
+    ap.add_argument('--mdx-overlap', type=float, default=0.5)
+    ap.add_argument('--vr-window', type=int, default=320)
     args = ap.parse_args()
 
     import onnxruntime as ort
+    ort.disable_telemetry_events()
     import soundfile as sf
     import torch
 
@@ -99,9 +104,23 @@ def main():
     else:
         mix = synth_song()
 
-    sess = ort.InferenceSession(os.path.join(args.models, 'UVR-MDX-NET-Voc_FT.onnx'),
-                                providers=['CPUExecutionProvider'])
-    vocals = mdx_demix(mix, model=lambda spek: sess.run(None, {'input': spek})[0])
+    # Exactly the same byte-copy patch as the app; keep weights out of assets.
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from build_karaoke_graph import assemble
+    from build_mdx_recipe import ASSETS
+    with open(ASSETS / 'mdx_graph.json') as f:
+        recipe = json.load(f)
+    os.makedirs(args.out, exist_ok=True)
+    dynamic = os.path.join(args.out, 'mdx-dynamic.onnx')
+    assemble(recipe, (ASSETS / 'mdx_graph.bin').read_bytes(),
+             os.path.join(args.models, 'UVR-MDX-NET-Voc_FT.onnx'), dynamic)
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 4
+    options.enable_cpu_mem_arena = False
+    sess = ort.InferenceSession(dynamic, options, providers=['CPUExecutionProvider'])
+    vocals = mdx_demix(mix, dim_t=args.mdx_dim_t, overlap=args.mdx_overlap,
+                       model=lambda spek: sess.run(None, {'input': spek})[0])
+    del sess
 
     su = import_spec_utils(args.uvr)
     nets = importlib.import_module('lib_v5.vr_network.nets')
@@ -117,7 +136,7 @@ def main():
         with torch.no_grad():
             return model(torch.from_numpy(window)).numpy()
 
-    backing, lead = vr_separate(su, vocals, mp, model=mask)
+    backing, lead = vr_separate(su, vocals, mp, window_size=args.vr_window, model=mask)
 
     os.makedirs(args.out, exist_ok=True)
     for name, x in [('mix', mix), ('uvr_vocals', vocals), ('uvr_lead', lead), ('uvr_backing', backing)]:

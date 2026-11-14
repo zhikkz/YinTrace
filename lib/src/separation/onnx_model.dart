@@ -23,13 +23,10 @@ class OnnxTensorModel implements TensorModel {
     int? threads,
   }) async {
     final ort = OnnxRuntime();
-    final providers = <OrtProvider>[
-      if (useCoreML) OrtProvider.CORE_ML,
-      OrtProvider.CPU,
-    ];
+    final providers = <OrtProvider>[if (useCoreML) OrtProvider.CORE_ML, OrtProvider.CPU];
     final session = await ort.createSession(
       path,
-      options: OrtSessionOptions(providers: providers, intraOpNumThreads: threads),
+      options: OrtSessionOptions(providers: providers, intraOpNumThreads: threads ?? 4, useArena: false),
     );
     final inName = inputName != null && session.inputNames.contains(inputName)
         ? inputName

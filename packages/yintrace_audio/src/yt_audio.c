@@ -210,6 +210,9 @@ struct yt_engine {
   int has_device;
   int32_t mode;
   int32_t sample_rate;
+  volatile ma_uint32 audio_events;
+  volatile ma_uint32 capture_suspended;
+  volatile ma_uint32 stopping;
 
   // Track table. Guarded by `track_lock` (a try-lock on the audio thread).
   volatile ma_uint32 track_lock;
@@ -316,6 +319,10 @@ static void yt_mix_tracks(yt_engine* e, float* out, ma_int64 pos, ma_uint32 n) {
 void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames) {
   if (e == NULL || frames <= 0) return;
   const ma_uint32 frame_count = (ma_uint32)frames;
+  if (ma_atomic_load_32(&e->capture_suspended)) {
+    if (out) memset(out, 0, (size_t)frames * 2 * sizeof(float));
+    return;
+  }
 
   ma_int64 seek = ma_atomic_exchange_i64(&e->seek_request, -1);
   ma_int64 pos = e->position;
@@ -391,6 +398,39 @@ static void yt_data_callback(ma_device* device, void* output, const void* input,
   yt_engine_render(e, (float*)output, (const float*)input, (int32_t)frame_count);
 }
 
+// miniaudio already owns AVAudioSession interruption/route observers. React
+// to its notifications without restarting/uninitializing inside the callback.
+void yt_engine_signal_audio_event(yt_engine* e, int32_t events) {
+  if (!e) return;
+  ma_atomic_store_32(&e->playing, 0);
+  ma_atomic_store_32(&e->capture_suspended, 1);
+  // A counter/bitset with CAS: callbacks may arrive on different threads.
+  ma_uint32 before;
+  do { before = ma_atomic_load_32(&e->audio_events); }
+  while (ma_atomic_compare_and_swap_32(&e->audio_events, before, before | (ma_uint32)events) != before);
+}
+
+int32_t yt_engine_take_audio_events(yt_engine* e) {
+  return e ? (int32_t)ma_atomic_exchange_32(&e->audio_events, 0) : 0;
+}
+
+static void yt_device_notification(const ma_device_notification* notification) {
+  yt_engine* e = (yt_engine*)notification->pDevice->pUserData;
+  switch (notification->type) {
+    case ma_device_notification_type_interruption_began:
+    case ma_device_notification_type_rerouted:
+      yt_engine_signal_audio_event(e, 1);
+      break;
+    case ma_device_notification_type_stopped:
+      if (!ma_atomic_load_32(&e->stopping)) yt_engine_signal_audio_event(e, 1);
+      break;
+    case ma_device_notification_type_interruption_ended:
+      yt_engine_signal_audio_event(e, 2);
+      break;
+    default: break;
+  }
+}
+
 yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_backend,
                             char* err, int32_t err_len) {
   if (sample_rate < 8000 || mode < YT_MODE_PLAYBACK || mode > YT_MODE_OFFLINE) {
@@ -415,12 +455,6 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
     return NULL;
   }
   if (mode == YT_MODE_OFFLINE) return e;
-
-#if YT_HAS_APPLE_PLATFORM && TARGET_OS_IOS
-  if (!use_null_backend) {
-    yt_configure_session(mode != YT_MODE_PLAYBACK, 0);
-  }
-#endif
 
   ma_context_config ctx_cfg = ma_context_config_init();
   // The audio session is configured by yt_configure_session().
@@ -452,6 +486,7 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
   cfg.performanceProfile = ma_performance_profile_low_latency;
   cfg.periodSizeInMilliseconds = 10;
   cfg.dataCallback = yt_data_callback;
+  cfg.notificationCallback = yt_device_notification;
   cfg.pUserData = e;
   r = ma_device_init(&e->context, &cfg, &e->device);
   if (r != MA_SUCCESS) {
@@ -469,14 +504,22 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
 
 int32_t yt_engine_start(yt_engine* e) {
   if (e == NULL) return -1;
+  ma_atomic_store_32(&e->capture_suspended, 0);
   if (!e->has_device) return 0;
-  return ma_device_start(&e->device) == MA_SUCCESS ? 0 : -2;
+  if (ma_device_start(&e->device) == MA_SUCCESS) return 0;
+  ma_atomic_store_32(&e->capture_suspended, 1);
+  return -2;
 }
 
 int32_t yt_engine_stop(yt_engine* e) {
   if (e == NULL) return -1;
+  ma_atomic_store_32(&e->playing, 0);
+  ma_atomic_store_32(&e->capture_suspended, 1);
   if (!e->has_device) return 0;
-  return ma_device_stop(&e->device) == MA_SUCCESS ? 0 : -2;
+  ma_atomic_store_32(&e->stopping, 1);
+  ma_result r = ma_device_stop(&e->device);
+  ma_atomic_store_32(&e->stopping, 0);
+  return r == MA_SUCCESS ? 0 : -2;
 }
 
 void yt_engine_destroy(yt_engine* e) {

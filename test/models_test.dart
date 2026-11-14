@@ -160,13 +160,17 @@ void main() {
     test('a truncated source is an error, not a short model', () {
       final (recipe, source, _) = fakeRecipe();
       File('${tmp.path}/weights.pth').writeAsBytesSync(source.sublist(0, 200000));
-      expect(() => recipe.assembleSync('${tmp.path}/weights.pth', '${tmp.path}/model.onnx'),
-          throwsA(isA<FileSystemException>()));
+      expect(
+        () => recipe.assembleSync('${tmp.path}/weights.pth', '${tmp.path}/model.onnx'),
+        throwsA(isA<FileSystemException>()),
+      );
     });
 
     test('the bundled recipe matches the catalog', () {
-      final recipe = ModelRecipe.parse(File('assets/models/karaoke_graph.json').readAsStringSync(),
-          File('assets/models/karaoke_graph.bin').readAsBytesSync());
+      final recipe = ModelRecipe.parse(
+        File('assets/models/karaoke_graph.json').readAsStringSync(),
+        File('assets/models/karaoke_graph.bin').readAsBytesSync(),
+      );
       expect(recipe.sourceSha256, karaokeModel.sha256);
       expect(recipe.sourceBytes, karaokeModel.bytes);
       expect(recipe.outputBytes, karaokeModel.installedBytes);
@@ -183,24 +187,53 @@ void main() {
       // The bundle carries the graph only: no weights.
       expect(recipe.graph.length, lessThan(200 * 1024));
       expect(vocalModel.installedBytes, vocalModel.bytes);
-      expect(vocalModel.needsAssembly, isFalse);
+      expect(vocalModel.needsAssembly, isTrue);
       expect(karaokeModel.needsAssembly, isTrue);
     });
 
+    test('the MDX patch replaces only the two time dimensions', () {
+      final recipe = ModelRecipe.parse(
+        File('assets/models/mdx_graph.json').readAsStringSync(),
+        File('assets/models/mdx_graph.bin').readAsBytesSync(),
+      );
+      expect(recipe.sourceBytes, vocalModel.bytes);
+      expect(recipe.sourceSha256, vocalModel.sha256);
+      expect(recipe.outputBytes, vocalModel.installedBytes);
+      expect(recipe.outputSha256, '86532df82bb423e62e542e3e3856cba54b4235724177b4d21d77260b59cbd322');
+      expect(recipe.graph, [0x12, 0x01, 0x54, 0x12, 0x01, 0x54]);
+    });
+
     final real = Platform.environment['MODELS_DIR'];
-    test('assembles the real 6_HP-Karaoke-UVR model', () {
-      final recipe = ModelRecipe.parse(File('assets/models/karaoke_graph.json').readAsStringSync(),
-          File('assets/models/karaoke_graph.bin').readAsBytesSync());
-      final pth = '$real/${karaokeModel.fileName}';
-      expect(sha256OfFileSync(pth), karaokeModel.sha256);
-      final out = '${tmp.path}/${karaokeModel.installedName}';
-      expect(recipe.assembleSync(pth, out), recipe.outputSha256);
-      expect(File(out).lengthSync(), karaokeModel.installedBytes);
-      final keep = Platform.environment['MODELS_OUT'];
-      if (keep != null) File(out).copySync('$keep/${karaokeModel.installedName}');
-      final voc = File('$real/${vocalModel.fileName}');
-      if (voc.existsSync()) expect(sha256OfFileSync(voc.path), vocalModel.sha256);
-    }, skip: real == null ? 'set MODELS_DIR to run' : false, timeout: const Timeout(Duration(minutes: 5)));
+    test(
+      'assembles the real 6_HP-Karaoke-UVR model',
+      () {
+        final recipe = ModelRecipe.parse(
+          File('assets/models/karaoke_graph.json').readAsStringSync(),
+          File('assets/models/karaoke_graph.bin').readAsBytesSync(),
+        );
+        final pth = '$real/${karaokeModel.fileName}';
+        expect(sha256OfFileSync(pth), karaokeModel.sha256);
+        final out = '${tmp.path}/${karaokeModel.installedName}';
+        expect(recipe.assembleSync(pth, out), recipe.outputSha256);
+        expect(File(out).lengthSync(), karaokeModel.installedBytes);
+        final keep = Platform.environment['MODELS_OUT'];
+        if (keep != null) {
+          File(out).copySync('$keep/${karaokeModel.installedName}');
+        }
+        final voc = File('$real/${vocalModel.fileName}');
+        final mdxRecipe = ModelRecipe.parse(
+          File('assets/models/mdx_graph.json').readAsStringSync(),
+          File('assets/models/mdx_graph.bin').readAsBytesSync(),
+        );
+        final dynamic = '${tmp.path}/${vocalModel.installedName}';
+        expect(mdxRecipe.assembleSync(voc.path, dynamic), mdxRecipe.outputSha256);
+        if (keep != null) {
+          File(dynamic).copySync('$keep/${vocalModel.installedName}');
+        }
+      },
+      skip: real == null ? 'set MODELS_DIR to run' : false,
+      timeout: const Timeout(Duration(minutes: 5)),
+    );
   });
 
   group('resumable download', () {
@@ -228,8 +261,10 @@ void main() {
       final part = File('${tmp.path}/a.part');
       host.breakAfter = 250000;
       final d = ResumableDownload();
-      await expectLater(d.fetch(Uri.parse(host.url('a.bin')), part, expectedBytes: payload.length),
-          throwsA(isA<ModelDownloadException>()));
+      await expectLater(
+        d.fetch(Uri.parse(host.url('a.bin')), part, expectedBytes: payload.length),
+        throwsA(isA<ModelDownloadException>()),
+      );
       final have = part.lengthSync();
       expect(have, inInclusiveRange(1, payload.length - 1));
       host.requests.clear();
@@ -251,13 +286,15 @@ void main() {
     test('a missing file and an unreachable host give readable errors', () async {
       final d = ResumableDownload();
       await expectLater(
-          d.fetch(Uri.parse(host.url('nope.bin')), File('${tmp.path}/n.part'), expectedBytes: 10),
-          throwsA(isA<ModelDownloadException>().having((e) => e.message, 'message', contains('404'))));
+        d.fetch(Uri.parse(host.url('nope.bin')), File('${tmp.path}/n.part'), expectedBytes: 10),
+        throwsA(isA<ModelDownloadException>().having((e) => e.message, 'message', contains('404'))),
+      );
       final port = host.server.port;
       await host.stop();
       await expectLater(
-          d.fetch(Uri.parse('http://127.0.0.1:$port/dl/a.bin'), File('${tmp.path}/n.part'), expectedBytes: 10),
-          throwsA(isA<ModelDownloadException>().having((e) => e.message, 'message', contains('网络'))));
+        d.fetch(Uri.parse('http://127.0.0.1:$port/dl/a.bin'), File('${tmp.path}/n.part'), expectedBytes: 10),
+        throwsA(isA<ModelDownloadException>().having((e) => e.message, 'message', contains('网络'))),
+      );
       d.close();
     });
   });
@@ -278,35 +315,37 @@ void main() {
       await host.start();
       specs = [
         ModelSpec(
-            id: 'vocals',
-            title: '人声分离',
-            purpose: '',
-            fileName: 'voc.onnx',
-            url: host.url('voc.onnx'),
-            bytes: plain.length,
-            sha256: hex(plain),
-            installedName: 'voc.onnx',
-            installedBytes: plain.length),
+          id: 'vocals',
+          title: '人声分离',
+          purpose: '',
+          fileName: 'voc.onnx',
+          url: host.url('voc.onnx'),
+          bytes: plain.length,
+          sha256: hex(plain),
+          installedName: 'voc.onnx',
+          installedBytes: plain.length,
+        ),
         ModelSpec(
-            id: 'karaoke',
-            title: '去和声',
-            purpose: '',
-            fileName: 'kara.pth',
-            url: host.url('kara.pth'),
-            bytes: weights.length,
-            sha256: hex(weights),
-            installedName: 'kara.onnx',
-            installedBytes: onnx.length),
+          id: 'karaoke',
+          title: '去和声',
+          purpose: '',
+          fileName: 'kara.pth',
+          url: host.url('kara.pth'),
+          bytes: weights.length,
+          sha256: hex(weights),
+          installedName: 'kara.onnx',
+          installedBytes: onnx.length,
+        ),
       ];
     });
     tearDown(() => host.stop());
 
     ModelManager manager({List<String>? excluded}) => ModelManager(
-          dir: Directory('${tmp.path}/models'),
-          loadRecipe: () async => recipe,
-          specs: specs,
-          excludeFromBackup: excluded?.add,
-        );
+      dir: Directory('${tmp.path}/models'),
+      loadRecipe: (_) async => recipe,
+      specs: specs,
+      excludeFromBackup: excluded?.add,
+    );
 
     test('downloads, verifies, assembles and cleans up', () async {
       final excluded = <String>[];
@@ -332,6 +371,17 @@ void main() {
       // A second manager (next app start) finds them without the network.
       await host.stop();
       expect(manager().isReady, isTrue);
+    });
+
+    test('migrates a previously downloaded official source without networking', () async {
+      final m = manager();
+      await m.dir.create(recursive: true);
+      File('${m.dir.path}/${specs[1].fileName}').writeAsBytesSync(weights);
+      await m.install();
+      expect(m.error, isNull);
+      expect(m.isReady, isTrue);
+      expect(host.requests.where((r) => r.contains('kara.pth')), isEmpty);
+      expect(File('${m.dir.path}/${specs[1].fileName}').existsSync(), isFalse);
     });
 
     test('a corrupt download is rejected and can be retried', () async {
@@ -373,8 +423,11 @@ void main() {
       final m = manager();
       expect(await m.importFiles(['${tmp.path}/song.mp3']), 0);
       expect(m.error, contains('不是这两个模型'));
-      final n = await m.importFiles(
-          ['${tmp.path}/renamed-download', '${tmp.path}/song.mp3', '${tmp.path}/vocal model.onnx']);
+      final n = await m.importFiles([
+        '${tmp.path}/renamed-download',
+        '${tmp.path}/song.mp3',
+        '${tmp.path}/vocal model.onnx',
+      ]);
       expect(n, 2);
       expect(m.error, isNull);
       expect(m.isReady, isTrue);
@@ -399,25 +452,38 @@ void main() {
     });
   });
 
-  test('downloads and installs the real models from the UVR repository', () async {
-    final m = ModelManager(
-      dir: Directory('${tmp.path}/models'),
-      loadRecipe: () async => ModelRecipe.parse(File('assets/models/karaoke_graph.json').readAsStringSync(),
-          File('assets/models/karaoke_graph.bin').readAsBytesSync()),
-    );
-    final watch = Stopwatch()..start();
-    await m.install();
-    expect(m.error, isNull);
-    expect(m.isReady, isTrue);
-    expect(sha256OfFileSync(m.pathFor(vocalModel)!), vocalModel.sha256);
-    expect(sha256OfFileSync(m.pathFor(karaokeModel)!),
-        'c3184cfe3ffa93b8ce988d030d75531dbab9256bef0154b1cf3db64514230e1a');
-    expect(Directory('${tmp.path}/models').listSync().length, 2);
-    // ignore: avoid_print
-    print('downloaded and installed ${formatMegabytes(m.totalBytes)} in ${watch.elapsed.inSeconds} s');
-  },
-      skip: Platform.environment['LIVE_MODEL_DOWNLOAD'] == null ? 'set LIVE_MODEL_DOWNLOAD=1 to run' : false,
-      timeout: const Timeout(Duration(minutes: 20)));
+  test(
+    'downloads and installs the real models from the UVR repository',
+    () async {
+      final m = ModelManager(
+        dir: Directory('${tmp.path}/models'),
+        loadRecipe: (spec) async {
+          final name = spec.id == vocalModel.id ? 'mdx_graph' : 'karaoke_graph';
+          return ModelRecipe.parse(
+            File('assets/models/$name.json').readAsStringSync(),
+            File('assets/models/$name.bin').readAsBytesSync(),
+          );
+        },
+      );
+      final watch = Stopwatch()..start();
+      await m.install();
+      expect(m.error, isNull);
+      expect(m.isReady, isTrue);
+      expect(
+        sha256OfFileSync(m.pathFor(vocalModel)!),
+        '86532df82bb423e62e542e3e3856cba54b4235724177b4d21d77260b59cbd322',
+      );
+      expect(
+        sha256OfFileSync(m.pathFor(karaokeModel)!),
+        '6247a65bd0e23c18d8f98df3ad5b40c0f8d4acc0da6949bf61847c3dad50c26e',
+      );
+      expect(Directory('${tmp.path}/models').listSync().length, 2);
+      // ignore: avoid_print
+      print('downloaded and installed ${formatMegabytes(m.totalBytes)} in ${watch.elapsed.inSeconds} s');
+    },
+    skip: Platform.environment['LIVE_MODEL_DOWNLOAD'] == null ? 'set LIVE_MODEL_DOWNLOAD=1 to run' : false,
+    timeout: const Timeout(Duration(minutes: 20)),
+  );
 
   test('the two models come from the UVR model repository', () {
     for (final spec in separationModels) {

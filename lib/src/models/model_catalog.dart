@@ -46,7 +46,7 @@ const vocalModel = ModelSpec(
   url: '$_releases/UVR-MDX-NET-Voc_FT.onnx',
   bytes: 66762490,
   sha256: '534b2070fcc7df514b13ef660dc8cbb328679c2374d04354a5c42bb14ecce111',
-  installedName: 'UVR-MDX-NET-Voc_FT.onnx',
+  installedName: 'UVR-MDX-NET-Voc_FT-dynamic.onnx',
   installedBytes: 66762490,
 );
 
@@ -61,8 +61,8 @@ const karaokeModel = ModelSpec(
   url: '$_releases/6_HP-Karaoke-UVR.pth',
   bytes: 126782699,
   sha256: '4ce7eaaa9e56f09366b788aebf6d3a72aec8145692c56f1e090e4e7e2d7ce65f',
-  installedName: '6_HP-Karaoke-UVR.onnx',
-  installedBytes: 126737731,
+  installedName: '6_HP-Karaoke-UVR-dynamic.onnx',
+  installedBytes: 126741103,
 );
 
 const separationModels = [vocalModel, karaokeModel];

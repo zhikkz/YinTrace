@@ -25,9 +25,6 @@ class AppSettings extends ChangeNotifier {
   /// Disables iOS voice processing / AGC for more stable pitch readings.
   bool measurementMode = false;
 
-  /// Try the Core ML execution provider for separation (Apple devices).
-  bool useCoreML = false;
-
   /// Seconds of the pitch graph visible during practice.
   double practiceWindowSeconds = 6;
 
@@ -51,21 +48,19 @@ class AppSettings extends ChangeNotifier {
     accompanimentVolume = (j['accompanimentVolume'] as num?)?.toDouble() ?? accompanimentVolume;
     guideVocalVolume = (j['guideVocalVolume'] as num?)?.toDouble() ?? guideVocalVolume;
     measurementMode = j['measurementMode'] as bool? ?? measurementMode;
-    useCoreML = j['useCoreML'] as bool? ?? useCoreML;
     practiceWindowSeconds = (j['practiceWindowSeconds'] as num?)?.toDouble() ?? practiceWindowSeconds;
   }
 
   Map<String, dynamic> toJson() => {
-        'latencyOffsetMs': latencyOffsetMs,
-        'toleranceCents': toleranceCents,
-        'octaveTolerant': octaveTolerant,
-        'micGateDb': micGateDb,
-        'accompanimentVolume': accompanimentVolume,
-        'guideVocalVolume': guideVocalVolume,
-        'measurementMode': measurementMode,
-        'useCoreML': useCoreML,
-        'practiceWindowSeconds': practiceWindowSeconds,
-      };
+    'latencyOffsetMs': latencyOffsetMs,
+    'toleranceCents': toleranceCents,
+    'octaveTolerant': octaveTolerant,
+    'micGateDb': micGateDb,
+    'accompanimentVolume': accompanimentVolume,
+    'guideVocalVolume': guideVocalVolume,
+    'measurementMode': measurementMode,
+    'practiceWindowSeconds': practiceWindowSeconds,
+  };
 
   /// Applies [change], notifies listeners and saves.
   Future<void> update(void Function(AppSettings s) change) async {

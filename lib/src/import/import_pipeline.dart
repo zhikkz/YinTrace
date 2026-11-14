@@ -59,30 +59,30 @@ class ImportRequest {
   final bool keepOriginal;
 
   Map<String, Object?> toMap() => {
-        'audioPath': audioPath,
-        'lyrics': lyrics,
-        'title': title,
-        'artist': artist,
-        'vocalsOnly': vocalsOnly,
-        'accompanimentPath': accompanimentPath,
-        'mdxModelPath': mdxModelPath,
-        'vrModelPath': vrModelPath,
-        'useCoreML': useCoreML,
-        'keepOriginal': keepOriginal,
-      };
+    'audioPath': audioPath,
+    'lyrics': lyrics,
+    'title': title,
+    'artist': artist,
+    'vocalsOnly': vocalsOnly,
+    'accompanimentPath': accompanimentPath,
+    'mdxModelPath': mdxModelPath,
+    'vrModelPath': vrModelPath,
+    'useCoreML': useCoreML,
+    'keepOriginal': keepOriginal,
+  };
 
   factory ImportRequest.fromMap(Map<Object?, Object?> m) => ImportRequest(
-        audioPath: m['audioPath'] as String,
-        lyrics: m['lyrics'] as String,
-        title: m['title'] as String,
-        artist: m['artist'] as String? ?? '',
-        vocalsOnly: m['vocalsOnly'] as bool? ?? false,
-        accompanimentPath: m['accompanimentPath'] as String?,
-        mdxModelPath: m['mdxModelPath'] as String?,
-        vrModelPath: m['vrModelPath'] as String?,
-        useCoreML: m['useCoreML'] as bool? ?? false,
-        keepOriginal: m['keepOriginal'] as bool? ?? true,
-      );
+    audioPath: m['audioPath'] as String,
+    lyrics: m['lyrics'] as String,
+    title: m['title'] as String,
+    artist: m['artist'] as String? ?? '',
+    vocalsOnly: m['vocalsOnly'] as bool? ?? false,
+    accompanimentPath: m['accompanimentPath'] as String?,
+    mdxModelPath: m['mdxModelPath'] as String?,
+    vrModelPath: m['vrModelPath'] as String?,
+    useCoreML: m['useCoreML'] as bool? ?? false,
+    keepOriginal: m['keepOriginal'] as bool? ?? true,
+  );
 }
 
 class ImportProgress {
@@ -92,8 +92,12 @@ class ImportProgress {
   final double overall;
 }
 
-typedef ModelLoader = Future<TensorModel> Function(String path,
-    {required String inputName, required String outputName, bool useCoreML});
+typedef ModelLoader = Future<TensorModel> Function(
+  String path, {
+  required String inputName,
+  required String outputName,
+  bool useCoreML,
+});
 
 class ImportException implements Exception {
   ImportException(this.message);
@@ -119,8 +123,11 @@ class ImportPipeline {
     ImportStage.saving: 0.06,
   };
 
-  Future<SongMeta> run(ImportRequest r,
-      {void Function(ImportProgress)? onProgress, bool Function()? isCancelled}) async {
+  Future<SongMeta> run(
+    ImportRequest r, {
+    void Function(ImportProgress)? onProgress,
+    bool Function()? isCancelled,
+  }) async {
     final lrc = parseLrc(r.lyrics);
     if (lrc.lines.isEmpty) {
       throw ImportException('没有解析到带时间的歌词，请按 [mm:ss.xx]歌词 的格式输入');
@@ -152,8 +159,9 @@ class ImportPipeline {
     final dir = repository.dirFor(id);
     try {
       report(ImportStage.decoding, 0);
-      final mix = audio.decode(r.audioPath, sampleRate: 44100, channels: 2);
-      if (mix.frames < 44100) throw ImportException('音频太短');
+      var mix = audio.decode(r.audioPath, sampleRate: 44100, channels: 2).samples;
+      final duration = mix.length / 2 / 44100;
+      if (mix.length < 2 * 44100) throw ImportException('音频太短');
       report(ImportStage.decoding, 1);
 
       Float32List vocals; // stereo
@@ -161,35 +169,54 @@ class ImportPipeline {
       final modelInfo = <String, String>{};
       if (separate) {
         const mdxCfg = MdxConfig.vocFt;
-        final mdx = await loadModel(r.mdxModelPath!,
-            inputName: mdxCfg.inputName, outputName: mdxCfg.outputName, useCoreML: r.useCoreML);
+        final mdx = await loadModel(
+          r.mdxModelPath!,
+          inputName: mdxCfg.inputName,
+          outputName: mdxCfg.outputName,
+          useCoreML: r.useCoreML,
+        );
         try {
-          vocals = await MdxSeparator(mdx, mdxCfg)
-              .separate(mix.samples, onProgress: (f) => report(ImportStage.separatingVocals, f));
+          vocals = await MdxSeparator(
+            mdx,
+            mdxCfg,
+          ).separate(mix, onProgress: (f) => report(ImportStage.separatingVocals, f));
         } finally {
           await mdx.close();
         }
         modelInfo['mdx'] = mdxCfg.name;
         if (r.vrModelPath != null) {
           const vrCfg = VrConfig.karaoke6Hp;
-          final vr = await loadModel(r.vrModelPath!,
-              inputName: vrCfg.inputName, outputName: vrCfg.outputName, useCoreML: r.useCoreML);
+          final vr = await loadModel(
+            r.vrModelPath!,
+            inputName: vrCfg.inputName,
+            outputName: vrCfg.outputName,
+            useCoreML: r.useCoreML,
+          );
           try {
             // The karaoke model's secondary stem is the lead vocal.
-            vocals = await VrSeparator(vr, vrCfg).separate(vocals,
-                stem: VrStem.secondary, onProgress: (f) => report(ImportStage.removingHarmony, f));
+            vocals = await VrSeparator(vr, vrCfg).separate(
+              vocals,
+              stem: VrStem.secondary,
+              onProgress: (f) => report(ImportStage.removingHarmony, f),
+            );
             modelInfo['vr'] = vrCfg.name;
           } finally {
             await vr.close();
           }
         }
-        accompaniment = MdxSeparator.secondaryStem(mix.samples, vocals);
+        // Reuse the decoded mixture after both models are done. No third
+        // song-length stereo buffer for the accompaniment.
+        for (var i = 0; i < mix.length; i++) {
+          mix[i] -= vocals[i];
+        }
+        accompaniment = mix;
       } else {
-        vocals = mix.samples;
+        vocals = mix;
         if (r.accompanimentPath != null) {
           accompaniment = _fitLength(
-              audio.decode(r.accompanimentPath!, sampleRate: 44100, channels: 2).samples,
-              vocals.length);
+            audio.decode(r.accompanimentPath!, sampleRate: 44100, channels: 2).samples,
+            vocals.length,
+          );
         }
       }
 
@@ -197,6 +224,10 @@ class ImportPipeline {
       for (var i = 0; i < mono.length; i++) {
         mono[i] = 0.5 * (vocals[2 * i] + vocals[2 * i + 1]);
       }
+      // The rest of the pipeline only needs mono vocals and accompaniment.
+      // Drop both aliases, including the pure-vocal input case.
+      vocals = Float32List(0);
+      mix = Float32List(0);
       report(ImportStage.analyzingPitch, 0);
       final track = analyzePitch(mono, 44100, onProgress: (f) => report(ImportStage.analyzingPitch, f));
       report(ImportStage.aligning, 0);
@@ -208,8 +239,13 @@ class ImportPipeline {
       report(ImportStage.saving, 0.4);
       String? accPath;
       if (accompaniment != null) {
-        accPath = audio.writeCompressed('${dir.path}/accompaniment', accompaniment, 2, 44100,
-            bitrate: 192000);
+        accPath = audio.writeCompressed(
+          '${dir.path}/accompaniment',
+          accompaniment,
+          2,
+          44100,
+          bitrate: 192000,
+        );
       }
       report(ImportStage.saving, 0.8);
       String? originalName;
@@ -225,7 +261,7 @@ class ImportPipeline {
         title: r.title.trim().isEmpty ? '未命名歌曲' : r.title.trim(),
         artist: r.artist.trim(),
         createdAt: DateTime.now(),
-        duration: mix.duration,
+        duration: duration,
         lyrics: r.lyrics,
         vocalsFile: _name(vocalsPath),
         accompanimentFile: accPath == null ? null : _name(accPath),

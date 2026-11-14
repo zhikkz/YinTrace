@@ -13,7 +13,8 @@ import 'support/vr_configs.dart';
 
 /// Produced by tools/reference/make_separation_fixtures.py from UVR's code.
 final Map<String, dynamic> ref = jsonDecode(
-    File('test/fixtures/separation_reference.json').readAsStringSync());
+  File('test/fixtures/separation_reference.json').readAsStringSync(),
+);
 
 const sr = 44100;
 
@@ -23,11 +24,13 @@ Float32List synth(double seconds) {
   final out = Float32List(2 * n);
   for (var i = 0; i < n; i++) {
     final t = i / sr;
-    final l = 0.30 * math.sin(2 * math.pi * 220.0 * t) +
+    final l =
+        0.30 * math.sin(2 * math.pi * 220.0 * t) +
         0.20 * math.sin(2 * math.pi * 523.25 * t + 0.3) +
         0.10 * math.sin(2 * math.pi * 3100.0 * t) +
         0.05 * math.sin(2 * math.pi * 9000.0 * t + 1.1);
-    final r = 0.25 * math.sin(2 * math.pi * 330.0 * t + 0.7) +
+    final r =
+        0.25 * math.sin(2 * math.pi * 330.0 * t + 0.7) +
         0.20 * math.sin(2 * math.pi * 523.25 * t) +
         0.08 * math.sin(2 * math.pi * 6200.0 * t);
     final env = 0.6 + 0.4 * math.sin(2 * math.pi * 0.5 * t);
@@ -114,7 +117,7 @@ void main() {
 
   test('MDX demix matches UVR', () async {
     final model = FakeMdxModel();
-    final sep = MdxSeparator(model, MdxConfig.vocFt);
+    final sep = MdxSeparator(model, const MdxConfig());
     final progress = <double>[];
     final out = await sep.separate(mix, onProgress: progress.add);
     expect(out.length, mix.length);
@@ -123,10 +126,15 @@ void main() {
     expectProbes(out, ref['mdx'] as Map<String, dynamic>);
   });
 
-  for (final cfg in [
-    ('4band_v2_sn', vr4BandV2Sn),
-    ('3band_44100_msb2', VrConfig.karaoke6Hp),
-  ]) {
+  test('mobile MDX rolling overlap matches UVR at T=128, overlap=0.5', () async {
+    final model = FakeMdxModel();
+    final sep = MdxSeparator(model, MdxConfig.vocFt);
+    final out = await sep.separate(mix);
+    expect(model.calls, sep.chunkCount(mix.length ~/ 2));
+    expectProbes(out, ref['mdx_mobile'] as Map<String, dynamic>);
+  });
+
+  for (final cfg in [('4band_v2_sn', vr4BandV2Sn), ('3band_44100_msb2', VrConfig.karaoke6Hp)]) {
     test('VR ${cfg.$1} matches UVR (primary and secondary stems)', () async {
       final sep = VrSeparator(FakeVrModel(), cfg.$2);
       final y = await sep.separate(mix, stem: VrStem.primary);
@@ -140,11 +148,14 @@ void main() {
   test('VR segmented processing matches single-pass processing', () async {
     final long = synth(40.0);
     const cfg = vr4BandV2Sn;
-    final single = await VrSeparator(FakeVrModel(), cfg, segmentSeconds: 100)
-        .separate(long);
-    final seg = await VrSeparator(FakeVrModel(), cfg,
-            segmentSeconds: 12, marginSeconds: 3, crossfadeSeconds: 1)
-        .separate(long);
+    final single = await VrSeparator(FakeVrModel(), cfg, segmentSeconds: 100).separate(long);
+    final seg = await VrSeparator(
+      FakeVrModel(),
+      cfg,
+      segmentSeconds: 12,
+      marginSeconds: 3,
+      crossfadeSeconds: 1,
+    ).separate(long);
     var err = 0.0, ref = 0.0;
     // Skip the last 0.1 s where the single pass has no iSTFT coverage.
     final n = long.length - 2 * 4410;

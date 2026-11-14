@@ -36,7 +36,8 @@ class PracticePage extends StatefulWidget {
   State<PracticePage> createState() => _PracticePageState();
 }
 
-class _PracticePageState extends State<PracticePage> with SingleTickerProviderStateMixin {
+class _PracticePageState extends State<PracticePage>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final PracticeSession _session;
   late final Ticker _ticker;
   final _started = Stopwatch();
@@ -46,6 +47,7 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _ticker = createTicker((_) => _session.tick());
   }
 
@@ -55,7 +57,8 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     if (_init) return;
     _init = true;
     final services = AppScope.of(context);
-    _session = widget.sessionFactory?.call(context) ??
+    _session =
+        widget.sessionFactory?.call(context) ??
         PracticeSession(
           meta: widget.meta,
           reference: widget.reference,
@@ -66,12 +69,28 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
         );
     _session.addListener(_onSession);
     keepScreenOn(true);
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) {
+      _session.suspend();
+    }
     _session.start().then((_) {
       if (mounted) _ticker.start();
     });
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_init) return;
+    if (state == AppLifecycleState.resumed) {
+      _session.resume();
+    } else {
+      _started.stop();
+      _session.suspend();
+    }
+  }
+
   void _onSession() {
+    if (!_session.isPlaying) _started.stop();
     if (_session.finished && !_shownResults) {
       _shownResults = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _showResults(saveRecord: true));
@@ -80,6 +99,7 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
     _session.removeListener(_onSession);
     _session.dispose();
@@ -91,7 +111,9 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     _session.pause();
     _started.stop();
     PracticeRecord? record;
-    if (saveRecord) record = await _session.save(elapsedSeconds: _started.elapsed.inMilliseconds / 1000);
+    if (saveRecord) {
+      record = await _session.save(elapsedSeconds: _started.elapsed.inMilliseconds / 1000);
+    }
     if (!mounted) return;
     final line = await showModalBottomSheet<int>(
       context: context,
@@ -107,8 +129,8 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
   }
 
   void _togglePlay() {
-    if (!_session.isPlaying) _started.start();
     _session.togglePlay();
+    if (_session.isPlaying) _started.start();
   }
 
   @override
@@ -145,17 +167,27 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
           }
           if (!_session.started) {
             return Center(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text('正在载入伴奏和原唱', style: context.type.bodyMedium),
-              ]),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text('正在载入伴奏和原唱', style: context.type.bodyMedium),
+                ],
+              ),
             );
           }
           return Column(
             children: [
+              if (_session.pauseReason != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                  child: Text(_session.pauseReason!, style: context.type.bodySmall),
+                ),
               _LiveMeter(session: _session),
-              Expanded(child: _Stage(session: _session, contour: widget.contour)),
+              Expanded(
+                child: _Stage(session: _session, contour: widget.contour),
+              ),
               _Lyrics(session: _session),
               _Transport(session: _session, onPlay: _togglePlay),
             ],
@@ -188,7 +220,12 @@ class _LiveMeter extends StatelessWidget {
       verdictColor = p.deviation(cents, tolerance: tol);
     }
     final big = TextStyle(
-        fontSize: 26, fontWeight: FontWeight.w500, height: 1.15, color: p.ink, fontFeatures: tabular);
+      fontSize: 26,
+      fontWeight: FontWeight.w500,
+      height: 1.15,
+      color: p.ink,
+      fontFeatures: tabular,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
       child: Column(
@@ -197,14 +234,19 @@ class _LiveMeter extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               _NoteReadout(
-                  label: current != null || target == null ? '原唱' : '下一个',
-                  value: noteLabel(target?.midi),
-                  style: current == null ? big.copyWith(color: p.inkFaint) : big),
+                label: current != null || target == null ? '原唱' : '下一个',
+                value: noteLabel(target?.midi),
+                style: current == null ? big.copyWith(color: p.inkFaint) : big,
+              ),
               const Spacer(),
               Text(verdict, style: context.type.titleSmall?.copyWith(color: verdictColor)),
               const Spacer(),
               _NoteReadout(
-                  label: '你', value: fresh ? noteLabel(s.pitch.midi) : '–', style: big, alignEnd: true),
+                label: '你',
+                value: fresh ? noteLabel(s.pitch.midi) : '–',
+                style: big,
+                alignEnd: true,
+              ),
             ],
           ),
           const SizedBox(height: 6),
@@ -231,12 +273,12 @@ class _NoteReadout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(
-        crossAxisAlignment: alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        children: [
-          Text(label, style: context.type.labelMedium),
-          Text(value, style: style),
-        ],
-      );
+    crossAxisAlignment: alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+    children: [
+      Text(label, style: context.type.labelMedium),
+      Text(value, style: style),
+    ],
+  );
 }
 
 class _Stage extends StatelessWidget {
@@ -304,18 +346,18 @@ class _Lyrics extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text.rich(
-            TextSpan(children: [
-              for (final t in line.tokens)
-                TextSpan(
-                  text: '${t.spaceBefore ? '　' : ''}${t.text}',
-                  style: base.copyWith(
-                    color: scores[t] != null
-                        ? p.score(scores[t]!)
-                        : (ph >= t.start ? p.ink : p.inkFaint),
-                    fontWeight: ph >= t.start && ph < t.end ? FontWeight.w800 : FontWeight.w500,
+            TextSpan(
+              children: [
+                for (final t in line.tokens)
+                  TextSpan(
+                    text: '${t.spaceBefore ? '　' : ''}${t.text}',
+                    style: base.copyWith(
+                      color: scores[t] != null ? p.score(scores[t]!) : (ph >= t.start ? p.ink : p.inkFaint),
+                      fontWeight: ph >= t.start && ph < t.end ? FontWeight.w800 : FontWeight.w500,
+                    ),
                   ),
-                ),
-            ]),
+              ],
+            ),
           ),
           const SizedBox(height: 6),
           Text(next?.text ?? ' ', style: context.type.bodyMedium?.copyWith(color: p.inkFaint)),
@@ -417,21 +459,23 @@ class _Timeline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.yt;
-    return LayoutBuilder(builder: (context, c) {
-      void seekAt(double dx) => onSeek((dx / c.maxWidth).clamp(0.0, 1.0) * duration);
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (d) => seekAt(d.localPosition.dx),
-        onHorizontalDragUpdate: (d) => seekAt(d.localPosition.dx),
-        child: SizedBox(
-          height: 26,
-          child: CustomPaint(
-            size: Size.infinite,
-            painter: _TimelinePainter(position, duration, lineStarts, loop, p),
+    return LayoutBuilder(
+      builder: (context, c) {
+        void seekAt(double dx) => onSeek((dx / c.maxWidth).clamp(0.0, 1.0) * duration);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (d) => seekAt(d.localPosition.dx),
+          onHorizontalDragUpdate: (d) => seekAt(d.localPosition.dx),
+          child: SizedBox(
+            height: 26,
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: _TimelinePainter(position, duration, lineStarts, loop, p),
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 }
 
@@ -449,29 +493,32 @@ class _TimelinePainter extends CustomPainter {
     final cy = size.height / 2;
     double x(double t) => (t / duration).clamp(0.0, 1.0) * size.width;
     canvas.drawLine(
-        Offset(0, cy),
-        Offset(size.width, cy),
-        Paint()
-          ..color = p.staffStrong
-          ..strokeWidth = 3
-          ..strokeCap = StrokeCap.round);
+      Offset(0, cy),
+      Offset(size.width, cy),
+      Paint()
+        ..color = p.staffStrong
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round,
+    );
     final l = loop;
     if (l != null) {
       canvas.drawLine(
-          Offset(x(l.start - 1.2), cy),
-          Offset(x(l.end + 0.6), cy),
-          Paint()
-            ..color = p.malachite.withValues(alpha: 0.5)
-            ..strokeWidth = 7
-            ..strokeCap = StrokeCap.round);
+        Offset(x(l.start - 1.2), cy),
+        Offset(x(l.end + 0.6), cy),
+        Paint()
+          ..color = p.malachite.withValues(alpha: 0.5)
+          ..strokeWidth = 7
+          ..strokeCap = StrokeCap.round,
+      );
     }
     canvas.drawLine(
-        Offset(0, cy),
-        Offset(x(position), cy),
-        Paint()
-          ..color = p.ink
-          ..strokeWidth = 3
-          ..strokeCap = StrokeCap.round);
+      Offset(0, cy),
+      Offset(x(position), cy),
+      Paint()
+        ..color = p.ink
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round,
+    );
     final tick = Paint()
       ..color = p.paper.withValues(alpha: 0.7)
       ..strokeWidth = 1;
@@ -504,19 +551,21 @@ class _MixSheetState extends State<_MixSheet> {
     }
 
     Widget slider(String title, String value, Widget slider) => Padding(
-          padding: const EdgeInsets.only(top: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
-              Row(children: [
-                Text(title, style: context.type.bodyLarge),
-                const Spacer(),
-                Text(value, style: context.type.bodyMedium?.copyWith(fontFeatures: tabular)),
-              ]),
-              slider,
+              Text(title, style: context.type.bodyLarge),
+              const Spacer(),
+              Text(value, style: context.type.bodyMedium?.copyWith(fontFeatures: tabular)),
             ],
           ),
-        );
+          slider,
+        ],
+      ),
+    );
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -525,10 +574,16 @@ class _MixSheetState extends State<_MixSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('练习设置', style: context.type.headlineSmall),
-            slider('伴奏', '${(s.accompanimentVolume * 100).round()}%',
-                Slider(value: s.accompanimentVolume, onChanged: (v) => set(() => s.accompanimentVolume = v))),
-            slider('原唱导唱', '${(s.guideVocalVolume * 100).round()}%',
-                Slider(value: s.guideVocalVolume, onChanged: (v) => set(() => s.guideVocalVolume = v))),
+            slider(
+              '伴奏',
+              '${(s.accompanimentVolume * 100).round()}%',
+              Slider(value: s.accompanimentVolume, onChanged: (v) => set(() => s.accompanimentVolume = v)),
+            ),
+            slider(
+              '原唱导唱',
+              '${(s.guideVocalVolume * 100).round()}%',
+              Slider(value: s.guideVocalVolume, onChanged: (v) => set(() => s.guideVocalVolume = v)),
+            ),
             slider(
               '音准容差',
               '±${s.toleranceCents} 音分',
@@ -551,8 +606,10 @@ class _MixSheetState extends State<_MixSheet> {
                 onChanged: (v) => set(() => s.latencyOffsetMs = v.round()),
               ),
             ),
-            Text('系统测得的延迟 ${(widget.session.latency * 1000).round()} ms。你的音高线总比原唱靠右时，把补偿调大。',
-                style: context.type.bodySmall),
+            Text(
+              '系统测得的延迟 ${(widget.session.latency * 1000).round()} ms。你的音高线总比原唱靠右时，把补偿调大。',
+              style: context.type.bodySmall,
+            ),
             const SizedBox(height: 6),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,

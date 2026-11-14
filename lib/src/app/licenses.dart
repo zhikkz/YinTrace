@@ -10,47 +10,79 @@ const appVersion = '1.0.0';
 const appCopyright = 'Copyright © 2026 zhikkz';
 const appSourceUrl = 'https://github.com/zhikkz/YinTrace';
 
+// Icon assets are original vectors rendered with development-only CairoSVG
+// (LGPL-3.0-or-later); CairoSVG is not linked or distributed with the app.
+
 /// Licenses of third-party work that is not a pub package (those are
 /// collected by Flutter automatically). Shown by the in-app license page.
 /// See also THIRD_PARTY_NOTICES.md at the root of the repository.
 void registerThirdPartyLicenses() {
-  LicenseRegistry.addLicense(() => Stream.fromIterable([
-        LicenseEntryWithLineBreaks(const ['Ultimate Vocal Remover GUI'], '''
+  LicenseRegistry.addLicense(
+    () => Stream.fromIterable([
+      LicenseEntryWithLineBreaks(
+        const ['Ultimate Vocal Remover GUI'],
+        '''
 YinTrace's vocal separation is a port of the MDX-Net and VR-architecture pre- and post-processing of Ultimate Vocal Remover GUI (https://github.com/Anjok07/ultimatevocalremovergui), and the graph of the harmony-removal network bundled with the app re-implements UVR's VR network definition.
 
 The models UVR-MDX-NET-Voc_FT and 6_HP-Karaoke-UVR were trained and published by the UVR developers (Anjok07, aufr33). They are not part of this app: it downloads them from UVR's official model repository. The UVR authors ask applications that use their models to credit UVR and its developers.
 
-${_mit('Copyright (c) 2022 Anjok07, Aufr33')}'''),
-        LicenseEntryWithLineBreaks(const ['vocal-remover (tsurumeso)'], '''
+${_mit('Copyright (c) 2022 Anjok07, Aufr33')}''',
+      ),
+      LicenseEntryWithLineBreaks(
+        const ['vocal-remover (tsurumeso)'],
+        '''
 The VR architecture used by Ultimate Vocal Remover derives from https://github.com/tsurumeso/vocal-remover.
 
-${_mit('Copyright (c) 2019 tsurumeso')}'''),
-        LicenseEntryWithLineBreaks(const ['MDX-Net (Kuielab, Woosung Choi)'], '''
+${_mit('Copyright (c) 2019 tsurumeso')}''',
+      ),
+      LicenseEntryWithLineBreaks(
+        const ['MDX-Net (Kuielab, Woosung Choi)'],
+        '''
 The MDX-Net architecture and its demixing procedure derive from https://github.com/kuielab/mdx-net.
 
-${_mit('Copyright (c) 2020 KINoAI')}'''),
-        LicenseEntryWithLineBreaks(const ['ONNX Runtime'], '''
+${_mit('Copyright (c) 2020 KINoAI')}''',
+      ),
+      LicenseEntryWithLineBreaks(
+        const ['flutter_onnxruntime (YinTrace patch)'],
+        '''
+Vendored from flutter_onnxruntime 1.9.0 (https://github.com/masicai/flutter_onnxruntime).
+YinTrace adds an Apple CPU arena option using ONNX Runtime's MIT-licensed internal session header.
+
+${_mit('Copyright (c) MASIC AI')}''',
+      ),
+      LicenseEntryWithLineBreaks(
+        const ['ONNX Runtime'],
+        '''
 https://github.com/microsoft/onnxruntime
 
 ONNX Runtime bundles further open-source components; their notices are in ThirdPartyNotices.txt of the ONNX Runtime repository.
 
-${_mit('Copyright (c) Microsoft Corporation')}'''),
-        const LicenseEntryWithLineBreaks(['miniaudio'], '''
+${_mit('Copyright (c) Microsoft Corporation')}''',
+      ),
+      const LicenseEntryWithLineBreaks(
+        ['miniaudio'],
+        '''
 https://github.com/mackron/miniaudio - used under the MIT No Attribution license.
 
 Copyright 2026 David Reid
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.'''),
-        LicenseEntryWithLineBreaks(const ['pypinyin', 'pinyin-data'], '''
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.''',
+      ),
+      LicenseEntryWithLineBreaks(
+        const ['pypinyin', 'pinyin-data'],
+        '''
 The table of syllable onsets used to align lyrics is generated from the data of https://github.com/mozillazg/python-pinyin and https://github.com/mozillazg/pinyin-data.
 
-${_mit('Copyright (c) 2016 mozillazg, 闲耘 <hotoo.cn@gmail.com>')}'''),
-      ]));
+${_mit('Copyright (c) 2016 mozillazg, 闲耘 <hotoo.cn@gmail.com>')}''',
+      ),
+    ]),
+  );
 }
 
-String _mit(String copyright) => '''
+String _mit(String copyright) =>
+    '''
 MIT License
 
 $copyright

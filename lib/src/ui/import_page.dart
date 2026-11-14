@@ -98,7 +98,6 @@ class _ImportPageState extends State<ImportPage> {
       accompanimentPath: _vocalsOnly ? _accPath : null,
       mdxModelPath: _vocalsOnly ? null : mdx,
       vrModelPath: _vocalsOnly || _skipHarmony ? null : vr,
-      useCoreML: services.settings.useCoreML,
     );
     setState(() {
       _error = null;
@@ -175,8 +174,14 @@ class _ImportPageState extends State<ImportPage> {
             width: 26,
             height: 26,
             alignment: Alignment.center,
-            decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: p.ink, width: 1.3)),
-            child: Text('$n', style: context.type.labelMedium?.copyWith(color: p.ink, fontWeight: FontWeight.w700)),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: p.ink, width: 1.3),
+            ),
+            child: Text(
+              '$n',
+              style: context.type.labelMedium?.copyWith(color: p.ink, fontWeight: FontWeight.w700),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -184,10 +189,7 @@ class _ImportPageState extends State<ImportPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: context.type.titleLarge),
-                if (hint != null) ...[
-                  const SizedBox(height: 4),
-                  Text(hint, style: context.type.bodySmall),
-                ],
+                if (hint != null) ...[const SizedBox(height: 4), Text(hint, style: context.type.bodySmall)],
               ],
             ),
           ),
@@ -196,19 +198,29 @@ class _ImportPageState extends State<ImportPage> {
     );
   }
 
-  Widget _picker(BuildContext context, {required String? picked, required String empty, required VoidCallback onTap}) {
+  Widget _picker(
+    BuildContext context, {
+    required String? picked,
+    required String empty,
+    required VoidCallback onTap,
+  }) {
     final p = context.yt;
     return OutlinedButton(
       onPressed: onTap,
       child: Row(
         children: [
-          Icon(picked == null ? Icons.add_rounded : Icons.music_note_rounded, color: picked == null ? p.inkSoft : p.ink),
+          Icon(
+            picked == null ? Icons.add_rounded : Icons.music_note_rounded,
+            color: picked == null ? p.inkSoft : p.ink,
+          ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(picked ?? empty,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: context.type.bodyLarge?.copyWith(color: picked == null ? p.inkSoft : p.ink)),
+            child: Text(
+              picked ?? empty,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: context.type.bodyLarge?.copyWith(color: picked == null ? p.inkSoft : p.ink),
+            ),
           ),
           if (picked != null) Text('更换', style: context.type.labelMedium),
         ],
@@ -243,8 +255,12 @@ class _ImportPageState extends State<ImportPage> {
           subtitle: const Text('跳过人声分离，直接测音高'),
         ),
         if (_vocalsOnly)
-          _picker(context,
-              picked: _accName, empty: '伴奏（可选），练习时播放', onTap: () => _pickAudio(accompaniment: true)),
+          _picker(
+            context,
+            picked: _accName,
+            empty: '伴奏（可选），练习时播放',
+            onTap: () => _pickAudio(accompaniment: true),
+          ),
         if (!_vocalsOnly)
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
@@ -254,9 +270,15 @@ class _ImportPageState extends State<ImportPage> {
             subtitle: const Text('歌里没有和声时可以打开，处理更快'),
           ),
         _step(context, 2, '歌曲信息'),
-        TextField(controller: _title, decoration: const InputDecoration(hintText: '歌名')),
+        TextField(
+          controller: _title,
+          decoration: const InputDecoration(hintText: '歌名'),
+        ),
         const SizedBox(height: 10),
-        TextField(controller: _artist, decoration: const InputDecoration(hintText: '歌手（可选）')),
+        TextField(
+          controller: _artist,
+          decoration: const InputDecoration(hintText: '歌手（可选）'),
+        ),
         _step(context, 3, '带时间的歌词', hint: '每行写成 [分:秒.百分秒]歌词，时间是这句开始唱的时刻。空格表示停顿。'),
         TextField(
           controller: _lyrics,
@@ -270,15 +292,18 @@ class _ImportPageState extends State<ImportPage> {
         if (_lyrics.text.trim().isNotEmpty)
           Row(
             children: [
-              Icon(parsed.lines.isEmpty ? Icons.error_outline_rounded : Icons.check_rounded,
-                  size: 18, color: parsed.lines.isEmpty ? p.cinnabar : p.malachite),
+              Icon(
+                parsed.lines.isEmpty ? Icons.error_outline_rounded : Icons.check_rounded,
+                size: 18,
+                color: parsed.lines.isEmpty ? p.cinnabar : p.malachite,
+              ),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   parsed.lines.isEmpty
                       ? '没有找到带时间的歌词'
                       : '${parsed.lines.length} 句，$chars 个字'
-                          '${parsed.errors.isEmpty ? '' : '。有 ${parsed.errors.length} 行认不出：${parsed.errors.first}'}',
+                            '${parsed.errors.isEmpty ? '' : '。有 ${parsed.errors.length} 行认不出：${parsed.errors.first}'}',
                   style: context.type.bodyMedium?.copyWith(color: parsed.lines.isEmpty ? p.cinnabar : p.ink),
                 ),
               ),
@@ -292,25 +317,22 @@ class _ImportPageState extends State<ImportPage> {
     final pr = _progress!;
     final p = context.yt;
     final elapsed = _stopwatch.elapsed.inSeconds;
-    String eta = '';
-    if (pr.overall > 0.03 && elapsed > 5) {
-      final remain = (elapsed / pr.overall * (1 - pr.overall)).round();
-      eta = '大约还要 ${remain ~/ 60} 分 ${remain % 60} 秒';
-    }
-    final stages = ImportStage.values.where((s) => _vocalsOnly
-        ? !(s == ImportStage.separatingVocals || s == ImportStage.removingHarmony)
-        : true);
+    final stages = ImportStage.values.where(
+      (s) => _vocalsOnly ? !(s == ImportStage.separatingVocals || s == ImportStage.removingHarmony) : true,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(28, 8, 28, 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${(pr.overall * 100).floor()}%',
-              style: context.type.displayLarge?.copyWith(fontFeatures: tabular)),
+          Text(
+            '${(pr.overall * 100).floor()}%',
+            style: context.type.displayLarge?.copyWith(fontFeatures: tabular),
+          ),
           const SizedBox(height: 8),
           LinearProgressIndicator(value: pr.overall, minHeight: 4, borderRadius: BorderRadius.circular(2)),
           const SizedBox(height: 10),
-          Text(eta.isEmpty ? '已用 $elapsed 秒' : eta, style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
+          Text('已用 $elapsed 秒', style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
           const SizedBox(height: 28),
           for (final s in stages)
             Padding(
@@ -322,23 +344,29 @@ class _ImportPageState extends State<ImportPage> {
                     child: s.index < pr.stage.index
                         ? Icon(Icons.check_rounded, size: 18, color: p.malachite)
                         : s == pr.stage
-                            ? SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2, value: pr.stageFraction > 0 ? pr.stageFraction : null))
-                            : Icon(Icons.circle, size: 6, color: p.staffStrong),
+                        ? SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              value: pr.stageFraction > 0 ? pr.stageFraction : null,
+                            ),
+                          )
+                        : Icon(Icons.circle, size: 6, color: p.staffStrong),
                   ),
                   const SizedBox(width: 10),
-                  Text(s.label,
-                      style: context.type.bodyLarge?.copyWith(
-                          color: s.index <= pr.stage.index ? p.ink : p.inkFaint,
-                          fontWeight: s == pr.stage ? FontWeight.w600 : FontWeight.w400)),
+                  Text(
+                    s.label,
+                    style: context.type.bodyLarge?.copyWith(
+                      color: s.index <= pr.stage.index ? p.ink : p.inkFaint,
+                      fontWeight: s == pr.stage ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
                 ],
               ),
             ),
           const Spacer(),
-          Text('人声分离在手机上完成，可能需要几分钟。请让 YinTrace 保持在前台，屏幕会保持常亮。',
-              style: context.type.bodySmall),
+          Text('处理时间取决于歌曲长度和设备性能。请让 YinTrace 保持在前台，屏幕会保持常亮。', style: context.type.bodySmall),
           const SizedBox(height: 16),
           OutlinedButton(
             onPressed: _cancel,

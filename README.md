@@ -37,11 +37,14 @@ Windows / macOS / Android 保留了可移植性。
 
 ## 快速开始（iOS）
 
-需要：一台 Mac，Xcode 16 或更新版本，Flutter 3.47（stable），CocoaPods，一部 iOS 16+ 的 iPhone。
+需要：一台 Mac，Xcode 16 或更新版本，Flutter 3.47.9（stable），CocoaPods，一部 iOS 16+ 的 iPhone。
 
 ```bash
 git clone https://github.com/zhikkz/YinTrace.git
 cd YinTrace
+export BOT=true CI=true FLUTTER_SUPPRESS_ANALYTICS=true ORT_DISABLE_TELEMETRY=1
+flutter config --no-analytics
+dart --disable-analytics
 flutter pub get
 cd ios && pod install && cd ..
 open ios/Runner.xcworkspace      # 在 Signing & Capabilities 里选择你的开发者团队
@@ -65,9 +68,11 @@ App 会提示下载（一共 194 MB，只下载一次，支持断点续传），
 下载地址是 UVR 官方模型库（`github.com/TRvlvr/model_repo` 的 release）。权重文件不在这个仓库里，
 也不打包进 App。
 
+- MDX 官方文件在安装时用 6 字节的配方将输入/输出时间轴改为动态，权重不变。
+  默认 segment size 为 128、重叠 0.5；较短上下文会改变分离结果。
 - `6_HP-Karaoke-UVR.pth` 是 PyTorch 权重，手机上的 ONNX Runtime 不能直接读。App 里带了这个网络的
-  结构（约 130 KB）和一份“拷贝配方”，下载完成后按配方从 `.pth` 里把每个权重张量的字节拷出来，
-  拼成 ONNX 模型——不需要 PyTorch，结果和在电脑上用 PyTorch 导出的逐字节相同
+  结构（约 136 KB）和一份“拷贝配方”，下载完成后按配方从 `.pth` 里把每个权重张量的字节拷出来，
+  拼成动态时间轴 ONNX 模型——不需要 PyTorch，结果和在电脑上用 PyTorch 导出的逐字节相同
   （见 `assets/models/README.md` 和 `tools/build_karaoke_graph.py`）。
 - 网络连不上 GitHub 时，可以用别的办法把这两个文件弄到手机上，然后在下载窗口里点
   “已经有这两个文件？从‘文件’里选”。App 按内容（SHA-256）识别，只接受这两个原版文件。
@@ -80,7 +85,7 @@ App 会提示下载（一共 194 MB，只下载一次，支持断点续传），
 1. **导入歌曲**：曲库页点“导入歌曲”，选择音频（mp3 / m4a / wav / flac / aiff …），
    填写歌名，粘贴带时间的歌词，点“分离人声，生成音高图”。第一次会先提示下载分离模型。
    - 处理在后台线程进行，进度条会显示当前阶段（读取 → 分离人声 → 去和声 → 测音高 → 逐字对齐 → 保存）
-     和剩余时间。一首 4 分钟的歌在新款 iPhone 上大约需要几分钟，请保持 App 在前台。
+     和实际已用时间。耗时取决于设备、曲长和分段参数，尚无 iPhone 实测；请保持 App 在前台。
    - 已经是纯人声的文件可以跳过分离，并可另外选择一个伴奏文件用于练习。
 2. **查看音高图**：歌曲页按句列出逐字音高图——每个字是一段（或几段，转音时）横线，
    字写在线条上方，细线是原唱的真实音高曲线。歌词写错了可以在菜单里“修改歌词 / 重新对齐”，
@@ -88,11 +93,12 @@ App 会提示下载（一共 194 MB，只下载一次，支持断点续传），
 3. **练习**：点“整首练习”或点某一句进入单句循环。
    - 播放的是去掉主唱后的伴奏（保留和声），可以在 ⚙ 里调伴奏和原唱导唱的音量。
    - 中间的音高图随音乐滚动，竖线是当前位置；你的声音实时画成轨迹：
-     **绿色**=准（默认 ±50 音分），**黄色**=接近，**红色**=偏差大。唱过的字会按得分变色。
+     **石绿**=准（默认 ±50 音分），**石青**=偏低，**朱砂**=偏高，接近时混入藤黄。唱过的字会按得分变色。
    - 顶部显示目标音、你的音和偏差（高/低多少音分）。
    - 点右上角的评分按钮或唱完整首，会看到总分、每句得分，以及“需要加强的字”
      （偏高 / 偏低 / 没唱出来 / 不稳 / 抢拍 / 进晚了）。点任意一句就进入该句的循环练习。
-   - 每次练习都会保存到这首歌的练习记录里。
+   - 查看评分或唱完后保存练习记录。切后台、锁屏、来电或切换耳机时暂停播放和采集，
+     返回后点播放继续；自由练习返回后点“继续练习”。
 4. **自由练习**：曲库右上角的波形按钮，是一个实时音高监视器，
    显示音名、频率、简谱唱名、音分偏差和滚动的音高轨迹。
 
@@ -120,10 +126,10 @@ App 会提示下载（一共 194 MB，只下载一次，支持断点续传），
 ```
 音频文件 ──► 解码 (Core Audio / miniaudio) ──► 44.1 kHz 立体声
    │
-   ├─► MDX-Net Voc_FT：STFT(7680/1024) → [1,4,3072,256] → ONNX → iSTFT，
+   ├─► MDX-Net Voc_FT：STFT(7680/1024) → [1,4,3072,128] → ONNX → iSTFT，
    │   分块 + Hann 重叠相加（UVR demix 的移植）                  ──► 人声
    │
-   ├─► VR 6_HP-Karaoke：多频带 STFT + 重采样拼接 → 幅度归一化 → 512 帧窗口 →
+   ├─► VR 6_HP-Karaoke：多频带 STFT + 重采样拼接 → 幅度归一化 → 320 帧窗口 →
    │   ONNX 掩码 → aggressiveness → (1-mask)·X → 分频带 iSTFT 合成  ──► 主唱
    │                                                            伴奏 = 原曲 − 主唱
    ├─► YIN（22.05 kHz，1024 点窗，5.8 ms 步长）+ 电平门限、八度纠错、中值滤波 ──► 音高曲线
@@ -145,7 +151,11 @@ App 会提示下载（一共 194 MB，只下载一次，支持断点续传），
 - **分离结果与 UVR 一致**：`tools/reference/make_separation_fixtures.py` 直接运行 UVR 自己的
   `spec_utils.py` 和 MDX `demix` 代码，测试用相同的确定性“假模型”比对 Dart 实现，
   两种 karaoke 频带配置、两个 stem 的误差都在 2e-4 以内；长音频分段处理与整段处理的 SNR > 40 dB。
-- **手机内存**：VR 按 30 秒分段（带 3 秒上下文和交叉淡化）处理，幅度归一化使用全曲最大值（与 UVR 相同）。
+  真实两个模型也按当前分段参数对照：14 秒合成混音上，MDX 信号/差值比 117.7 dB，
+  VR 主唱 126.5 dB、被移除部分 110.2 dB，详见[验证记录](docs/inference-memory.md)。
+- **内存**：MDX 单块滚动累加，伴奏复用混音缓冲。VR 按 30 秒分段（带 3 秒上下文和交叉淡化），
+  幅度归一化使用全曲最大值。两个模型顺序加载、关闭，CPU arena 关闭；Apple 插件为此带有本地补丁。
+  桌面独立推理峰值 MDX 约 488 MB、VR 约 816 MB；整进程在 iPhone 上的 1.5 GB 目标仍需实测。
 - **STFT / 重采样**：与 `torch.stft`、`librosa.stft`、`scipy.signal.resample_poly` 的数值一致（有测试）。
 - **YIN**：差分函数用 FFT 互相关计算（O(N log N)），带抛物线插值。
 - **同步**：伴奏播放和麦克风采集在同一个音频回调里完成，所以每个采集样本都能精确对应到歌曲位置，
@@ -182,9 +192,10 @@ lib/
     import/       导入流水线（后台 isolate）
     library/      本地曲库（每首歌一个目录）与练习记录
     practice/     实时音高跟踪、评分、练习会话
-    models/       两个分离模型的下载、校验、.pth → ONNX 组装
+    models/       两个分离模型的下载、校验、动态时间轴配方与 .pth → ONNX 组装
     app/          设置、全局服务、第三方许可登记
     ui/           曲库 / 导入 / 歌曲 / 练习 / 评分 / 自由练习 / 设置 页面，音高图绘制
+packages/flutter_onnxruntime/ 固定 1.9.0 的本地副本，补齐 Apple useArena（保留 MIT 许可）
 packages/yintrace_audio/   原生音频核心（C + miniaudio，dart:ffi）
   src/yt_audio.c            解码、全双工练习引擎、采集环形缓冲（带歌曲帧号）
   src/yt_platform_apple.inc AVAudioSession、麦克风权限、ExtAudioFile 解码、AAC 编码
@@ -205,6 +216,11 @@ test/                       单元测试、对照测试、端到端 UI 测试
 ## 测试
 
 ```bash
+# 避免 Flutter 云元数据检测、Flutter/Dart 和 ORT 遥测；后续命令保持这些变量
+export BOT=true CI=true FLUTTER_SUPPRESS_ANALYTICS=true ORT_DISABLE_TELEMETRY=1
+flutter config --no-analytics
+dart --disable-analytics
+
 # 原生音频核心（C）：引擎混音/定位/循环/采集打点、null 设备、wav/mp3/flac 解码
 packages/yintrace_audio/tool/run_native_tests.sh
 
@@ -223,8 +239,23 @@ MODELS_DIR=$PWD/build/uvr-models flutter test test/models_test.dart
 LIVE_MODEL_DOWNLOAD=1 flutter test test/models_test.dart
 ```
 
-`.github/workflows/ci.yml` 在 Linux 上跑以上测试，并在 macOS 上做 **iOS 无签名构建** 和
-macOS 构建（同时在 macOS 上测试 Core Audio 的解码与 AAC 编码路径）。
+`.github/workflows/ci.yml` 在 Linux 上跑以上测试，在 macOS 上做 **iOS 无签名归档**、
+iPhone 模拟器真实插件冒烟（两个真实模型、AAC 往返、AGPL 全文和进程峰值），
+并测试 Core Audio 解码与 AAC 编码；不再构建未适配的 macOS App。
+模拟器不替代真机，见 [iOS 验收清单](docs/ios-validation.md)。
+
+可选的整曲端到端测试（音频和歌词仅保存在本地，不要提交）：
+
+```bash
+MODELS_DIR=$PWD/build/uvr-models REAL_IMPORT_AUDIO=/path/to/mix.wav \
+REAL_IMPORT_LYRICS=/path/to/lyrics.lrc PYTHON=python \
+YINTRACE_AUDIO_LIB=$PWD/build/host/libyintrace_audio.so \
+flutter test test/real_import_test.dart
+```
+
+它运行完整 ImportPipeline，检查保存音频及逐字音高图的时序、音高和覆盖。
+提供 `REAL_IMPORT_REFERENCE=/path/to/uvr_lead.wav` 时还与 UVR 主唱生成的图比较；
+`REAL_IMPORT_OUT` 可保留本地曲库输出。CI 使用原创示例歌词和合成音频验证此路径。
 
 ## 移植到其他平台
 
@@ -241,14 +272,17 @@ macOS 构建（同时在 macOS 上测试 Core Audio 的解码与 AAC 编码路�
 ## 已知限制
 
 - **逐字对齐是启发式的**（拼音声母先验 + 清辅音间隙 / 音量凹陷 / 音高变化 + 全曲动态规划），
-  没有用语音识别模型。用一首真实歌曲的纯人声（4:19，36 句，380 个字）检查过：每句都对到了正确的
+  没有用语音识别模型。用一首真实歌曲的纯人声（259.6 秒，36 句，315 个歌词单位）检查过：每句都对到了正确的
   起点，没有测不到音高的字；但两个字唱在同一个长音里、中间没有任何辅音痕迹时，
   边界仍可能差一个字。在这种地方加一个空格（表示停顿）或修正时间戳可以改善。
-- 人声分离在手机 CPU 上需要几分钟；可以在设置里试试 Core ML 加速（不兼容时自动回退 CPU）。
+- 暂无 iPhone 速度数据。本次桌面 14 秒合成混音 MDX 约 17.2 秒、VR 约 24.5 秒，
+  短片 padding 较多，不能据此保证整曲或手机耗时。较小 VR 窗口降低内存，但推理次数增多。
+- 发布路径只用 CPU；Core ML 开关已移除，避免暴露未经设备验证的加速选项。
+- 解码和 VR 输入/输出仍随曲长占内存，尚未做到整条流水线流式处理。
 - 分离和去和声的质量取决于 UVR 模型本身；有残留伴奏的段落会被电平门限过滤，可能少测到个别字。
 - 练习时外放会让麦克风录到伴奏，请尽量戴耳机。
 - 这个仓库里的 iOS 部分在 Linux 环境中开发，C/Objective-C 代码无法在本地编译验证，
-  请以 CI 的 iOS 构建结果和实机运行为准。
+  CI 新增了模拟器冒烟，但麦克风授权、音频中断、耳机路由、延迟和长歌曲峰值仍须真机验收。
 
 ## 许可
 

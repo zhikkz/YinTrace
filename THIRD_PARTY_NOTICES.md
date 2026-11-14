@@ -28,7 +28,8 @@ Trained and published by the developers of Ultimate Vocal Remover,
 - `assets/models/karaoke_graph.bin` / `.json` hold the *graph* of the
   6_HP-Karaoke-UVR network (its layer structure, exported from the network
   definition below) and the byte offsets of the weight tensors inside the
-  official `.pth`. They contain no weight data.
+  official `.pth`. They contain no weight data. `mdx_graph.bin` / `.json`
+  contain only six literal bytes and a copy recipe for the dynamic MDX time axis.
 
 ## Ultimate Vocal Remover GUI (MIT License)
 
@@ -233,6 +234,38 @@ Linked into the app, each under the license published with the package:
 
 ## Development-only tools
 
-Not part of the app: PyTorch, ONNX, NumPy, SciPy, librosa and pYIN (used by
+Not part of the app: CairoSVG (LGPL-3.0-or-later, icon rendering only),
+PyTorch, ONNX, NumPy, SciPy, librosa and pYIN (used by
 `tools/` to export the network graph and to produce reference values for the
 tests).
+
+## flutter_onnxruntime local patch (MIT License)
+
+`packages/flutter_onnxruntime/` preserves version 1.9.0 from pub.dev,
+https://github.com/masicai/flutter_onnxruntime. YinTrace adds an Apple
+`SessionOptionsHelper` to honor `useArena: false`. The added internal header
+`ort_session_internal.h` comes from microsoft/onnxruntime v1.28.0 (MIT,
+Copyright (c) Microsoft Corporation). Both original LICENSE and copyright
+headers are preserved. YinTrace additions are AGPL-3.0-only.
+
+    MIT License
+
+    Copyright (c) 2025 MASIC AI
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
