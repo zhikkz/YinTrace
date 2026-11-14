@@ -29,15 +29,18 @@ import 'package:yintrace/src/separation/tensor_model.dart';
 import 'package:yintrace/src/separation/vr_separator.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
-const _quick = bool.fromEnvironment('BENCH_QUICK');
+// --dart-define=BENCH_QUICK=1 (or true).
+const _quickDefine = String.fromEnvironment('BENCH_QUICK');
+const _quick = _quickDefine == '1' || _quickDefine == 'true';
 const _songSeconds = int.fromEnvironment('BENCH_SONG_SECONDS', defaultValue: _quick ? 12 : 60);
 
 /// Core ML set-ups worth comparing (ONNX Runtime's Core ML provider options).
 const _coreML = {
-  'Core ML MLProgram 全部单元': {'ModelFormat': 'MLProgram', 'MLComputeUnits': 'All'},
+  // ONNX Runtime spells "all" in capitals (its header comment says "All").
+  'Core ML MLProgram 全部单元': {'ModelFormat': 'MLProgram', 'MLComputeUnits': 'ALL'},
   'Core ML MLProgram CPU+神经网络引擎': {'ModelFormat': 'MLProgram', 'MLComputeUnits': 'CPUAndNeuralEngine'},
   'Core ML MLProgram CPU+GPU': {'ModelFormat': 'MLProgram', 'MLComputeUnits': 'CPUAndGPU'},
-  'Core ML NeuralNetwork 全部单元': {'ModelFormat': 'NeuralNetwork', 'MLComputeUnits': 'All'},
+  'Core ML NeuralNetwork 全部单元': {'ModelFormat': 'NeuralNetwork', 'MLComputeUnits': 'ALL'},
 };
 
 void log(String line) {
