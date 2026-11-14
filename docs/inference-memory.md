@@ -146,6 +146,12 @@ ONNX Runtime 1.28.0，CPU provider，4 个 intra-op 线程，CPU arena 关闭：
 
 在 ARM 上 512 窗口每次只比 320 慢约 9%（x86 上约 1.5 倍），却覆盖 4 倍的帧，
 所以去和声阶段快约 3.7 倍；进程峰值多约 150 MB。模拟器不报告剩余内存，App 按 512 处理。
+
+[CI 运行 43583539156](https://github.com/zhikkz/YinTrace/actions/runs/43583539156) 在模拟器上
+跑了一遍真机测速（`tools/device_benchmark.sh` 的流程，3 核虚拟机）：Core ML 的选项能传到 ONNX Runtime，
+MLProgram 格式下 MDX 每次 2.0 秒，比 CPU 4 线程的 4.8 秒快约 2.4 倍，与 CPU 输出的差值比 100.8 dB；
+VR 512 用 Core ML 反而更慢（7.8 秒对 4.7 秒）。3 核虚拟机上 2~3 个线程比 4 个快。
+模拟器没有神经网络引擎，这些只说明代码路径可用，真机结果以 iPhone 上的测速为准。
 这是调试模式、短窗口推理的模拟器结果，不是整曲 iPhone release 的 Physical Footprint。真实麦克风授权、耳机/电话中断、延迟、Files 和长曲连续导入
 仍需按设备清单验收。
 

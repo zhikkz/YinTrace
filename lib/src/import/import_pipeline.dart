@@ -209,11 +209,13 @@ class ImportPipeline {
       clock = _ImportClock({
         ImportStage.decoding: 0.003 * duration,
         if (separate) ImportStage.separatingVocals: mdx.chunkCount(frames).toDouble(),
-        // One VR run against one MDX run on the same device: about 1.6 at
-        // 512 frames, 1 at 320 (desktop and simulator measurements).
+        // One VR run against one MDX run on the same device: about 1.1 at
+        // 512 frames and 0.8 at 320 (x86 desktop: 1.10 / 0.72 / 0.95 s,
+        // ARM simulator: 4.66 / 3.73 / 4.81 s). It weighs the progress bar,
+        // and the remaining-time estimate until VR's own speed is measured.
         if (harmony)
           ImportStage.removingHarmony:
-              (vr.inferenceCount(frames) + 0.3 * vr.segmentCount(frames)) * vrCfg.windowSize / 320,
+              (vr.inferenceCount(frames) + 0.3 * vr.segmentCount(frames)) * (vrCfg.windowSize >= 512 ? 1.1 : 0.8),
         ImportStage.analyzingPitch: 0.02 * duration,
         ImportStage.aligning: 0.005 * duration,
         ImportStage.saving: 0.015 * duration,
