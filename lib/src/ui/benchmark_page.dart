@@ -36,6 +36,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
   int _savedRevision = -1;
   Future<void> _saving = Future.value();
   bool _stopping = false;
+  bool _starting = false;
   final _clock = Stopwatch();
   Timer? _ticker;
 
@@ -102,6 +103,16 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
   }
 
   Future<void> _start({bool resume = false}) async {
+    if (_starting || (_bench?.running ?? false)) return;
+    _starting = true;
+    try {
+      await _run(resume: resume);
+    } finally {
+      _starting = false;
+    }
+  }
+
+  Future<void> _run({required bool resume}) async {
     final services = AppScope.of(context);
     if (!await ensureModels(context)) return;
     if (!mounted) return;
