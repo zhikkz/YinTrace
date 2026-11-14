@@ -35,6 +35,9 @@ CI 归档证明可编译、所有 FFI 符号可见；模拟器冒烟测试覆盖
 - [ ] 先测试一段短音频，再测试 5 分钟整曲；用 Instruments 的 Allocations / VM Tracker
       记录整个进程的 Physical Footprint（包含 Flutter、ORT、解码和音频缓冲），
       目标明显低于 1.5 GB。连续导入两次，检查 session 关闭后内存是否释放。
+- [ ] 运行 `tools/device_benchmark.sh <设备 ID> 240`（见 [真机测速](device-benchmark.md)），
+      把生成的 `build/device-benchmark.md` 发给开发者：其中有完整导入的各阶段耗时、内存峰值、
+      “预计还需”的误差，以及 CPU 与 Core ML 的对比。
 - [ ] 分别记录 MDX / VR / 全流程耗时。README 的桌面结果不能用作 iPhone 承诺。
       导入页的“预计还需”在开始一分钟后应与实际剩余时间大致相符；记下偏差。
 - [ ] 导入完成后看 `songs/<id>/song.json` 的 `modelInfo.vr`：写着 `(window 320)` 表示系统报告的

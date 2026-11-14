@@ -5,6 +5,11 @@
 #import "SessionOptionsHelper.h"
 #endif
 #import "ort_session_internal.h"
+#if __has_include(<onnxruntime_objc/ort_coreml_execution_provider.h>)
+#import <onnxruntime_objc/ort_coreml_execution_provider.h>
+#else
+#import "ort_coreml_execution_provider.h"
+#endif
 
 @implementation SessionOptionsHelper
 + (BOOL)disableCpuArena:(ORTSessionOptions *)options error:(NSError **)error {
@@ -18,5 +23,11 @@
     }
     return NO;
   }
+}
+
++ (BOOL)appendCoreML:(ORTSessionOptions *)options
+     providerOptions:(NSDictionary<NSString *, NSString *> *)providerOptions
+               error:(NSError **)error {
+  return [options appendCoreMLExecutionProviderWithOptionsV2:providerOptions error:error];
 }
 @end

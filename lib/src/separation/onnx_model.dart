@@ -16,17 +16,28 @@ class OnnxTensorModel implements TensorModel {
   /// Loads a model on the CPU execution provider, without ONNX Runtime's
   /// memory arena (it would keep the peak allocation for the session's
   /// lifetime).
+  ///
+  /// [coreML] puts Apple's Core ML execution provider in front of the CPU,
+  /// with ONNX Runtime's Core ML options (e.g. `{'ModelFormat':
+  /// 'MLProgram', 'MLComputeUnits': 'CPUAndNeuralEngine'}`). The app only
+  /// uses the CPU; the device benchmark compares the two.
   static Future<OnnxTensorModel> load(
     String path, {
     String? inputName,
     String? outputName,
     int? threads,
+    Map<String, String>? coreML,
   }) async {
     final ort = OnnxRuntime();
-    final providers = <OrtProvider>[OrtProvider.CPU];
+    final providers = <OrtProvider>[if (coreML != null) OrtProvider.CORE_ML, OrtProvider.CPU];
     final session = await ort.createSession(
       path,
-      options: OrtSessionOptions(providers: providers, intraOpNumThreads: threads ?? 4, useArena: false),
+      options: OrtSessionOptions(
+        providers: providers,
+        intraOpNumThreads: threads ?? 4,
+        useArena: false,
+        coreMLOptions: coreML,
+      ),
     );
     final inName = inputName != null && session.inputNames.contains(inputName)
         ? inputName
