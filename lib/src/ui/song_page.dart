@@ -6,6 +6,7 @@ import '../app/services.dart';
 import '../import/import_pipeline.dart';
 import '../library/song.dart';
 import 'import_page.dart' show lyricsHint;
+import 'lyrics_style.dart';
 import 'pitch_graph.dart';
 import 'practice_page.dart';
 import 'score_trend.dart';
@@ -78,7 +79,11 @@ class _SongPageState extends State<SongPage> {
           children: [
             Text('修改歌词', style: ctx.type.headlineSmall),
             const SizedBox(height: 6),
-            Text('改完会用已经测好的音高重新对齐每个字，不需要重新分离人声。', style: ctx.type.bodySmall),
+            Text(
+              '改完会用已经测好的音高重新对齐每个${_ref!.language.unit}，不需要重新分离人声。'
+              '${_ref!.corrected ? '没改动的句子里，你校正过的音高会保留。' : ''}',
+              style: ctx.type.bodySmall,
+            ),
             const SizedBox(height: 14),
             TextField(
               controller: controller,
@@ -227,7 +232,7 @@ class _SongPageState extends State<SongPage> {
                                   style: context.type.labelSmall?.copyWith(fontFeatures: tabular)),
                             ),
                           ),
-                          Expanded(child: Text(line.text, style: context.type.titleMedium)),
+                          Expanded(child: Text(line.text, style: lyricsStyle(context.type.titleMedium, ref.language))),
                           if (trend.length >= 2)
                             Padding(
                               padding: const EdgeInsets.only(right: 10, top: 2),
@@ -239,7 +244,8 @@ class _SongPageState extends State<SongPage> {
                       if (missing > 0)
                         Padding(
                           padding: const EdgeInsets.only(left: 44, top: 2),
-                          child: Text('$missing 个字没测到原唱音高', style: context.type.labelSmall?.copyWith(color: p.gamboge)),
+                          child: Text('$missing 个${ref.language.unit}没测到原唱音高',
+                              style: context.type.labelSmall?.copyWith(color: p.gamboge)),
                         ),
                       const SizedBox(height: 6),
                       LinePitchGraph(reference: ref, line: line, contour: _track, height: 84),

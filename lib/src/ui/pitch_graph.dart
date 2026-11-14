@@ -2,15 +2,22 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../analysis/lyrics_language.dart';
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../dsp/pitch.dart';
 import '../practice/scoring.dart';
+import 'lyrics_style.dart';
 import 'theme.dart';
 
 /// Visual parameters of the pitch graph, derived from the theme.
 class PitchGraphStyle {
-  const PitchGraphStyle({required this.palette, required this.textStyle, this.tolerance = 50});
+  const PitchGraphStyle({
+    required this.palette,
+    required this.textStyle,
+    this.tolerance = 50,
+    this.language = LyricsLanguage.chinese,
+  });
 
   final YtPalette palette;
 
@@ -20,10 +27,17 @@ class PitchGraphStyle {
   /// "On pitch" half width in cents (colours the voice trace).
   final double tolerance;
 
-  factory PitchGraphStyle.of(BuildContext context, {double tolerance = 50}) => PitchGraphStyle(
+  /// Language of the lyrics drawn over the notes.
+  final LyricsLanguage language;
+
+  factory PitchGraphStyle.of(BuildContext context,
+          {double tolerance = 50, LyricsLanguage language = LyricsLanguage.chinese}) =>
+      PitchGraphStyle(
         palette: context.yt,
-        textStyle: DefaultTextStyle.of(context).style.merge(Theme.of(context).textTheme.bodyMedium),
+        textStyle: lyricsStyle(DefaultTextStyle.of(context).style.merge(Theme.of(context).textTheme.bodyMedium),
+            language)!,
         tolerance: tolerance,
+        language: language,
       );
 }
 
@@ -71,7 +85,7 @@ class PitchGraphPainter extends CustomPainter {
   static final _textCache = <String, TextPainter>{};
 
   TextPainter _text(String s, double size, Color color, {FontWeight weight = FontWeight.w500}) {
-    final key = '$s|$size|${color.toARGB32()}|${weight.value}|${style.textStyle.fontFamily}';
+    final key = '$s|$size|${color.toARGB32()}|${weight.value}|${style.textStyle.fontFamily}|${style.language.code}';
     return _textCache.putIfAbsent(key, () {
       if (_textCache.length > 800) _textCache.clear();
       return TextPainter(
@@ -166,7 +180,10 @@ class PitchGraphPainter extends CustomPainter {
           } else {
             color = past ? p.inkFaint : p.noteStrokeFuture;
           }
-          notePaint.color = color;
+          // Not scored: a faint, thin stroke.
+          notePaint
+            ..color = tok.skip ? p.inkFaint.withValues(alpha: 0.5) : color
+            ..strokeWidth = tok.skip ? stroke * 0.45 : stroke;
           for (final n in tok.notes) {
             final yy = y(n.midi + transpose);
             final x0 = x(n.start) + stroke / 2, x1 = math.max(x(n.end) - stroke / 2, x0 + 0.5);
@@ -182,7 +199,9 @@ class PitchGraphPainter extends CustomPainter {
             canvas.drawLine(Offset(x0, yy), Offset(x1, yy), notePaint);
           }
           final anchor = tok.notes.isNotEmpty ? tok.notes.first.midi + transpose : midiLo + 1.2;
-          final tp = _text(tok.text, glyphSize, past ? p.inkSoft : p.ink,
+          // Words are longer than characters: smaller, so neighbours fit.
+          final tp = _text(tok.text, tok.isWord ? glyphSize * 0.8 : glyphSize,
+              tok.skip ? p.inkFaint : (past ? p.inkSoft : p.ink),
               weight: active ? FontWeight.w700 : FontWeight.w500);
           final lx = x(tok.start);
           final above = Rect.fromLTWH(lx, y(anchor) - stroke / 2 - tp.height - 4, tp.width, tp.height);
@@ -332,13 +351,13 @@ class LinePitchGraph extends StatelessWidget {
       child: CustomPaint(
         size: Size.infinite,
         painter: PitchGraphPainter(
-          reference: SongReference(lines: [line], duration: reference.duration),
+          reference: SongReference(lines: [line], duration: reference.duration, language: reference.language),
           contour: contour,
           t0: start,
           t1: end,
           midiLo: a,
           midiHi: b + 2.5,
-          style: PitchGraphStyle.of(context),
+          style: PitchGraphStyle.of(context, language: reference.language),
           tokenScores: tokenScores,
           gutter: 0,
           showNoteLabels: false,

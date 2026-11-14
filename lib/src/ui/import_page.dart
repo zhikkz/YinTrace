@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../analysis/lrc.dart';
+import '../analysis/lyrics_language.dart';
 import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../import/import_job.dart';
@@ -259,6 +260,7 @@ class _ImportPageState extends State<ImportPage> {
   Widget _buildForm(BuildContext context, LrcParseResult parsed) {
     final p = context.yt;
     final chars = parsed.lines.fold<int>(0, (s, l) => s + l.tokens.length);
+    final language = detectLyricsLanguage(parsed.lines);
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
       children: [
@@ -307,7 +309,13 @@ class _ImportPageState extends State<ImportPage> {
           controller: _artist,
           decoration: const InputDecoration(hintText: '歌手（可选）'),
         ),
-        _step(context, 3, '带时间的歌词', hint: '每行写成 [分:秒.百分秒]歌词，时间是这句开始唱的时刻。空格表示停顿。'),
+        _step(
+          context,
+          3,
+          '带时间的歌词',
+          hint: '每行写成 [分:秒.百分秒]歌词，时间是这句开始唱的时刻。中文、英文、日文都可以；'
+              '中文的空格表示停顿。日文汉字后面可以用括号写读音，比如 心(こころ)，对得更准。',
+        ),
         TextField(
           controller: _lyrics,
           minLines: 9,
@@ -330,7 +338,7 @@ class _ImportPageState extends State<ImportPage> {
                 child: Text(
                   parsed.lines.isEmpty
                       ? '没有找到带时间的歌词'
-                      : '${parsed.lines.length} 句，$chars 个字'
+                      : '${parsed.lines.length} 句，$chars 个${language.unit}（${language.label}）'
                             '${parsed.errors.isEmpty ? '' : '。有 ${parsed.errors.length} 行认不出：${parsed.errors.first}'}',
                   style: context.type.bodyMedium?.copyWith(color: parsed.lines.isEmpty ? p.cinnabar : p.ink),
                 ),

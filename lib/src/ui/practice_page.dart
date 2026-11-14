@@ -9,6 +9,7 @@ import '../app/services.dart';
 import '../app/test_build.dart';
 import '../library/song.dart';
 import '../practice/practice_session.dart';
+import 'lyrics_style.dart';
 import 'pitch_graph.dart';
 import 'results_sheet.dart';
 import 'theme.dart';
@@ -356,7 +357,8 @@ class _Stage extends StatelessWidget {
         t1: t1,
         midiLo: a,
         midiHi: b + 1.5,
-        style: PitchGraphStyle.of(context, tolerance: session.settings.toleranceCents.toDouble()),
+        style: PitchGraphStyle.of(context,
+            tolerance: session.settings.toleranceCents.toDouble(), language: session.reference.language),
         user: session.displayPoints,
         playhead: ph,
         tokenScores: session.tokenScores(),
@@ -381,7 +383,8 @@ class _Lyrics extends StatelessWidget {
     final ph = session.position;
     final p = context.yt;
     final scores = session.tokenScores();
-    final base = context.type.headlineSmall!.copyWith(fontWeight: FontWeight.w500, height: 1.2);
+    final language = ref.language;
+    final base = lyricsStyle(context.type.headlineSmall!.copyWith(fontWeight: FontWeight.w500, height: 1.2), language)!;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
       child: Column(
@@ -390,9 +393,9 @@ class _Lyrics extends StatelessWidget {
           Text.rich(
             TextSpan(
               children: [
-                for (final t in line.tokens)
+                for (final (k, t) in line.tokens.indexed)
                   TextSpan(
-                    text: '${t.spaceBefore ? '　' : ''}${t.text}',
+                    text: '${tokenGap(k > 0 ? line.tokens[k - 1] : null, t)}${t.text}',
                     style: base.copyWith(
                       color: scores[t] != null ? p.score(scores[t]!) : (ph >= t.start ? p.ink : p.inkFaint),
                       fontWeight: ph >= t.start && ph < t.end ? FontWeight.w800 : FontWeight.w500,
@@ -402,7 +405,7 @@ class _Lyrics extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          Text(next?.text ?? ' ', style: context.type.bodyMedium?.copyWith(color: p.inkFaint)),
+          Text(next?.text ?? ' ', style: lyricsStyle(context.type.bodyMedium?.copyWith(color: p.inkFaint), language)),
         ],
       ),
     );

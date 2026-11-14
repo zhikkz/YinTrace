@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../dsp/pitch.dart';
 import 'lrc.dart';
+import 'lyrics_language.dart';
 import 'pinyin_initials.dart';
 import 'pitch_track.dart';
 import 'reference.dart';
@@ -44,24 +45,40 @@ class AlignOptions {
 /// ~12 ms grid. Each line's time stamp is a soft anchor for its first
 /// character (singers start early or late, and lines often run into each
 /// other), boundaries are attracted to syllable onsets whose kind is
-/// predicted from the character's Mandarin initial (voiceless consonant
-/// gap, voiced-consonant level dip, vowel pitch change), and each
-/// character's voiced duration is kept plausible. Finally the pitch inside
-/// every character is split into stable notes.
+/// predicted from how the unit starts (the Mandarin initial, the kana, or
+/// the English word's first letters: voiceless consonant gap,
+/// voiced-consonant level dip, vowel pitch change), and each unit's voiced
+/// duration is kept plausible for its syllables (morae in Japanese).
+/// Finally the pitch inside every unit is split into stable notes.
+///
+/// [language] defaults to the one detected from the lyrics.
 SongReference buildReference(PitchTrack track, List<LyricLine> lines,
-    {AlignOptions options = const AlignOptions()}) {
-  if (lines.isEmpty) return SongReference(lines: const [], duration: track.duration);
-  return _ChainAligner(track, options).run(lines);
+    {AlignOptions options = const AlignOptions(), LyricsLanguage? language}) {
+  final lang = language ?? detectLyricsLanguage(lines);
+  if (lines.isEmpty) return SongReference(lines: const [], duration: track.duration, language: lang);
+  return _ChainAligner(track, options, lang).run(lines);
 }
 
+/// One syllable placed by the dynamic programme. A token is one or more
+/// consecutive units (an English word: one per syllable).
 class _Tok {
-  _Tok(this.line, this.index, this.token, this.cls, this.first, this.last);
+  _Tok(this.line, this.index, this.token, this.cls, this.weight, this.first, this.last, {required this.lead});
   final int line;
+
+  /// Index of the token in its line.
   final int index;
   final LyricToken token;
   final OnsetClass cls;
+
+  /// Expected length in syllables (morae).
+  final double weight;
+
+  /// First / last unit of its line.
   final bool first;
   final bool last;
+
+  /// First unit of its token (where a pause or a word time applies).
+  final bool lead;
   int lo = 0; // grid range [lo, hi)
   int hi = 0;
   late Float64List dp;
@@ -69,7 +86,7 @@ class _Tok {
 }
 
 class _ChainAligner {
-  _ChainAligner(this.t, this.o)
+  _ChainAligner(this.t, this.o, this.language)
       : hop = t.hopSeconds,
         g = math.max(1, o.gridFrames) {
     final n = t.length;
@@ -121,6 +138,7 @@ class _ChainAligner {
 
   final PitchTrack t;
   final AlignOptions o;
+  final LyricsLanguage language;
   final double hop;
   final int g;
   late final Int32List _voicedPrefix;
@@ -220,14 +238,15 @@ class _ChainAligner {
         s += 0.6 * (jump >= 0.7 ? jump : 0);
     }
     if (!_voicedAt[c] && gap == 0) s -= 2; // starts must be on the voice
-    if (tok.token.spaceBefore) s = gap > 0 ? s * 1.5 + 1 : s - 1;
+    final pause = tok.lead && tok.token.pauseBefore;
+    if (pause) s = gap > 0 ? s * 1.5 + 1 : s - 1;
     if (!tok.first) {
       // Long silences rarely happen inside a line (a little longer at a
-      // space): a character after one most likely starts the next line.
-      final allowed = tok.token.spaceBefore ? 1.2 : 0.6;
+      // pause): a character after one most likely starts the next line.
+      final allowed = pause ? 1.2 : (tok.lead ? 0.6 : 0.4);
       if (gap > allowed) s -= math.min(8.0, (gap - allowed) * 10);
     }
-    final time = tok.token.time;
+    final time = tok.lead ? tok.token.time : null;
     if (time != null && (secOfCell(c) - time).abs() < 0.08) s += 10;
     return s;
   }
@@ -258,26 +277,34 @@ class _ChainAligner {
       final firstEnd = math.min(end, math.min(line.start + o.lateSlack, stop));
       final f0 = math.min(lo * g, t.length), f1 = frameOf(firstEnd);
       sung[k] = f1 > f0 && _voicedPrefix[f1] - _voicedPrefix[f0] >= (0.08 / hop).round();
-      // A line cannot plausibly last much longer than ~1 s per character.
       final n = line.tokens.length;
-      final cap = line.start + 1.5 + n * 1.0;
+      final syllables = [for (final tok in line.tokens) tokenSyllables(tok, language)];
+      final units = syllables.fold<double>(0, (a, s) => a + s.fold<double>(0, (b, x) => b + x.$2));
+      // A line cannot plausibly last much longer than ~1 s per syllable.
+      final cap = line.start + 1.5 + units * 1.0;
       final hi = math.max(lo + 1, cellOf(math.min(end, math.min(stop + o.lateSlack, cap))));
       final firstHi = math.max(lo + 1, math.min(hi, cellOf(line.start + o.lateSlack) + 1));
-      // Expected voiced seconds per character in this line.
+      // Expected voiced seconds per syllable in this line.
       final v0 = frameOf(math.max(0, line.start - 0.2)), v1 = frameOf(math.min(end, stop + 0.3));
       final voiced = (_voicedPrefix[v1] - _voicedPrefix[v0]) * hop;
-      lineAvg.add((voiced / n).clamp(0.12, 1.5).toDouble());
+      lineAvg.add((voiced / units).clamp(0.12, 1.5).toDouble());
       if (!sung[k]) continue;
       for (var i = 0; i < n; i++) {
-        final tok = _Tok(k, i, line.tokens[i], onsetClassOf(line.tokens[i].text), i == 0, i == n - 1)
-          ..lo = lo
-          ..hi = i == 0 ? firstHi : hi;
-        toks.add(tok);
+        final syl = syllables[i];
+        for (var j = 0; j < syl.length; j++) {
+          final tok = _Tok(k, i, line.tokens[i], syl[j].$1, syl[j].$2, i == 0 && j == 0,
+              i == n - 1 && j == syl.length - 1, lead: j == 0)
+            ..lo = lo
+            ..hi = i == 0 && j == 0 ? firstHi : hi;
+          toks.add(tok);
+        }
       }
     }
     if (toks.isEmpty) {
       return SongReference(
-          lines: [for (var k = 0; k < lines.length; k++) _unsungLine(k, lines)], duration: t.duration);
+          lines: [for (var k = 0; k < lines.length; k++) _unsungLine(k, lines)],
+          duration: t.duration,
+          language: language);
     }
     // Keep the ranges feasible for a strictly increasing placement.
     for (var m = 1; m < toks.length; m++) {
@@ -288,37 +315,49 @@ class _ChainAligner {
       toks[m].hi = math.max(toks[m].lo + 1, math.min(toks[m].hi, cap));
     }
 
-    // Duration penalty tables per line, indexed by voiced frames / raw frames.
-    final maxRaw = ((o.maxTokenSeconds * 1.25) / hop / g).ceil();
-    final penV = <Float64List>[];
-    for (var k = 0; k < lines.length; k++) {
-      final avg = lineAvg[k];
-      final size = maxRaw * g + 1;
-      final tab = Float64List(size);
-      for (var v = 0; v < size; v++) {
-        final dv = v * hop;
-        var p = 0.0;
-        if (dv < 0.04) {
-          p += 25;
-        } else if (dv < 0.08) {
-          p += 4;
-        }
-        if (dv > o.maxTokenSeconds) p += 10 + (dv - o.maxTokenSeconds) * 5;
-        final l = math.log(math.max(dv, 0.02) / avg);
-        p += 0.35 * l * l;
-        tab[v] = p;
-      }
-      penV.add(tab);
+    // Duration penalty tables per line and token length, indexed by voiced
+    // frames. A token of several syllables (an English word, a kanji read
+    // with several morae) is expected to last that much longer.
+    var maxWeight = 1.0;
+    for (final tok in toks) {
+      maxWeight = math.max(maxWeight, tok.weight);
     }
+    double maxSeconds(double weight) => o.maxTokenSeconds * math.max(1.0, weight / 2);
+    final maxRaw = ((maxSeconds(maxWeight) * 1.25) / hop / g).ceil();
+    double penalty(double dv, double avg, double weight) {
+      var p = 0.0;
+      if (dv < 0.04) {
+        p += 25;
+      } else if (dv < 0.08) {
+        p += 4;
+      }
+      final max = maxSeconds(weight);
+      if (dv > max) p += 10 + (dv - max) * 5;
+      final l = math.log(math.max(dv, 0.02) / (avg * weight));
+      return p + 0.35 * l * l;
+    }
+
+    final penTables = <int, Float64List>{};
+    Float64List penTable(int line, double weight) {
+      final key = line * 64 + (weight * 4).round().clamp(0, 63);
+      return penTables.putIfAbsent(key, () {
+        final size = maxRaw * g + 1;
+        final tab = Float64List(size);
+        for (var v = 0; v < size; v++) {
+          tab[v] = penalty(v * hop, lineAvg[line], weight);
+        }
+        return tab;
+      });
+    }
+
     // Voiced frames of a slot that belong to the same phrase as its start.
     int connectedVoiced(int a, int b) => _voicedPrefix[math.min(b, _nextBreak[a])] - _voicedPrefix[a];
-    double voicedPen(int line, int fromCell, int toCell) {
+    double voicedPen(_Tok tok, int fromCell, int toCell) {
       final a = math.min(fromCell * g, t.length), b = math.min(toCell * g, t.length);
       final v = connectedVoiced(a, b);
-      final tab = penV[line];
+      final tab = penTable(tok.line, tok.weight);
       if (v < tab.length) return tab[v];
-      final dv = v * hop;
-      return 10 + (dv - o.maxTokenSeconds) * 5 + 0.35 * math.pow(math.log(dv / lineAvg[line]), 2);
+      return penalty(v * hop, lineAvg[tok.line], tok.weight);
     }
 
     const neg = -1e18;
@@ -335,7 +374,7 @@ class _ChainAligner {
       final prev = toks[m - 1], cur = toks[m];
       final crossLine = cur.first;
       final stamp = lines[cur.line].start;
-      final pl = prev.line;
+      final tab = penTable(prev.line, prev.weight);
       for (var c = cur.lo; c < cur.hi; c++) {
         final iHi = math.min(prev.hi, c);
         final iLo = crossLine ? prev.lo : math.max(prev.lo, c - maxRaw);
@@ -343,13 +382,12 @@ class _ChainAligner {
         var best = neg;
         var arg = -1;
         final fc = math.min(c * g, t.length);
-        final tab = penV[pl];
         for (var i = iLo; i < iHi; i++) {
           final pv = prev.dp[i - prev.lo];
           if (pv <= neg / 2) continue;
           final fi = math.min(i * g, t.length);
           final v = _voicedPrefix[math.min(fc, _nextBreak[fi])] - _voicedPrefix[fi];
-          final pen = v < tab.length ? tab[v] : voicedPen(pl, i, c);
+          final pen = v < tab.length ? tab[v] : voicedPen(prev, i, c);
           var val = pv - pen;
           if (!crossLine && c - i > maxRaw) val -= 50;
           if (val > best) {
@@ -372,7 +410,7 @@ class _ChainAligner {
     for (var c = last.lo; c < last.hi; c++) {
       final pv = last.dp[c - last.lo];
       if (pv <= neg / 2) continue;
-      final v = pv - voicedPen(last.line, c, endCell);
+      final v = pv - voicedPen(last, c, endCell);
       if (v > best) {
         best = v;
         arg = c;
@@ -402,12 +440,18 @@ class _ChainAligner {
       }
       final line = lines[k];
       final refTokens = <RefToken>[];
-      for (var i = 0; i < line.tokens.length; i++, m++) {
-        final s = starts[m] * g;
-        final e = m + 1 < toks.length ? starts[m + 1] * g : endCell * g;
+      for (var i = 0; i < line.tokens.length; i++) {
+        // The token's units: m (its first syllable) up to the next token.
+        final first = m;
+        while (m + 1 < toks.length && toks[m + 1].line == k && toks[m + 1].index == i) {
+          m++;
+        }
+        m++;
+        final s = starts[first] * g;
+        final e = m < toks.length ? starts[m] * g : endCell * g;
         final (vs, ve) = _voicedExtent(s, math.max(s + 1, e));
         final notes = ve > vs ? _notes(vs, ve) : <RefNote>[];
-        final onset = _onset(toks[m], starts[m]);
+        final onset = _onset(toks[first], starts[first]);
         refTokens.add(RefToken(
           text: line.tokens[i].text,
           start: vs * hop,
@@ -425,7 +469,7 @@ class _ChainAligner {
         tokens: refTokens,
       ));
     }
-    return SongReference(lines: out, duration: t.duration);
+    return SongReference(lines: out, duration: t.duration, language: language);
   }
 
   /// A line the lead vocal does not sing: evenly spaced, pitchless tokens.

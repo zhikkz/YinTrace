@@ -133,6 +133,7 @@ class PracticeScorer {
     for (var l = 0; l < reference.lines.length; l++) {
       final line = reference.lines[l];
       for (var k = 0; k < line.tokens.length; k++) {
+        if (line.tokens[k].skip) continue; // the user said its pitch is wrong
         for (final n in line.tokens[k].notes) {
           _notes.add((n, l, k));
         }
@@ -360,7 +361,7 @@ class PracticeScorer {
     var s = 0.0, w = 0.0;
     for (final r in rs) {
       if (!r.attempted) continue;
-      final d = r.line.notes.fold<double>(0, (a, n) => a + n.duration);
+      final d = r.line.scoredNotes.fold<double>(0, (a, n) => a + n.duration);
       s += r.score * d;
       w += d;
     }

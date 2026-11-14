@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'lyrics_language.dart';
+
 /// A sustained pitch inside a character.
 class RefNote {
   RefNote({required this.start, required this.end, required this.midi});
@@ -21,6 +23,11 @@ class RefNote {
 }
 
 /// One sung character (or word) with its time span and notes.
+///
+/// The user can correct a token's pitch: [shift] moves its detected notes
+/// (they already include it), [skip] leaves it out of the score, and
+/// [manual] marks notes the user added where none were detected. The
+/// detected melody can always be restored.
 class RefToken {
   RefToken({
     required this.text,
@@ -29,19 +36,76 @@ class RefToken {
     required this.notes,
     this.spaceBefore = false,
     this.confidence = 1,
+    this.shift = 0,
+    this.skip = false,
+    this.manual = false,
   });
 
   final String text;
   double start;
   double end;
   List<RefNote> notes;
+
+  /// Shown with a space (or a pause) before it.
   final bool spaceBefore;
 
   /// How sure the aligner was about this token's boundaries (0..1).
   double confidence;
 
+  /// Semitones the user moved the detected notes by.
+  double shift;
+
+  /// Not scored (the user says its pitch cannot be trusted).
+  bool skip;
+
+  /// The notes were added by the user.
+  bool manual;
+
   double get duration => end - start;
   bool get hasPitch => notes.isNotEmpty;
+
+  /// Whether this token counts towards the score.
+  bool get scored => !skip && notes.isNotEmpty;
+
+  /// Whether the user changed anything about this token.
+  bool get corrected => shift != 0 || skip || manual;
+
+  /// Moves every note by [semitones].
+  void transpose(double semitones) {
+    for (final n in notes) {
+      n.midi += semitones;
+    }
+    if (!manual) shift += semitones;
+  }
+
+  /// Back to the detected melody.
+  void restore() {
+    if (manual) {
+      notes = [];
+    } else {
+      for (final n in notes) {
+        n.midi -= shift;
+      }
+    }
+    shift = 0;
+    skip = false;
+    manual = false;
+  }
+
+  /// Copies the corrections of [other] (the same token in an earlier
+  /// alignment) onto this one.
+  void applyCorrections(RefToken other) {
+    if (other.manual) {
+      if (notes.isEmpty && other.notes.isNotEmpty) {
+        // Over this alignment's span of the token.
+        notes = [RefNote(start: start, end: end, midi: other.notes.first.midi)];
+        manual = true;
+      }
+    } else if (other.shift != 0 && notes.isNotEmpty) {
+      transpose(other.shift);
+    }
+    skip = other.skip;
+  }
 
   /// Duration weighted mean pitch (NaN without notes).
   double get meanMidi {
@@ -54,23 +118,52 @@ class RefToken {
     return w > 0 ? s / w : notes.first.midi;
   }
 
+  /// Notes are stored as detected; the shift is applied when loading.
   Map<String, dynamic> toJson() => {
         't': text,
         's': _r(start),
         'e': _r(end),
         if (spaceBefore) 'sp': true,
         'c': _r(confidence, 100),
-        'n': [for (final n in notes) n.toJson()],
+        'n': [
+          for (final n in notes) RefNote(start: n.start, end: n.end, midi: n.midi - (manual ? 0 : shift)).toJson()
+        ],
+        if (shift != 0 && !manual) 'sh': _r(shift, 100),
+        if (skip) 'skip': true,
+        if (manual) 'man': true,
       };
 
-  factory RefToken.fromJson(Map<String, dynamic> j) => RefToken(
-        text: j['t'] as String,
-        start: (j['s'] as num).toDouble(),
-        end: (j['e'] as num).toDouble(),
-        spaceBefore: j['sp'] == true,
-        confidence: (j['c'] as num?)?.toDouble() ?? 1,
-        notes: [for (final n in j['n'] as List) RefNote.fromJson(n as Map<String, dynamic>)],
-      );
+  factory RefToken.fromJson(Map<String, dynamic> j) {
+    final manual = j['man'] == true;
+    final shift = manual ? 0.0 : (j['sh'] as num?)?.toDouble() ?? 0;
+    return RefToken(
+      text: j['t'] as String,
+      start: (j['s'] as num).toDouble(),
+      end: (j['e'] as num).toDouble(),
+      spaceBefore: j['sp'] == true,
+      confidence: (j['c'] as num?)?.toDouble() ?? 1,
+      notes: [
+        for (final n in j['n'] as List)
+          RefNote.fromJson(n as Map<String, dynamic>)..midi += shift,
+      ],
+      shift: shift,
+      skip: j['skip'] == true,
+      manual: manual,
+    );
+  }
+
+  /// Whether this token is a Latin word (shown with normal spaces).
+  bool get isWord {
+    if (text.isEmpty) return false;
+    return isLatinLetter(text.runes.first) || (text.runes.first >= 0x30 && text.runes.first <= 0x39);
+  }
+}
+
+/// Text of a line's tokens as it reads: words separated by spaces, a pause
+/// between CJK characters shown as an ideographic space.
+String tokenGap(RefToken? previous, RefToken token) {
+  if (previous == null || !token.spaceBefore) return '';
+  return token.isWord || previous.isWord ? ' ' : '　';
 }
 
 class RefLine {
@@ -88,6 +181,22 @@ class RefLine {
   double get end => tokens.isEmpty ? (lrcEnd ?? lrcStart) : tokens.last.end;
 
   Iterable<RefNote> get notes => tokens.expand((t) => t.notes);
+
+  /// Notes of the tokens that count towards the score.
+  Iterable<RefNote> get scoredNotes => tokens.where((t) => !t.skip).expand((t) => t.notes);
+
+  /// The line's text rebuilt from its tokens (punctuation dropped).
+  String get tokenText {
+    final b = StringBuffer();
+    RefToken? prev;
+    for (final t in tokens) {
+      b
+        ..write(tokenGap(prev, t))
+        ..write(t.text);
+      prev = t;
+    }
+    return b.toString();
+  }
 
   Map<String, dynamic> toJson() => {
         'i': index,
@@ -108,10 +217,13 @@ class RefLine {
 
 /// Everything the practice screen needs to know about the target melody.
 class SongReference {
-  SongReference({required this.lines, required this.duration});
+  SongReference({required this.lines, required this.duration, this.language = LyricsLanguage.chinese});
 
   final List<RefLine> lines;
   final double duration;
+
+  /// The lyrics' language (decides how units are named and laid out).
+  final LyricsLanguage language;
 
   Iterable<RefNote> get notes => lines.expand((l) => l.notes);
   Iterable<RefToken> get tokens => lines.expand((l) => l.tokens);
@@ -136,39 +248,57 @@ class SongReference {
     return lines.isEmpty ? -1 : lines.length - 1;
   }
 
-  /// The reference note sounding at [t], if any.
+  /// The scored reference note sounding at [t], if any.
   RefNote? noteAt(double t) {
     for (final l in lines) {
       if (t < l.start - 0.5) break;
       if (t > l.end + 0.5) continue;
-      for (final n in l.notes) {
+      for (final n in l.scoredNotes) {
         if (t >= n.start && t < n.end) return n;
       }
     }
     return null;
   }
 
-  /// The first note starting after [t] (within [within] seconds).
+  /// The first scored note starting after [t] (within [within] seconds).
   RefNote? nextNoteAfter(double t, {double within = 2}) {
     RefNote? best;
     for (final l in lines) {
       if (l.end < t) continue;
       if (l.start > t + within) break;
-      for (final n in l.notes) {
+      for (final n in l.scoredNotes) {
         if (n.start > t && n.start <= t + within && (best == null || n.start < best.start)) best = n;
       }
     }
     return best;
   }
 
+  /// Whether any token was corrected by the user.
+  bool get corrected => tokens.any((t) => t.corrected);
+
+  /// Copies the user's corrections from [old] (an earlier alignment of the
+  /// same song) onto lines whose text did not change.
+  void applyCorrectionsFrom(SongReference old) {
+    for (var i = 0; i < lines.length && i < old.lines.length; i++) {
+      final a = lines[i], b = old.lines[i];
+      if (a.text != b.text || a.tokens.length != b.tokens.length) continue;
+      for (var k = 0; k < a.tokens.length; k++) {
+        final o = b.tokens[k];
+        if (o.corrected && o.text == a.tokens[k].text) a.tokens[k].applyCorrections(o);
+      }
+    }
+  }
+
   Map<String, dynamic> toJson() => {
         'version': 1,
         'duration': _r(duration),
+        'lang': language.code,
         'lines': [for (final l in lines) l.toJson()],
       };
 
   factory SongReference.fromJson(Map<String, dynamic> j) => SongReference(
         duration: (j['duration'] as num).toDouble(),
+        language: LyricsLanguage.fromCode(j['lang'] as String?),
         lines: [for (final l in j['lines'] as List) RefLine.fromJson(l as Map<String, dynamic>)],
       );
 }
