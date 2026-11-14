@@ -278,8 +278,13 @@ class PracticeSession extends ChangeNotifier {
       _loadedTake = t.version;
     }
     final range = line != null ? _loopRange(line) : (math.max(0.0, t.startSeconds - 0.5), t.endSeconds + 0.3);
-    if (listening == ListenKind.original) stopListening();
-    if (_review == null) _resumeAt = e.positionSeconds;
+    if (listening == ListenKind.original) {
+      // Straight from the original singer: practice would have gone on at
+      // the start of that line.
+      _resumeAt = math.max(0, reference.lines[_originalLine!].start - 1.0);
+    } else if (_review == null) {
+      _resumeAt = e.positionSeconds;
+    }
     _review = range;
     _listenKind = ListenKind.take;
     e.setLoop(null, null);
@@ -324,7 +329,9 @@ class PracticeSession extends ChangeNotifier {
       }
       applyMix();
       if (kind == ListenKind.original && _originalLine != null) {
+        // Ready to sing the line just heard (and loop it, when looping).
         _tracker?.reset();
+        if (loopLine != null) loopLine = _originalLine;
         setLoopLine(loopLine);
         seek(math.max(0, reference.lines[_originalLine!].start - 1.0));
         return;
