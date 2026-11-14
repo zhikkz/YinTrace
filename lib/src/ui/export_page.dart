@@ -435,17 +435,20 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
             onChanged: (v) => _change((m) => m.offsetMs = v),
           ),
         ),
-        if (hasAcc && !m.vocalOnly) ...[
-          const SizedBox(height: 10),
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: true, label: Text('整首歌')),
-              ButtonSegment(value: false, label: Text('只要唱了的部分')),
-            ],
-            selected: {m.wholeSong},
-            onSelectionChanged: (v) => _change((m) => m.wholeSong = v.first),
+        const SizedBox(height: 10),
+        SegmentedButton<bool>(
+          segments: const [
+            ButtonSegment(value: true, label: Text('整首歌')),
+            ButtonSegment(value: false, label: Text('只要唱了的部分')),
+          ],
+          selected: {m.wholeSong},
+          onSelectionChanged: (v) => _change((m) => m.wholeSong = v.first),
+        ),
+        if (m.vocalOnly && m.wholeSong)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('只要人声、整首歌：和原曲一样长，在别的 App 里能直接和伴奏对齐。', style: context.type.bodySmall),
           ),
-        ],
         const SizedBox(height: 8),
         Text('戴耳机录的成品最干净：外放时麦克风也会录进伴奏。', style: context.type.bodySmall),
         const SizedBox(height: 20),

@@ -166,23 +166,30 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     var id = _kept != null && _kept!.$1 == take.version ? _kept!.$2 : null;
     if (id == null) {
       final songs = AppScope.of(context).songs;
-      unawaited(showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const AlertDialog(
-          content: Row(
-            children: [
-              SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
-              SizedBox(width: 16),
-              Text('正在保存录音…'),
-            ],
+      unawaited(
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const AlertDialog(
+            content: Row(
+              children: [
+                SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
+                SizedBox(width: 16),
+                Text('正在保存录音…'),
+              ],
+            ),
           ),
         ),
-      ));
+      );
       try {
         final score = _session.scorer.overallScore();
-        final r = await keepTake(songs, widget.meta.id, take,
-            score: score.isNaN ? null : score, background: widget.backgroundWork);
+        final r = await keepTake(
+          songs,
+          widget.meta.id,
+          take,
+          score: score.isNaN ? null : score,
+          background: widget.backgroundWork,
+        );
         id = r.id;
         _kept = (take.version, r.id);
       } catch (e) {
@@ -191,13 +198,17 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
         if (mounted) Navigator.of(context).pop();
       }
     }
-    if (id == null || !mounted) return;
-    final recordingId = id;
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) =>
-          widget.exportPageBuilder?.call(widget.meta.id, recordingId) ??
-          ExportPage(songId: widget.meta.id, recordingId: recordingId),
-    ));
+    if (id != null && mounted) {
+      final recordingId = id;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              widget.exportPageBuilder?.call(widget.meta.id, recordingId) ??
+              ExportPage(songId: widget.meta.id, recordingId: recordingId),
+        ),
+      );
+    }
+    // Practice can go on (also when keeping the take failed).
     if (mounted) _session.resume();
   }
 
