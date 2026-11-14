@@ -80,3 +80,48 @@ python tools/benchmark_import.py --out build/import-memory.json
 工具以 10 Hz 同时采样 flutter_tester 与它的 ORT 子进程，排除 Flutter CLI / 编译器。
 它补充独立进程的峰值测量，不能把两个不同时间的峰值相加当作实际同一时刻的峰值，
 也不能将宿主机 RSS 直接等同 iPhone 的 Physical Footprint。
+
+
+## 整曲压力测试
+
+相同的 259.6 秒本地纯人声，经 MDX → VR → YIN → 对齐 → 保存完整链路运行；
+此处用纯人声作为压力输入，不据此评价混音分离质量。音频、歌词和生成曲库未提交。
+当前 12 秒 VR 分段、释放混音与频谱复用的结果：
+
+| 项目 | 结果 |
+|---|---:|
+| 完整流水线耗时（不含测试启动） | 895 秒（14 分 55 秒） |
+| 歌词单位 / 结构验证 | 315 / 通过 |
+| Dart App 独立峰值 RSS | 562.6 MB |
+| App 与 ORT 子进程同时采样峰值 RSS | 1380.2 MB |
+| 该峰值时的 App / ORT RSS | 554.4 / 825.8 MB |
+| 采样间隔 / 样本数 | 0.1 秒 / 8838 |
+
+这包含调试模式 Dart VM 与 Python ORT 运行时，排除 Flutter CLI 和编译器；
+进程间共享页可能重复计入，短于采样间隔的瞬态也可能遗漏。独立 max RSS 不等同于
+同一时刻的总峰值。优化前同一长输入的 Dart 独立峰值为 780.5 MB，进一步缩小分段
+并释放混音后降为 562.6 MB；该轮耗时从 758 秒增加到 895 秒。
+
+宿主压力测试低于 1.5 GB，但 iPhone 的释放行为、ORT 版本、CPU 内核和系统预算不同，
+仍须使用真机 release + Instruments 测量，不能据此保证所有 iPhone 不会被 jetsam 终止。
+
+
+## iOS 模拟器实跑
+
+[CI 运行 43554773740](https://github.com/zhikkz/YinTrace/actions/runs/43554773740)
+验证代码提交 `4174195`。GitHub Actions macOS 15 ARM64 runner 上的 iPhone 16 Pro
+模拟器，ONNX Runtime 1.28.0，CPU provider，4 个 intra-op 线程，CPU arena 关闭：
+
+| 同一 App 进程中的阶段 | 3 次推理耗时 | 截至该阶段的进程峰值 RSS |
+|---|---:|---:|
+| MDX `[1,4,3072,128]` | 10.624 秒 | 786.2 MB |
+| VR `[1,2,641,320]` | 12.215 秒 | 879.5 MB |
+
+这里直接使用实际的 Flutter Apple 插件和 ORT 原生桥接，同一进程包含 Flutter 与 ORT，
+不是把两个进程的独立峰值相加。AAC 编码/解码、官方模型下载/校验/组装、运行时读取
+包含 AGPL v3 的 NOTICES.Z 也均通过；release 归档和全部 FFI 导出符号检查通过。
+测试绑定有意禁用了 Flutter 自动许可登记，所以许可检查读取的是实际打包的资产，
+并另查应用自行登记的 UVR 致谢；正常 App 的 ServicesBinding 从同一资产登记许可。
+
+这是调试模式、短窗口推理的模拟器结果，不是整曲 iPhone release 的 Physical Footprint。
+真实麦克风授权、耳机/电话中断、延迟、Files 和长曲连续导入仍需按设备清单验收。
