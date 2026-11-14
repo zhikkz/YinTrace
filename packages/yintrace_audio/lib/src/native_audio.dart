@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:typed_data';
 
@@ -50,6 +51,29 @@ enum MicPermission { undetermined, granted, denied }
 
 /// The system's thermal state (Apple's NSProcessInfo.thermalState).
 enum ThermalState { nominal, fair, serious, critical }
+
+/// Bits of [PracticeEngine.takeAudioEvents] (YT_EVENT_* in yt_audio.h).
+abstract final class AudioEvents {
+  /// Interrupted (a call, Siri, an alarm, another app) or stopped by the
+  /// system. Playback and capture are silenced until the engine is started
+  /// again.
+  static const stopped = 1;
+
+  /// The interruption ended (playback stays paused).
+  static const interruptionEnded = 2;
+
+  /// The audio route or its configuration changed. iOS also reports this
+  /// when a session starts playing and recording. Nothing is silenced; the
+  /// latency may differ.
+  static const routeChanged = 4;
+
+  /// Headphones, a Bluetooth/USB device or AirPlay went away, so the sound
+  /// would now come from the phone. Playback and capture are silenced.
+  static const deviceLost = 8;
+
+  /// Events after which the user has to resume playback.
+  static const silencing = stopped | deviceLost;
+}
 
 /// Engine device modes.
 enum EngineMode {
@@ -189,6 +213,32 @@ class NativeAudio {
     return s >= 0 && s < ThermalState.values.length ? ThermalState.values[s] : null;
   }
 
+  /// The last few audio-session events (iOS route changes with their reason,
+  /// interruptions, and lines added with [logAudioEvent]), oldest first.
+  /// For diagnostics in test builds.
+  static List<String> get audioEventLog {
+    const size = 4096;
+    final buf = malloc<Char>(size);
+    try {
+      final n = _b.audioLog(buf, size);
+      if (n <= 0) return const [];
+      final text = utf8.decode(buf.cast<Uint8>().asTypedList(n), allowMalformed: true);
+      return text.split('\n').where((l) => l.isNotEmpty).toList();
+    } finally {
+      malloc.free(buf);
+    }
+  }
+
+  /// Adds a line to [audioEventLog].
+  static void logAudioEvent(String line) {
+    final p = line.toNativeUtf8();
+    try {
+      _b.audioLogAdd(p.cast());
+    } finally {
+      malloc.free(p);
+    }
+  }
+
   /// Excludes a file or directory from device backups (for data that can be
   /// downloaded again). Returns whether the platform accepted it.
   static bool excludeFromBackup(String path) {
@@ -254,8 +304,8 @@ class PracticeEngine {
     _b.engineStop(_ptr);
   }
 
-  /// Device events since the last poll. Bit 1: stopped/rerouted/interrupted;
-  /// bit 2: interruption ended. Both require an explicit restart.
+  /// Device events since the last poll, a set of [AudioEvents] bits. After
+  /// [AudioEvents.silencing] ones the engine needs an explicit restart.
   int takeAudioEvents() => _disposed ? 0 : _b.engineTakeAudioEvents(_ptr);
 
   /// Signal from a platform adapter (also usable by offline tests).

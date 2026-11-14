@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:yintrace_audio/yintrace_audio.dart';
 
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../app/screen_awake.dart';
 import '../app/services.dart';
+import '../app/test_build.dart';
 import '../library/song.dart';
 import '../practice/practice_session.dart';
 import 'pitch_graph.dart';
@@ -665,9 +667,29 @@ class _MixSheetState extends State<_MixSheet> {
               onChanged: (v) => set(() => s.octaveTolerant = v),
             ),
             Text('戴耳机练习：外放时麦克风会录到伴奏，音高会测不准。', style: context.type.bodySmall),
+            // Test builds only: what the audio session reported, to explain
+            // a pause nobody asked for.
+            if (isTestBuild) ...[
+              const SizedBox(height: 16),
+              Text('测试版：最近的音频事件', style: context.type.titleSmall),
+              const SizedBox(height: 4),
+              SelectableText(
+                _audioLog(),
+                style: context.type.bodySmall?.copyWith(fontFamily: 'Menlo', fontFamilyFallback: const ['monospace']),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+}
+
+String _audioLog() {
+  try {
+    final lines = NativeAudio.audioEventLog;
+    return lines.isEmpty ? '（还没有）' : lines.join('\n');
+  } catch (_) {
+    return '（读不到）';
   }
 }

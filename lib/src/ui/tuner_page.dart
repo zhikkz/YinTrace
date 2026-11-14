@@ -106,7 +106,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
   void _tick(Duration _) {
     final e = _engine, tr = _tracker;
     if (e == null || tr == null || _paused) return;
-    if (e.takeAudioEvents() != 0) {
+    if (e.takeAudioEvents() & AudioEvents.silencing != 0) {
       _pause();
       return;
     }

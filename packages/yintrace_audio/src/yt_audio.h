@@ -146,11 +146,31 @@ YT_EXPORT int64_t yt_engine_capture_overruns(yt_engine* engine);
 // Discards every pending captured block.
 YT_EXPORT void yt_engine_flush_capture(yt_engine* engine);
 
-// Audio-device events (bit 1: interrupted/rerouted/stopped, bit 2: interruption ended).
-// signal() is for platform adapters; it atomically silences playback/capture.
-// take() clears pending events. Restart only from the control thread, never a
-// miniaudio notification callback. Callers must ask the user to resume playback.
+// Audio-device events, a bit set.
+//   YT_EVENT_STOPPED: interrupted (a call, Siri, an alarm) or stopped by the
+//     system. Playback and capture are silenced.
+//   YT_EVENT_INTERRUPTION_ENDED: informational.
+//   YT_EVENT_ROUTE_CHANGED: the audio route or its configuration changed
+//     (iOS announces this when a session starts playing and recording, too).
+//     Nothing is silenced; the latency may differ.
+//   YT_EVENT_DEVICE_LOST: headphones, a Bluetooth/USB device or AirPlay went
+//     away, so the sound would now come from the phone. Playback and capture
+//     are silenced at once.
+// signal() is for platform adapters; it atomically silences playback/capture
+// for STOPPED and DEVICE_LOST. take() clears pending events. Restart only from
+// the control thread, never a notification callback. After a silencing event,
+// callers must ask the user to resume playback.
+#define YT_EVENT_STOPPED 1
+#define YT_EVENT_INTERRUPTION_ENDED 2
+#define YT_EVENT_ROUTE_CHANGED 4
+#define YT_EVENT_DEVICE_LOST 8
+#define YT_EVENTS_SILENCING (YT_EVENT_STOPPED | YT_EVENT_DEVICE_LOST)
 YT_EXPORT void yt_engine_signal_audio_event(yt_engine* engine, int32_t events);
+// Diagnostics: the last few audio-session events (iOS route changes with
+// their reason, interruptions, engine signals), oldest first, one per line.
+// Copies at most len-1 bytes plus a terminating NUL; returns the length.
+YT_EXPORT int32_t yt_audio_log(char* buf, int32_t len);
+YT_EXPORT void yt_audio_log_add(const char* line);
 YT_EXPORT int32_t yt_engine_take_audio_events(yt_engine* engine);
 
 // Runs the engine's audio callback directly (offline mode and tests).

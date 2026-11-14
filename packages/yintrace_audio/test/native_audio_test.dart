@@ -26,6 +26,33 @@ void main() {
     expect(NativeAudio.thermalState, isNull);
   }, skip: skip ?? (Platform.isLinux ? null : 'Linux host only'));
 
+  test('audio event log keeps the latest lines, oldest first', () {
+    for (var i = 0; i < 30; i++) {
+      NativeAudio.logAudioEvent('app: 第 $i 行');
+    }
+    final log = NativeAudio.audioEventLog;
+    expect(log.length, 24);
+    expect(log.first, 'app: 第 6 行');
+    expect(log.last, 'app: 第 29 行');
+    NativeAudio.logAudioEvent('音' * 80); // longer than a line: cut, still valid text
+    expect(NativeAudio.audioEventLog.last, '音' * 37);
+  }, skip: skip);
+
+  test('route changes keep playing, a lost output silences', () {
+    final e = PracticeEngine.create(mode: EngineMode.offline);
+    e.loadTrackPcm(0, Float32List.fromList(List.filled(4096 * 2, 0.25)), 2);
+    e.play();
+    e.render(256);
+    e.signalAudioEvent(AudioEvents.routeChanged);
+    expect(e.isPlaying, isTrue);
+    expect(e.render(256)[0], closeTo(0.25, 1e-3));
+    e.signalAudioEvent(AudioEvents.deviceLost);
+    expect(e.isPlaying, isFalse);
+    expect(e.render(256)[0], 0);
+    expect(e.takeAudioEvents(), AudioEvents.routeChanged | AudioEvents.deviceLost);
+    e.dispose();
+  }, skip: skip);
+
   test('offline engine renders tracks and tags capture', () {
     final e = PracticeEngine.create(mode: EngineMode.offline);
     addTearDown(e.dispose);

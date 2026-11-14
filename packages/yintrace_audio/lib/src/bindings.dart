@@ -24,6 +24,8 @@ typedef _Int64C = Int64 Function();
 typedef _Int64D = int Function();
 
 typedef _PathC = Int32 Function(Pointer<Char>);
+typedef _LogAddC = Void Function(Pointer<Char>);
+typedef _LogAddD = void Function(Pointer<Char>);
 typedef _PathD = int Function(Pointer<Char>);
 typedef _StringC = Int32 Function(Pointer<Char>, Int32);
 typedef _StringD = int Function(Pointer<Char>, int);
@@ -113,6 +115,8 @@ class YtBindings {
       physicalMemory = library.lookupFunction<_Int64C, _Int64D>('yt_physical_memory'),
       thermalState = library.lookupFunction<_VersionC, _VersionD>('yt_thermal_state'),
       excludeFromBackup = library.lookupFunction<_PathC, _PathD>('yt_exclude_from_backup'),
+      audioLog = library.lookupFunction<_StringC, _StringD>('yt_audio_log'),
+      audioLogAdd = library.lookupFunction<_LogAddC, _LogAddD>('yt_audio_log_add'),
       engineCreate = library.lookupFunction<_CreateC, _CreateD>('yt_engine_create'),
       engineStart = library.lookupFunction<_EngIntC, _EngIntD>('yt_engine_start'),
       engineStop = library.lookupFunction<_EngIntC, _EngIntD>('yt_engine_stop'),
@@ -155,6 +159,8 @@ class YtBindings {
   final int Function() physicalMemory;
   final int Function() thermalState;
   final int Function(Pointer<Char>) excludeFromBackup;
+  final int Function(Pointer<Char>, int) audioLog;
+  final void Function(Pointer<Char>) audioLogAdd;
   final _CreateD engineCreate;
   final _EngIntD engineStart;
   final _EngIntD engineStop;

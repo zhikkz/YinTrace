@@ -203,9 +203,21 @@ class PracticeSession extends ChangeNotifier {
     }
   }
 
+  /// Adds [text] to the native audio event log, which test builds show in
+  /// 练习设置 (diagnostics for pauses nobody asked for).
+  static void _log(String text) {
+    final t = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final ms = t.millisecond.toString().padLeft(3, '0');
+    try {
+      NativeAudio.logAudioEvent('${two(t.hour)}:${two(t.minute)}:${two(t.second)}.$ms app: $text');
+    } catch (_) {}
+  }
+
   void play() {
     final e = _engine;
     if (e == null || _suspended || _disposed) return;
+    _log('play at ${position.toStringAsFixed(1)} s');
     try {
       NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
       e.takeAudioEvents();
@@ -215,6 +227,7 @@ class PracticeSession extends ChangeNotifier {
       applyMix();
       pauseReason = null;
     } catch (err) {
+      _log('play failed: $err');
       pauseReason = '音频暂时不可用，请稍后点播放重试';
       notifyListeners();
       return;
@@ -277,12 +290,14 @@ class PracticeSession extends ChangeNotifier {
   }
 
   void pause() {
+    if (isPlaying) _log('pause at ${position.toStringAsFixed(1)} s');
     _engine?.pause();
     notifyListeners();
   }
 
   /// Stop the hardware too: pausing the song alone still records the mic.
   void suspend({String reason = '练习已暂停，点播放继续'}) {
+    if (_engine != null) _log('suspend: $reason');
     _suspended = true;
     pauseReason = reason;
     final e = _engine;
@@ -354,11 +369,20 @@ class PracticeSession extends ChangeNotifier {
     final e = _engine;
     final tr = _tracker;
     if (e == null || tr == null || _suspended) return;
-    if (e.takeAudioEvents() != 0) {
-      suspend(reason: '音频被中断或耳机已切换，点播放继续');
+    final events = e.takeAudioEvents();
+    if (events != 0) _log('audio events 0x${events.toRadixString(16)}');
+    if (events & AudioEvents.silencing != 0) {
+      suspend(
+        reason: events & AudioEvents.deviceLost != 0
+            ? '耳机断开了，已暂停，免得从扬声器外放。点播放继续'
+            : '声音被打断了（来电、闹钟或别的 App），点播放继续',
+      );
       resume();
       return;
     }
+    // iOS also reports this when playback and recording start: keep going,
+    // only the new route's latency matters.
+    if (events & AudioEvents.routeChanged != 0) applyMix();
     final review = _review;
     if (review != null) {
       // The microphone would only hear the playback: nothing to score.
