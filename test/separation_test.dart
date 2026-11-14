@@ -91,6 +91,39 @@ class FakeVrModel implements TensorModel {
   Future<void> close() async {}
 }
 
+/// Unlike [FakeVrModel], the output depends on the whole window and on the
+/// position in it, as a real network's does: a window that saw other frames
+/// would give another mask.
+class ContextVrModel implements TensorModel {
+  int calls = 0;
+  @override
+  Future<Float32List> run(Float32List input, List<int> shape) async {
+    calls++;
+    final bins = shape[2], w = shape[3];
+    final plane = bins * w;
+    final out = Float32List(input.length);
+    for (var ch = 0; ch < 2; ch++) {
+      for (var b = 0; b < bins; b++) {
+        final row = ch * plane + b * w;
+        var mean = 0.0;
+        for (var k = 0; k < w; k++) {
+          mean += input[row + k];
+        }
+        mean /= w;
+        for (var k = 0; k < w; k++) {
+          final other = input[(1 - ch) * plane + b * w + k];
+          final z = 5 * input[row + k] - 8 * mean + 2 * other + 0.6 * k / w + 0.002 * b - 0.4;
+          out[row + k] = 1 / (1 + math.exp(-z));
+        }
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
 void expectProbes(Float32List out, Map<String, dynamic> p, {double tol = 1e-4}) {
   final idx = (p['idx'] as List).cast<int>();
   final l = (p['l'] as List).cast<num>();
@@ -126,7 +159,7 @@ void main() {
     expectProbes(out, ref['mdx'] as Map<String, dynamic>);
   });
 
-  test('mobile MDX rolling overlap matches UVR at T=128, overlap=0.5', () async {
+  test('app MDX setting (T=128, overlap 0.25) matches UVR', () async {
     final model = FakeMdxModel();
     final sep = MdxSeparator(model, MdxConfig.vocFt);
     final out = await sep.separate(mix);
@@ -145,25 +178,54 @@ void main() {
     });
   }
 
-  test('VR segmented processing matches single-pass processing', () async {
-    final long = synth(40.0);
-    const cfg = vr4BandV2Sn;
-    final single = await VrSeparator(FakeVrModel(), cfg, segmentSeconds: 100).separate(long);
-    final seg = await VrSeparator(
-      FakeVrModel(),
-      cfg,
-      segmentSeconds: 12,
-      marginSeconds: 3,
-      crossfadeSeconds: 1,
-    ).separate(long);
-    var err = 0.0, ref = 0.0;
-    // Skip the last 0.1 s where the single pass has no iSTFT coverage.
-    final n = long.length - 2 * 4410;
-    for (var i = 0; i < n; i++) {
-      err += (single[i] - seg[i]) * (single[i] - seg[i]);
-      ref += single[i] * single[i];
+  // Segments sit on UVR's whole-song window grid: each window is inferred
+  // once and sees the same frames, so segmenting must not change the result.
+  for (final cfg in [
+    ('4band_v2_sn', vr4BandV2Sn),
+    ('3band_44100_msb2', VrConfig.karaoke6Hp),
+    ('3band_44100_msb2, window 320', VrConfig.karaoke6Hp.withWindowSize(320)),
+  ]) {
+    test('VR ${cfg.$1}: segments reproduce whole-song processing, one run per window', () async {
+      final long = synth(31.3);
+      final whole = ContextVrModel();
+      final single = await VrSeparator(whole, cfg.$2, segmentSeconds: 1000).separate(long);
+      final probe = VrSeparator(whole, cfg.$2);
+      expect(whole.calls, probe.inferenceCount(long.length ~/ 2));
+      expect(probe.segmentCount(long.length ~/ 2), greaterThan(1));
+      for (final seconds in [15.0, 4.0, 0.1]) {
+        final model = ContextVrModel();
+        final steps = <int>[];
+        final seg = await VrSeparator(
+          model,
+          cfg.$2,
+          segmentSeconds: seconds,
+        ).separate(long, onStep: (done, total) => steps.add(done));
+        expect(model.calls, whole.calls, reason: 'each window once ($seconds s segments)');
+        expect(steps.last, whole.calls);
+        var maxErr = 0.0, peak = 0.0;
+        for (var i = 0; i < long.length; i++) {
+          maxErr = math.max(maxErr, (single[i] - seg[i]).abs());
+          peak = math.max(peak, single[i].abs());
+        }
+        expect(peak, greaterThan(0.05));
+        expect(maxErr, lessThan(1e-5), reason: '$seconds s segments differ by $maxErr');
+      }
+    });
+  }
+
+  test('VR progress rises to 1 and the window count follows UVR', () async {
+    final x = synth(9.0);
+    final fractions = <double>[];
+    final model = ContextVrModel();
+    await VrSeparator(model, VrConfig.karaoke6Hp).separate(x, onProgress: fractions.add);
+    expect(fractions.last, closeTo(1, 1e-9));
+    for (var i = 1; i < fractions.length; i++) {
+      expect(fractions[i], greaterThanOrEqualTo(fractions[i - 1]));
     }
-    final snr = 10 * math.log(ref / err) / math.ln10;
-    expect(snr, greaterThan(40), reason: 'segmented vs single SNR $snr dB');
+    // UVR: windows = frames // roi + 1, minus a last one past the end.
+    final sep = VrSeparator(model, VrConfig.karaoke6Hp);
+    final frames = sep.spectrogramFrames(x.length ~/ 2);
+    expect(model.calls, (frames - 1) ~/ 256 + 1);
+    expect(VrSeparator(model, VrConfig.karaoke6Hp.withWindowSize(320)).inferenceCount(x.length ~/ 2), (frames - 1) ~/ 64 + 1);
   });
 }

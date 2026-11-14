@@ -11,11 +11,15 @@ import '../library/song.dart';
 import '../library/song_repository.dart';
 import 'live_pitch.dart';
 import 'scoring.dart';
+import 'take_recorder.dart';
 
 /// Track slots in the practice engine.
 abstract final class TrackSlot {
   static const accompaniment = 0;
   static const guideVocal = 1;
+
+  /// The singer's own recording, while listening back.
+  static const take = 2;
 }
 
 /// Drives one practice run: audio engine, live pitch tracking and scoring.
@@ -68,8 +72,35 @@ class PracticeSession extends ChangeNotifier {
   bool _suspended = false;
   String? pauseReason;
 
+  /// What the singer sang in this session (null until the audio started).
+  TakeRecorder? take;
+
+  /// The song time span being played back, while listening back.
+  (double, double)? _review;
+  double _resumeAt = 0; // where practice continues after listening back
+  int _loadedTake = -1; // version of the take in the engine's take slot
+
   PracticeEngine? get engine => _engine;
   bool get isPlaying => _engine?.isPlaying ?? false;
+
+  /// Listening back to the singer's take instead of practising.
+  bool get reviewing => _review != null;
+
+  /// Whether there is a take to listen back to (of [line], when given).
+  bool canListenBack({int? line}) {
+    final t = take;
+    if (t == null || t.isEmpty) return false;
+    if (line == null) return true;
+    final (a, b) = _loopRange(line);
+    return t.covers(a, b);
+  }
+
+  /// The singer's pitch trail to draw: live while practising, the recorded
+  /// one while listening back.
+  List<UserPoint> get displayPoints => reviewing ? take!.points : points;
+
+  /// While listening back: what the singer sang at the current position.
+  UserPoint? get reviewPoint => reviewing ? take?.pointAt(position) : null;
 
   /// Total compensation applied to captured audio (seconds).
   double get latency => _latency;
@@ -126,6 +157,10 @@ class PracticeSession extends ChangeNotifier {
         sampleRate: e.sampleRate,
         options: LivePitchOptions(gateDb: settings.micGateDb, latencySeconds: _latency),
       );
+      take = TakeRecorder(
+        sampleRate: e.sampleRate,
+        lengthFrames: math.max(e.lengthFrames, (meta.duration * e.sampleRate).ceil()),
+      );
       _endCount = e.endCount;
       if (_suspended || pauseReason != null) {
         // Backgrounding and returning while decode is still in flight must
@@ -153,10 +188,12 @@ class PracticeSession extends ChangeNotifier {
     if (e == null) return;
     final hasAcc = meta.accompanimentFile != null || meta.originalFile != null;
     e.setTrackGain(TrackSlot.accompaniment, settings.accompanimentVolume);
+    // Listening back: your own voice instead of the original singer's.
     e.setTrackGain(
       TrackSlot.guideVocal,
-      hasAcc ? settings.guideVocalVolume : math.max(0.6, settings.guideVocalVolume),
+      reviewing ? 0 : (hasAcc ? settings.guideVocalVolume : math.max(0.6, settings.guideVocalVolume)),
     );
+    e.setTrackGain(TrackSlot.take, reviewing ? 1 : 0);
     scorer.options = _scoringOptions();
     final t = _tracker;
     if (t != null) {
@@ -182,12 +219,61 @@ class PracticeSession extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (finished || e.positionSeconds >= e.lengthSeconds - 0.05) {
+    final review = _review;
+    if (review != null) {
+      if (position >= review.$2 - 0.05) _seekEngine(review.$1);
+    } else if (finished || e.positionSeconds >= e.lengthSeconds - 0.05) {
       finished = false;
       seek(loopLine != null ? _loopRange(loopLine!).$1 : 0);
     }
     e.play();
     notifyListeners();
+  }
+
+  /// Plays back what the singer sang (of [line], or the whole take) with
+  /// the accompaniment. Practice resumes with [stopListening].
+  void listenBack({int? line}) {
+    final e = _engine;
+    final t = take;
+    if (e == null || t == null || !canListenBack(line: line) || _suspended) return;
+    e.pause();
+    if (_loadedTake != t.version) {
+      e.loadTrackPcm(TrackSlot.take, t.samples!, 1);
+      _loadedTake = t.version;
+    }
+    final range = line != null ? _loopRange(line) : (math.max(0.0, t.startSeconds - 0.5), t.endSeconds + 0.3);
+    if (_review == null) _resumeAt = e.positionSeconds;
+    _review = range;
+    e.setLoop(null, null);
+    applyMix();
+    _seekEngine(range.$1);
+    play();
+  }
+
+  /// Back to practising (the take stays for another listen).
+  void stopListening() {
+    final e = _engine;
+    if (_review == null) return;
+    _review = null;
+    if (e != null) {
+      e.pause();
+      e.unloadTrack(TrackSlot.take);
+      _loadedTake = -1;
+      applyMix();
+      _seekEngine(_resumeAt);
+    }
+    _tracker?.reset();
+    setLoopLine(loopLine);
+    notifyListeners();
+  }
+
+  /// Moves playback without touching the scores (used while listening back).
+  void _seekEngine(double seconds) {
+    final e = _engine;
+    if (e == null) return;
+    e.seek(Duration(microseconds: (math.max(0, seconds) * 1e6).round()));
+    e.flushCapture();
+    _tracker?.reset();
   }
 
   void pause() {
@@ -222,6 +308,11 @@ class PracticeSession extends ChangeNotifier {
   void seek(double seconds) {
     final e = _engine;
     if (e == null) return;
+    if (reviewing) {
+      _seekEngine(seconds);
+      notifyListeners();
+      return;
+    }
     e.seek(Duration(microseconds: (math.max(0, seconds) * 1e6).round()));
     e.flushCapture();
     _tracker?.reset();
@@ -239,7 +330,7 @@ class PracticeSession extends ChangeNotifier {
   void setLoopLine(int? line) {
     loopLine = line;
     final e = _engine;
-    if (e == null) return;
+    if (e == null || reviewing) return;
     if (line == null) {
       e.setLoop(null, null);
     } else {
@@ -268,15 +359,29 @@ class PracticeSession extends ChangeNotifier {
       resume();
       return;
     }
+    final review = _review;
+    if (review != null) {
+      // The microphone would only hear the playback: nothing to score.
+      e.flushCapture();
+      _endCount = e.endCount; // reaching the end here is not a finished run
+      if (e.isPlaying && position >= review.$2) e.pause();
+      if (e.isPlaying || position >= review.$2) notifyListeners();
+      return;
+    }
     var changed = false;
+    final t = take;
+    final latencyFrames = (_latency * e.sampleRate).round();
     for (final block in e.readCapture()) {
+      if (block.playing) t?.addAudio(block.samples, block.songFrame, latencyFrames);
       for (final p in tr.addBlock(block.samples, block.songFrame, block.clockFrame, block.playing)) {
         final s = scorer.add(p);
         lastSample = s;
         if (p.voiced) lastVoiced = s;
         _clock = p.clockTime;
         if (p.playing) {
-          points.add(UserPoint(p.songTime, p.midi, s.verdict, s.deviationCents));
+          final point = UserPoint(p.songTime, p.midi, s.verdict, s.deviationCents);
+          points.add(point);
+          t?.addPoint(point);
         }
         changed = true;
       }

@@ -4,6 +4,9 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
+#if TARGET_OS_IOS
+#include <os/proc.h>
+#endif
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -86,6 +89,16 @@ double yt_session_latency(void) {
   return session.inputLatency + session.outputLatency + session.IOBufferDuration;
 #else
   return 0.0;
+#endif
+}
+
+int64_t yt_available_memory(void) {
+#if TARGET_OS_IOS && !TARGET_OS_SIMULATOR
+  // 0 means the process has no limit; report it as unknown.
+  size_t available = os_proc_available_memory();
+  return available > 0 ? (int64_t)available : -1;
+#else
+  return -1;
 #endif
 }
 

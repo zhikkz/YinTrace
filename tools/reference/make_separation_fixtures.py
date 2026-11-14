@@ -206,7 +206,7 @@ def main():
     mix = synth(8.0)
     fx = {'seconds': 8.0}
     fx['mdx'] = probes(mdx_demix(mix))
-    fx['mdx_mobile'] = probes(mdx_demix(mix, dim_t=128, overlap=0.5))
+    fx['mdx_mobile'] = probes(mdx_demix(mix, dim_t=128, overlap=0.25))
 
     su = import_spec_utils(args.uvr)
     for name in ['4band_v2_sn', '3band_44100_msb2']:

@@ -76,6 +76,10 @@ YT_EXPORT void yt_request_mic_permission(void);
 YT_EXPORT int32_t yt_configure_session(int32_t record, int32_t measurement);
 // Hardware input + output latency reported by the OS, in seconds (0 if unknown).
 YT_EXPORT double yt_session_latency(void);
+// Bytes this process can still allocate before the system terminates it
+// (iOS: os_proc_available_memory). -1 where there is no such limit or it is
+// unknown (other platforms, the simulator).
+YT_EXPORT int64_t yt_available_memory(void);
 
 // ---------------------------------------------------------------------------
 // Engine

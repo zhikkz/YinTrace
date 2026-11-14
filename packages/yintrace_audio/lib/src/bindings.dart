@@ -20,6 +20,8 @@ typedef _Int2C = Int32 Function(Int32, Int32);
 typedef _Int2D = int Function(int, int);
 typedef _DoubleC = Double Function();
 typedef _DoubleD = double Function();
+typedef _Int64C = Int64 Function();
+typedef _Int64D = int Function();
 
 typedef _PathC = Int32 Function(Pointer<Char>);
 typedef _PathD = int Function(Pointer<Char>);
@@ -104,6 +106,7 @@ class YtBindings {
       requestMicPermission = library.lookupFunction<_VoidC, _VoidD>('yt_request_mic_permission'),
       configureSession = library.lookupFunction<_Int2C, _Int2D>('yt_configure_session'),
       sessionLatency = library.lookupFunction<_DoubleC, _DoubleD>('yt_session_latency'),
+      availableMemory = library.lookupFunction<_Int64C, _Int64D>('yt_available_memory'),
       excludeFromBackup = library.lookupFunction<_PathC, _PathD>('yt_exclude_from_backup'),
       engineCreate = library.lookupFunction<_CreateC, _CreateD>('yt_engine_create'),
       engineStart = library.lookupFunction<_EngIntC, _EngIntD>('yt_engine_start'),
@@ -142,6 +145,7 @@ class YtBindings {
   final void Function() requestMicPermission;
   final int Function(int, int) configureSession;
   final double Function() sessionLatency;
+  final int Function() availableMemory;
   final int Function(Pointer<Char>) excludeFromBackup;
   final _CreateD engineCreate;
   final _EngIntD engineStart;

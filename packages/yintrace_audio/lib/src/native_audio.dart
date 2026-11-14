@@ -154,6 +154,13 @@ class NativeAudio {
   /// Input + output hardware latency reported by the OS, in seconds.
   static double get sessionLatency => _b.sessionLatency();
 
+  /// Bytes the app can still allocate before iOS terminates it, or null
+  /// where that is unknown (other platforms, the simulator).
+  static int? get availableMemory {
+    final bytes = _b.availableMemory();
+    return bytes > 0 ? bytes : null;
+  }
+
   /// Excludes a file or directory from device backups (for data that can be
   /// downloaded again). Returns whether the platform accepted it.
   static bool excludeFromBackup(String path) {

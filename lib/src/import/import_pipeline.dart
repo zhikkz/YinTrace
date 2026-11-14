@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../analysis/aligner.dart';
@@ -34,7 +35,6 @@ class ImportRequest {
     this.accompanimentPath,
     this.mdxModelPath,
     this.vrModelPath,
-    this.useCoreML = false,
     this.keepOriginal = true,
   });
 
@@ -55,7 +55,6 @@ class ImportRequest {
 
   /// Null skips the harmony removal: the MDX vocals are used directly.
   final String? vrModelPath;
-  final bool useCoreML;
   final bool keepOriginal;
 
   Map<String, Object?> toMap() => {
@@ -67,7 +66,6 @@ class ImportRequest {
     'accompanimentPath': accompanimentPath,
     'mdxModelPath': mdxModelPath,
     'vrModelPath': vrModelPath,
-    'useCoreML': useCoreML,
     'keepOriginal': keepOriginal,
   };
 
@@ -80,23 +78,52 @@ class ImportRequest {
     accompanimentPath: m['accompanimentPath'] as String?,
     mdxModelPath: m['mdxModelPath'] as String?,
     vrModelPath: m['vrModelPath'] as String?,
-    useCoreML: m['useCoreML'] as bool? ?? false,
     keepOriginal: m['keepOriginal'] as bool? ?? true,
   );
 }
 
 class ImportProgress {
-  const ImportProgress(this.stage, this.stageFraction, this.overall);
+  const ImportProgress(this.stage, this.stageFraction, this.overall, {this.done, this.total, this.remaining});
   final ImportStage stage;
   final double stageFraction;
+
+  /// Fraction of the whole import, weighted by the work of each stage.
   final double overall;
+
+  /// Model runs finished and needed in a separation stage.
+  final int? done;
+  final int? total;
+
+  /// Estimated time still needed, from how fast this device has worked so
+  /// far; null until that is known.
+  final Duration? remaining;
+
+  Map<String, Object?> toMap() => {
+    'stage': stage.index,
+    'stageFraction': stageFraction,
+    'overall': overall,
+    'done': done,
+    'total': total,
+    'remainingMs': remaining?.inMilliseconds,
+  };
+
+  factory ImportProgress.fromMap(Map<Object?, Object?> m) {
+    final ms = m['remainingMs'] as int?;
+    return ImportProgress(
+      ImportStage.values[m['stage'] as int],
+      (m['stageFraction'] as num).toDouble(),
+      (m['overall'] as num).toDouble(),
+      done: m['done'] as int?,
+      total: m['total'] as int?,
+      remaining: ms == null ? null : Duration(milliseconds: ms),
+    );
+  }
 }
 
 typedef ModelLoader = Future<TensorModel> Function(
   String path, {
   required String inputName,
   required String outputName,
-  bool useCoreML,
 });
 
 class ImportException implements Exception {
@@ -108,20 +135,37 @@ class ImportException implements Exception {
 
 /// Turns an audio file + timed lyrics into a practice-ready song.
 class ImportPipeline {
-  ImportPipeline({required this.audio, required this.loadModel, required this.repository});
+  ImportPipeline({
+    required this.audio,
+    required this.loadModel,
+    required this.repository,
+    this.availableMemory,
+  });
 
   final AudioBackend audio;
   final ModelLoader loadModel;
   final SongRepository repository;
 
-  static const _weights = {
-    ImportStage.decoding: 0.03,
-    ImportStage.separatingVocals: 0.50,
-    ImportStage.removingHarmony: 0.32,
-    ImportStage.analyzingPitch: 0.07,
-    ImportStage.aligning: 0.02,
-    ImportStage.saving: 0.06,
-  };
+  /// Bytes the process can still allocate before the system ends it, or
+  /// null when unknown (see [vrWindowFor]).
+  final int? Function()? availableMemory;
+
+  /// Memory ONNX Runtime needs for the karaoke model with UVR's 512-frame
+  /// window, beyond what the 320-frame window needs (desktop measurement:
+  /// 1013 vs 834 MB peak).
+  static const _vr512Bytes = 1050 * 1000 * 1000;
+
+  /// The karaoke model's window for a song of [samples] stereo samples.
+  ///
+  /// UVR's 512 frames needs a quarter of the model runs of 320, so it is
+  /// much faster. When the system reports less free memory than 512 needs
+  /// (the model, the separated song and one segment's spectrograms, with a
+  /// margin), use 320 instead so that phones with little memory still work.
+  static int vrWindowFor(int? availableBytes, int samples) {
+    if (availableBytes == null) return 512;
+    final need = _vr512Bytes + samples * 2 * 4 + 300 * 1000 * 1000;
+    return availableBytes >= need ? 512 : 320;
+  }
 
   Future<SongMeta> run(
     ImportRequest r, {
@@ -136,23 +180,13 @@ class ImportPipeline {
     if (separate && r.mdxModelPath == null) {
       throw ImportException('还没有下载人声分离模型');
     }
-    final stages = <ImportStage>[
-      ImportStage.decoding,
-      if (separate) ImportStage.separatingVocals,
-      if (separate && r.vrModelPath != null) ImportStage.removingHarmony,
-      ImportStage.analyzingPitch,
-      ImportStage.aligning,
-      ImportStage.saving,
-    ];
-    final total = stages.fold<double>(0, (s, e) => s + _weights[e]!);
-    void report(ImportStage stage, double f) {
+    _ImportClock? clock;
+    void report(ImportStage stage, double f, {int? done, int? total}) {
       if (isCancelled?.call() ?? false) throw const SeparationCancelled();
-      var before = 0.0;
-      for (final s in stages) {
-        if (s == stage) break;
-        before += _weights[s]!;
-      }
-      onProgress?.call(ImportProgress(stage, f, (before + _weights[stage]! * f) / total));
+      final c = clock;
+      onProgress?.call(
+        c == null ? ImportProgress(stage, f, 0) : c.update(stage, f, done: done, total: total),
+      );
     }
 
     final id = repository.newSongId();
@@ -160,52 +194,65 @@ class ImportPipeline {
     try {
       report(ImportStage.decoding, 0);
       var mix = audio.decode(r.audioPath, sampleRate: 44100, channels: 2).samples;
-      final duration = mix.length / 2 / 44100;
-      if (mix.length < 2 * 44100) throw ImportException('音频太短');
+      final frames = mix.length ~/ 2;
+      final duration = frames / 44100;
+      if (frames < 44100) throw ImportException('音频太短');
+
+      const mdxCfg = MdxConfig.vocFt;
+      var vrCfg = VrConfig.karaoke6Hp;
+      final harmony = separate && r.vrModelPath != null;
+      if (harmony) {
+        vrCfg = vrCfg.withWindowSize(vrWindowFor(availableMemory?.call(), frames));
+      }
+      final mdx = MdxSeparator(_NoModel.instance, mdxCfg);
+      final vr = VrSeparator(_NoModel.instance, vrCfg);
+      clock = _ImportClock({
+        ImportStage.decoding: 0.003 * duration,
+        if (separate) ImportStage.separatingVocals: mdx.chunkCount(frames).toDouble(),
+        // One VR run against one MDX run on the same device: about 1.6 at
+        // 512 frames, 1 at 320 (desktop and simulator measurements).
+        if (harmony)
+          ImportStage.removingHarmony:
+              (vr.inferenceCount(frames) + 0.3 * vr.segmentCount(frames)) * vrCfg.windowSize / 320,
+        ImportStage.analyzingPitch: 0.02 * duration,
+        ImportStage.aligning: 0.005 * duration,
+        ImportStage.saving: 0.015 * duration,
+      });
       report(ImportStage.decoding, 1);
 
       Float32List vocals; // stereo
       Float32List? accompaniment;
       final modelInfo = <String, String>{};
       if (separate) {
-        const mdxCfg = MdxConfig.vocFt;
-        final mdx = await loadModel(
-          r.mdxModelPath!,
-          inputName: mdxCfg.inputName,
-          outputName: mdxCfg.outputName,
-          useCoreML: r.useCoreML,
-        );
+        final model = await loadModel(r.mdxModelPath!, inputName: mdxCfg.inputName, outputName: mdxCfg.outputName);
         try {
-          vocals = await MdxSeparator(
-            mdx,
-            mdxCfg,
-          ).separate(mix, onProgress: (f) => report(ImportStage.separatingVocals, f));
+          vocals = await MdxSeparator(model, mdxCfg).separate(
+            mix,
+            onStep: (done, total) => report(ImportStage.separatingVocals, done / total, done: done, total: total),
+          );
         } finally {
-          await mdx.close();
+          await model.close();
         }
         modelInfo['mdx'] = mdxCfg.name;
-        if (r.vrModelPath != null) {
+        if (harmony) {
           // Keep only the MDX vocals while VR owns its large working set.
           // Re-decode the local source after closing VR to make accompaniment;
           // decoding twice costs far less memory than retaining a whole mix.
           mix = Float32List(0);
-          const vrCfg = VrConfig.karaoke6Hp;
-          final vr = await loadModel(
-            r.vrModelPath!,
-            inputName: vrCfg.inputName,
-            outputName: vrCfg.outputName,
-            useCoreML: r.useCoreML,
-          );
+          final model = await loadModel(r.vrModelPath!, inputName: vrCfg.inputName, outputName: vrCfg.outputName);
           try {
+            var done = 0;
+            final runs = vr.inferenceCount(frames);
             // The karaoke model's secondary stem is the lead vocal.
-            vocals = await VrSeparator(vr, vrCfg).separate(
+            vocals = await VrSeparator(model, vrCfg).separate(
               vocals,
               stem: VrStem.secondary,
-              onProgress: (f) => report(ImportStage.removingHarmony, f),
+              onStep: (d, _) => done = d,
+              onProgress: (f) => report(ImportStage.removingHarmony, f, done: done, total: runs),
             );
-            modelInfo['vr'] = vrCfg.name;
+            modelInfo['vr'] = vrCfg.windowSize == 512 ? vrCfg.name : '${vrCfg.name} (window ${vrCfg.windowSize})';
           } finally {
-            await vr.close();
+            await model.close();
           }
         }
         if (mix.isEmpty) {
@@ -301,6 +348,78 @@ class ImportPipeline {
     final out = Float32List(length);
     out.setRange(0, x.length < length ? x.length : length, x);
     return out;
+  }
+}
+
+/// Only for counting the work of a separator before its model is loaded.
+class _NoModel implements TensorModel {
+  static final instance = _NoModel();
+  @override
+  Future<Float32List> run(Float32List input, List<int> shape) => throw UnsupportedError('no model');
+  @override
+  Future<void> close() async {}
+}
+
+/// Weighs the stages of an import by their work and estimates the time
+/// left from how fast this device has actually been working.
+///
+/// Work is counted in units of about one MDX model run. The remaining time
+/// uses the rate of the current stage once it has run for a while (its
+/// first seconds include loading a model), else the rate of the stage
+/// before it.
+class _ImportClock {
+  _ImportClock(this.units) : total = units.values.fold(0.0, (a, b) => a + b);
+
+  final Map<ImportStage, double> units;
+  final double total;
+  final _watch = Stopwatch()..start();
+
+  ImportStage? _stage;
+  Duration _stageStart = Duration.zero;
+  double _before = 0; // units of the stages before the current one
+  double _done = 0;
+  double? _markUnits; // where the rate measurement of this stage starts
+  Duration _markTime = Duration.zero;
+  double? _rate; // units per second
+
+  /// Without model runs, start measuring this long into a stage.
+  static const _warmUp = Duration(seconds: 3);
+
+  ImportProgress update(ImportStage stage, double fraction, {int? done, int? total}) {
+    final now = _watch.elapsed;
+    if (stage != _stage) {
+      _stage = stage;
+      _stageStart = now;
+      _before = 0;
+      for (final s in ImportStage.values) {
+        if (s == stage) break;
+        _before += units[s] ?? 0;
+      }
+      _markUnits = null;
+    }
+    _done = math.max(_done, _before + (units[stage] ?? 0) * fraction.clamp(0.0, 1.0));
+    final mark = _markUnits;
+    if (mark == null) {
+      // A stage's first model run includes loading the model.
+      final ready = total != null ? (done ?? 0) >= 1 : now - _stageStart >= _warmUp;
+      if (ready) {
+        _markUnits = _done;
+        _markTime = now;
+      }
+    } else if (now - _markTime >= const Duration(seconds: 2) && _done > mark) {
+      _rate = (_done - mark) / ((now - _markTime).inMicroseconds / 1e6);
+    }
+    final rate = _rate;
+    return ImportProgress(
+      stage,
+      fraction,
+      this.total > 0 ? (_done / this.total).clamp(0.0, 1.0) : fraction,
+      done: done,
+      total: total,
+      remaining: rate == null || rate <= 0
+          ? null
+          : Duration(milliseconds: ((this.total - _done) / rate * 1000).round()),
+    );
   }
 }
 

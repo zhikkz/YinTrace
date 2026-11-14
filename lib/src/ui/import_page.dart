@@ -17,6 +17,13 @@ const audioExtensions = ['mp3', 'm4a', 'aac', 'wav', 'flac', 'aif', 'aiff', 'caf
 
 const lyricsHint = '[00:12.40]夜里的风慢慢吹过窗台\n[00:17.95]远处的灯一盏一盏亮开\n[00:35.80]下雨了 记得带伞';
 
+/// The import's remaining time, rough on purpose: whole minutes, rounded up.
+String importRemainingText(Duration? left) {
+  if (left == null) return '正在估算剩余时间…';
+  if (left.inSeconds < 60) return '预计不到 1 分钟';
+  return '预计还需约 ${(left.inSeconds / 60).ceil()} 分钟';
+}
+
 /// Import a song: audio file + timed lyrics -> separated vocal, per
 /// character pitch map, stored locally.
 class ImportPage extends StatefulWidget {
@@ -42,6 +49,9 @@ class _ImportPageState extends State<ImportPage> {
   ImportProgress? _progress;
   String? _error;
   final _stopwatch = Stopwatch();
+  // Ticks the elapsed time every second, so the page visibly keeps going
+  // even while one model run takes a few seconds.
+  Timer? _ticker;
 
   @override
   void initState() {
@@ -51,6 +61,7 @@ class _ImportPageState extends State<ImportPage> {
 
   @override
   void dispose() {
+    _ticker?.cancel();
     _sub?.cancel();
     _job?.cancel();
     keepScreenOn(false);
@@ -107,6 +118,10 @@ class _ImportPageState extends State<ImportPage> {
     _stopwatch
       ..reset()
       ..start();
+    _ticker?.cancel();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
     final job = await ImportJob.start(request, services.songs.root.path);
     _job = job;
     _sub = job.events.listen((e) async {
@@ -132,6 +147,8 @@ class _ImportPageState extends State<ImportPage> {
 
   void _finish() {
     _stopwatch.stop();
+    _ticker?.cancel();
+    _ticker = null;
     keepScreenOn(false);
     _job = null;
   }
@@ -313,12 +330,20 @@ class _ImportPageState extends State<ImportPage> {
     );
   }
 
+  static String _clock(Duration d) {
+    final s = d.inSeconds;
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
   Widget _buildProgress(BuildContext context) {
     final pr = _progress!;
     final p = context.yt;
-    final elapsed = _stopwatch.elapsed.inSeconds;
     final stages = ImportStage.values.where(
-      (s) => _vocalsOnly ? !(s == ImportStage.separatingVocals || s == ImportStage.removingHarmony) : true,
+      (s) => switch (s) {
+        ImportStage.separatingVocals => !_vocalsOnly,
+        ImportStage.removingHarmony => !_vocalsOnly && !_skipHarmony,
+        _ => true,
+      },
     );
     return Padding(
       padding: const EdgeInsets.fromLTRB(28, 8, 28, 28),
@@ -332,7 +357,10 @@ class _ImportPageState extends State<ImportPage> {
           const SizedBox(height: 8),
           LinearProgressIndicator(value: pr.overall, minHeight: 4, borderRadius: BorderRadius.circular(2)),
           const SizedBox(height: 10),
-          Text('已用 $elapsed 秒', style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
+          Text(
+            '${importRemainingText(pr.remaining)} · 已用 ${_clock(_stopwatch.elapsed)}',
+            style: context.type.bodyMedium?.copyWith(fontFeatures: tabular),
+          ),
           const SizedBox(height: 28),
           for (final s in stages)
             Padding(
@@ -362,11 +390,18 @@ class _ImportPageState extends State<ImportPage> {
                       fontWeight: s == pr.stage ? FontWeight.w600 : FontWeight.w400,
                     ),
                   ),
+                  if (s == pr.stage && pr.total != null) ...[
+                    const Spacer(),
+                    Text(
+                      '${pr.done ?? 0} / ${pr.total} 段',
+                      style: context.type.bodyMedium?.copyWith(color: p.inkSoft, fontFeatures: tabular),
+                    ),
+                  ],
                 ],
               ),
             ),
           const Spacer(),
-          Text('处理时间取决于歌曲长度和设备性能。请让 YinTrace 保持在前台，屏幕会保持常亮。', style: context.type.bodySmall),
+          Text('请让 YinTrace 保持在前台，屏幕会保持常亮。切到别的 App 可能会中断处理。', style: context.type.bodySmall),
           const SizedBox(height: 16),
           OutlinedButton(
             onPressed: _cancel,

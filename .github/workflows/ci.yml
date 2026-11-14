@@ -43,7 +43,7 @@ jobs:
           flutter pub get
           YINTRACE_AUDIO_LIB=$GITHUB_WORKSPACE/build/host/libyintrace_audio.so flutter test
       - name: Cache the UVR models
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/uvr-models
           key: uvr-models-534b2070-4ce7eaaa
@@ -56,7 +56,7 @@ jobs:
           YINTRACE_AUDIO_LIB=$GITHUB_WORKSPACE/build/host/libyintrace_audio.so
           MODELS_DIR=$GITHUB_WORKSPACE/build/uvr-models
           SCREENSHOT_DIR=build/screenshots flutter test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: screenshots
           path: build/screenshots
@@ -66,14 +66,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install onnx onnxscript onnxruntime numpy
       - name: Round trip with random weights
         run: python tools/build_karaoke_graph.py selftest
       - name: Cache the UVR models
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/uvr-models
           key: uvr-models-534b2070-4ce7eaaa
@@ -96,12 +96,12 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install numpy scipy librosa soundfile onnxruntime
       - name: Cache the UVR models
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/uvr-models
           key: uvr-models-534b2070-4ce7eaaa
@@ -188,7 +188,7 @@ jobs:
         run: flutter test integration_test/ios_smoke_test.dart -d "$YINTRACE_SIMULATOR" --reporter expanded
       - name: Package unsigned app
         run: cd build/ios/archive/Runner.xcarchive/Products/Applications && zip -qr "$GITHUB_WORKSPACE/Runner-unsigned.zip" Runner.app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ios-unsigned
           path: Runner-unsigned.zip

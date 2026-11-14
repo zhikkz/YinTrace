@@ -13,10 +13,12 @@ class MdxConfig {
     this.outputName = 'output',
   });
 
-  /// Defaults of UVR-MDX-NET-Voc_FT (UVR model hash 77d07b2667ddf05b9e3175941b4454a0).
-  // UVR segment size 128: lower activation memory with a modest context
-  // tradeoff. The constructor keeps UVR's original 256 for reference tests.
-  static const vocFt = MdxConfig(dimT: 128, overlap: 0.5);
+  /// UVR-MDX-NET-Voc_FT (UVR model hash 77d07b2667ddf05b9e3175941b4454a0)
+  /// with UVR's segment size 128 instead of 256: about half the activation
+  /// memory, and slightly less work per second of audio. Overlap 0.25 as in
+  /// UVR; 0.5 needs 1.5 times the model runs for about 0.1 dB SDR.
+  /// The constructor keeps UVR's original 256 for the reference tests.
+  static const vocFt = MdxConfig(dimT: 128);
 
   final String name;
   final int nFft;
@@ -110,6 +112,29 @@ class VrConfig {
 
   List<int> get inputShape => [1, 2, bins + 1, windowSize];
 
+  /// The same model run with another window (UVR's "window size": 320 needs
+  /// about 60 % of the memory of 512, but four times the model runs).
+  VrConfig withWindowSize(int windowSize) => VrConfig(
+    name: name,
+    bins: bins,
+    bands: bands,
+    sr: sr,
+    preFilterStart: preFilterStart,
+    preFilterStop: preFilterStop,
+    midSide: midSide,
+    midSideB2: midSideB2,
+    reverse: reverse,
+    isV51: isV51,
+    windowSize: windowSize,
+    offset: offset,
+    primaryStem: primaryStem,
+    isKaraoke: isKaraoke,
+    aggression: aggression,
+    aggrCorrection: aggrCorrection,
+    inputName: inputName,
+    outputName: outputName,
+  );
+
   /// Stems UVR treats as "non accompaniment" (affects aggressiveness).
   bool get primaryIsNonAccompaniment => const {
     'Vocals',
@@ -129,9 +154,9 @@ class VrConfig {
   /// VR v5 network with the band configuration `3band_44100_msb2`. Its
   /// primary stem is the instrumental plus backing vocals; the secondary
   /// stem is the lead vocal.
+  /// Runs with UVR's default window size 512.
   static const karaoke6Hp = VrConfig(
     name: '6_HP-Karaoke-UVR',
-    windowSize: 320,
     bins: 640,
     sr: 44100,
     preFilterStart: 639,

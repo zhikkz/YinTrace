@@ -13,17 +13,17 @@ class OnnxTensorModel implements TensorModel {
   final String inputName;
   final String outputName;
 
-  /// Loads a model. With [useCoreML] the Core ML execution provider is tried
-  /// first (Apple devices), falling back to the CPU provider.
+  /// Loads a model on the CPU execution provider, without ONNX Runtime's
+  /// memory arena (it would keep the peak allocation for the session's
+  /// lifetime).
   static Future<OnnxTensorModel> load(
     String path, {
     String? inputName,
     String? outputName,
-    bool useCoreML = false,
     int? threads,
   }) async {
     final ort = OnnxRuntime();
-    final providers = <OrtProvider>[if (useCoreML) OrtProvider.CORE_ML, OrtProvider.CPU];
+    final providers = <OrtProvider>[OrtProvider.CPU];
     final session = await ort.createSession(
       path,
       options: OrtSessionOptions(providers: providers, intraOpNumThreads: threads ?? 4, useArena: false),

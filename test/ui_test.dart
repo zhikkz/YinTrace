@@ -5,6 +5,7 @@
 //
 // Set SCREENSHOT_DIR to also write PNG screenshots.
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -27,6 +28,7 @@ import 'package:yintrace/src/ui/import_page.dart';
 import 'package:yintrace/src/ui/library_page.dart';
 import 'package:yintrace/src/ui/settings_page.dart';
 import 'package:yintrace/src/ui/practice_page.dart';
+import 'package:yintrace/src/ui/score_trend.dart';
 import 'package:yintrace/src/ui/song_page.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
@@ -130,7 +132,7 @@ void main() {
         await ImportPipeline(
           audio: const WavAudioBackend(),
           repository: songs,
-          loadModel: (p, {required inputName, required outputName, useCoreML = false}) =>
+          loadModel: (p, {required inputName, required outputName}) =>
               throw StateError('unused'),
         ).run(
           ImportRequest(
@@ -142,6 +144,10 @@ void main() {
             vocalsOnly: true,
           ),
         );
+    await songs.addPractice(
+      song.id,
+      PracticeRecord(at: DateTime.now(), score: 74, lineScores: {0: 80, 1: 66}),
+    );
     await songs.addPractice(
       song.id,
       PracticeRecord(at: DateTime.now(), score: 82, lineScores: {0: 88, 1: 71}),
@@ -184,6 +190,10 @@ void main() {
     expect(find.text('夜里的风慢慢吹过窗台'), findsOneWidget);
     expect(find.text('下雨了 记得带伞'), findsOneWidget);
     expect(find.text('88'), findsOneWidget);
+    // Two whole-song runs: the trend and each line's sparkline appear.
+    expect(find.text('得分趋势'), findsOneWidget);
+    expect(find.text('最近 82 分，比第一次高 8 分'), findsOneWidget);
+    expect(find.byType(LineScoreSparkline), findsNWidgets(2));
   });
 
   testWidgets('import page validates the timed lyrics as you type', (tester) async {
@@ -330,7 +340,37 @@ void main() {
     expect(find.text('先练这几个字'), findsOneWidget);
     await screenshot(tester, '4_results');
     final history = await tester.runAsync(() => services.songs.loadHistory(song.id));
-    expect(history!.length, 2);
+    expect(history!.length, 3);
+
+    // Listen back: the take plays where it was sung, the original singer is
+    // muted (the accompaniment here is silence) and nothing gets scored.
+    expect(find.byTooltip('回听这一句'), findsWidgets);
+    final practisedTo = engine.positionSeconds;
+    await tester.tap(find.text('回听这一遍'));
+    await settleIo(tester, rounds: 10);
+    expect(session.reviewing, isTrue);
+    expect(session.isPlaying, isTrue);
+    expect(find.text('回到练习'), findsOneWidget);
+    final scored = session.scorer.overallScore();
+    session.seek(ref.lines.first.start + 0.4); // into the singing
+    final from = engine.positionFrame;
+    final heard = engine.render(4096);
+    var err = 0.0, level = 0.0;
+    for (var i = 0; i < 4096; i++) {
+      final sung = from + i < singer.length ? singer[from + i] : 0.0;
+      err = math.max(err, (heard[2 * i] - sung).abs());
+      level = math.max(level, sung.abs());
+    }
+    expect(level, greaterThan(0.01), reason: 'the listened span has singing');
+    expect(err, lessThan(1e-3), reason: 'played back exactly what was captured');
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(session.scorer.overallScore(), scored);
+    await screenshot(tester, '4b_listen_back');
+    await tester.tap(find.text('回到练习'));
+    await tester.pump();
+    expect(session.reviewing, isFalse);
+    expect(find.text('回到练习'), findsNothing);
+    expect(engine.positionSeconds, closeTo(practisedTo, 0.02), reason: 'practice continues where it was');
     // Dispose the page (and with it the native engine).
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);

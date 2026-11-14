@@ -8,6 +8,7 @@ import '../library/song.dart';
 import 'import_page.dart' show lyricsHint;
 import 'pitch_graph.dart';
 import 'practice_page.dart';
+import 'score_trend.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -178,6 +179,13 @@ class _SongPageState extends State<SongPage> {
               ),
             ),
           ),
+          if (wholeSongScores(_history).length >= 2)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                child: ScoreTrend(history: _history),
+              ),
+            ),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
@@ -199,6 +207,7 @@ class _SongPageState extends State<SongPage> {
             itemBuilder: (context, i) {
               final line = ref.lines[i];
               final score = lastLineScores[line.index];
+              final trend = lineScores(_history, line.index);
               final missing = line.tokens.where((t) => t.notes.isEmpty).length;
               return InkWell(
                 onTap: () => _practice(line: line.index),
@@ -219,6 +228,11 @@ class _SongPageState extends State<SongPage> {
                             ),
                           ),
                           Expanded(child: Text(line.text, style: context.type.titleMedium)),
+                          if (trend.length >= 2)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 10, top: 2),
+                              child: LineScoreSparkline(scores: trend),
+                            ),
                           if (score != null) ScoreNumeral(score: score, size: 20),
                         ],
                       ),

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:flutter/services.dart';
+import 'package:yintrace_audio/yintrace_audio.dart';
 
 import '../audio/audio_backend.dart';
 import '../library/song.dart';
@@ -60,10 +61,7 @@ class ImportJob {
       final m = msg as Map;
       switch (m['type']) {
         case 'progress':
-          controller.add(ImportProgressEvent(ImportProgress(
-              ImportStage.values[m['stage'] as int],
-              (m['stageFraction'] as num).toDouble(),
-              (m['overall'] as num).toDouble())));
+          controller.add(ImportProgressEvent(ImportProgress.fromMap(m['progress'] as Map)));
         case 'done':
           controller.add(ImportDoneEvent(SongMeta.fromJson((m['song'] as Map).cast<String, dynamic>())));
           controller.close();
@@ -104,22 +102,12 @@ class ImportJob {
       if (msg == 'cancel') cancelled = true;
     });
 
-    Future<TensorModel> loader(String path,
-        {required String inputName, required String outputName, bool useCoreML = false}) async {
-      try {
-        return await OnnxTensorModel.load(path,
-            inputName: inputName, outputName: outputName, useCoreML: useCoreML);
-      } catch (_) {
-        if (!useCoreML) rethrow;
-        // Core ML could not take the model: fall back to the CPU.
-        return OnnxTensorModel.load(path, inputName: inputName, outputName: outputName);
-      }
-    }
-
     final pipeline = ImportPipeline(
       audio: const NativeAudioBackend(),
-      loadModel: loader,
+      loadModel: (path, {required inputName, required outputName}) =>
+          OnnxTensorModel.load(path, inputName: inputName, outputName: outputName),
       repository: SongRepository(Directory(root)),
+      availableMemory: () => NativeAudio.availableMemory,
     );
     var lastSent = DateTime.fromMillisecondsSinceEpoch(0);
     try {
@@ -127,12 +115,7 @@ class ImportJob {
         final now = DateTime.now();
         if (now.difference(lastSent).inMilliseconds < 100 && p.stageFraction < 1) return;
         lastSent = now;
-        out.send({
-          'type': 'progress',
-          'stage': p.stage.index,
-          'stageFraction': p.stageFraction,
-          'overall': p.overall,
-        });
+        out.send({'type': 'progress', 'progress': p.toMap()});
       });
       out.send({'type': 'done', 'song': song.toJson()});
     } on SeparationCancelled {
