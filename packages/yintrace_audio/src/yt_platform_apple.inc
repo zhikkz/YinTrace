@@ -4,8 +4,10 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
+#include <math.h>
 #include <sys/sysctl.h>
 #if TARGET_OS_IOS
+#include <os/lock.h>
 #include <os/proc.h>
 #endif
 
@@ -55,25 +57,27 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
   @autoreleasepool {
     AVAudioSession* session = [AVAudioSession sharedInstance];
     NSError* error = nil;
-    BOOL ok;
-    if (record) {
-      // Speaker by default (instead of the earpiece), high quality output to
-      // Bluetooth headphones while the iPhone microphone is used for input.
-      AVAudioSessionCategoryOptions options = AVAudioSessionCategoryOptionDefaultToSpeaker |
-                                              AVAudioSessionCategoryOptionAllowBluetoothA2DP;
-      ok = [session setCategory:AVAudioSessionCategoryPlayAndRecord
-                           mode:(measurement ? AVAudioSessionModeMeasurement : AVAudioSessionModeDefault)
-                        options:options
-                          error:&error];
-    } else {
-      ok = [session setCategory:AVAudioSessionCategoryPlayback
-                           mode:AVAudioSessionModeDefault
-                        options:0
-                          error:&error];
+    // Speaker by default (instead of the earpiece), high quality output to
+    // Bluetooth headphones while the iPhone microphone is used for input.
+    AVAudioSessionCategory category =
+        record ? AVAudioSessionCategoryPlayAndRecord : AVAudioSessionCategoryPlayback;
+    AVAudioSessionMode mode =
+        record && measurement ? AVAudioSessionModeMeasurement : AVAudioSessionModeDefault;
+    AVAudioSessionCategoryOptions options =
+        record ? (AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetoothA2DP)
+               : 0;
+    // Called before every play: change only what differs, since each change
+    // makes iOS reconfigure the route of a session that may be running.
+    if (![session.category isEqualToString:category] || ![session.mode isEqualToString:mode] ||
+        session.categoryOptions != options) {
+      if (![session setCategory:category mode:mode options:options error:&error]) return -2;
     }
-    if (!ok) return -2;
-    [session setPreferredSampleRate:44100.0 error:nil];
-    [session setPreferredIOBufferDuration:0.005 error:nil];
+    if (session.preferredSampleRate != 44100.0) [session setPreferredSampleRate:44100.0 error:nil];
+    // The engine's device asks for 10 ms periods (see yt_engine_create); the
+    // same value here keeps the two from undoing each other.
+    if (fabs(session.preferredIOBufferDuration - 0.01) > 0.0005) {
+      [session setPreferredIOBufferDuration:0.01 error:nil];
+    }
     if (![session setActive:YES error:&error]) return -3;
     return 0;
   }
@@ -83,6 +87,134 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
   return 0;
 #endif
 }
+
+// Route changes. iOS posts AVAudioSessionRouteChangeNotification for many
+// reasons, including the category being applied and the route being
+// reconfigured when a session starts playing and recording: those must not
+// stop practice. Only a lost private output (headphones unplugged, Bluetooth
+// disconnected) pauses, so the song does not continue from the speaker.
+#if TARGET_OS_IOS
+#define YT_ROUTE_WATCH_SLOTS 8
+static os_unfair_lock yt_route_lock = OS_UNFAIR_LOCK_INIT;
+static yt_engine* yt_route_engines[YT_ROUTE_WATCH_SLOTS];
+
+static BOOL yt_is_private_output(AVAudioSessionPortDescription* port) {
+  return ![port.portType isEqualToString:AVAudioSessionPortBuiltInSpeaker] &&
+         ![port.portType isEqualToString:AVAudioSessionPortBuiltInReceiver];
+}
+
+// Whether a private output of `previous` is missing from `current`.
+static BOOL yt_lost_private_output(AVAudioSessionRouteDescription* previous,
+                                   AVAudioSessionRouteDescription* current) {
+  for (AVAudioSessionPortDescription* old in previous.outputs) {
+    if (!yt_is_private_output(old)) continue;
+    BOOL kept = NO;
+    for (AVAudioSessionPortDescription* now in current.outputs) {
+      if ([now.UID isEqualToString:old.UID]) kept = YES;
+    }
+    if (!kept) return YES;
+  }
+  return NO;
+}
+
+static const char* yt_route_reason_name(NSInteger reason) {
+  switch (reason) {
+    case AVAudioSessionRouteChangeReasonNewDeviceAvailable: return "NewDeviceAvailable";
+    case AVAudioSessionRouteChangeReasonOldDeviceUnavailable: return "OldDeviceUnavailable";
+    case AVAudioSessionRouteChangeReasonCategoryChange: return "CategoryChange";
+    case AVAudioSessionRouteChangeReasonOverride: return "Override";
+    case AVAudioSessionRouteChangeReasonWakeFromSleep: return "WakeFromSleep";
+    case AVAudioSessionRouteChangeReasonNoSuitableRouteForCategory: return "NoSuitableRoute";
+    case AVAudioSessionRouteChangeReasonRouteConfigurationChange: return "RouteConfigurationChange";
+    default: return "Unknown";
+  }
+}
+
+// "12:03:04.512 " (local time).
+static void yt_log_with_time(NSString* text) {
+  NSDate* now = [NSDate date];
+  NSDateFormatter* f = [[NSDateFormatter alloc] init];
+  f.dateFormat = @"HH:mm:ss.SSS";
+  NSString* line = [NSString stringWithFormat:@"%@ %@", [f stringFromDate:now], text];
+  yt_audio_log_add(line.UTF8String);
+}
+
+static void yt_route_changed(NSNotification* note) {
+  NSInteger reason = [note.userInfo[AVAudioSessionRouteChangeReasonKey] integerValue];
+  int32_t events = YT_EVENT_ROUTE_CHANGED;
+  AVAudioSessionRouteDescription* current = [[AVAudioSession sharedInstance] currentRoute];
+  if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) {
+    id previous = note.userInfo[AVAudioSessionRouteChangePreviousRouteKey];
+    if ([previous isKindOfClass:[AVAudioSessionRouteDescription class]] &&
+        yt_lost_private_output(previous, current)) {
+      events |= YT_EVENT_DEVICE_LOST;
+    }
+  } else if (reason == AVAudioSessionRouteChangeReasonNoSuitableRouteForCategory) {
+    events |= YT_EVENT_STOPPED;
+  }
+  NSMutableArray<NSString*>* outputs = [NSMutableArray array];
+  for (AVAudioSessionPortDescription* port in current.outputs) [outputs addObject:port.portType];
+  yt_log_with_time([NSString stringWithFormat:@"route %s -> %@%s", yt_route_reason_name(reason),
+                                              [outputs componentsJoinedByString:@"+"],
+                                              (events & YT_EVENT_DEVICE_LOST) ? " (paused: output lost)" : ""]);
+  // Signalling under the lock: an engine is never destroyed while in use.
+  os_unfair_lock_lock(&yt_route_lock);
+  for (int i = 0; i < YT_ROUTE_WATCH_SLOTS; i++) {
+    if (yt_route_engines[i] != NULL) yt_engine_signal_audio_event(yt_route_engines[i], events);
+  }
+  os_unfair_lock_unlock(&yt_route_lock);
+}
+
+static void yt_platform_watch_routes(yt_engine* e) {
+  // One observer for the life of the process, so that it can never be
+  // released while a notification is being delivered on another thread.
+  static dispatch_once_t once;
+  static id observer, interruptions;
+  dispatch_once(&once, ^{
+    observer = [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionRouteChangeNotification
+                                                                 object:nil
+                                                                  queue:nil
+                                                             usingBlock:^(NSNotification* note) {
+                                                               yt_route_changed(note);
+                                                             }];
+    // Logged only (miniaudio handles interruptions).
+    interruptions = [[NSNotificationCenter defaultCenter]
+        addObserverForName:AVAudioSessionInterruptionNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(NSNotification* note) {
+                  NSInteger type = [note.userInfo[AVAudioSessionInterruptionTypeKey] integerValue];
+                  BOOL suspended = [note.userInfo[AVAudioSessionInterruptionWasSuspendedKey] boolValue];
+                  yt_log_with_time([NSString stringWithFormat:@"interruption %s%s",
+                                                              type == AVAudioSessionInterruptionTypeBegan ? "began"
+                                                                                                          : "ended",
+                                                              suspended ? " (app was suspended)" : ""]);
+                }];
+  });
+  yt_log_with_time(@"engine watching routes");
+  os_unfair_lock_lock(&yt_route_lock);
+  for (int i = 0; i < YT_ROUTE_WATCH_SLOTS; i++) {
+    if (yt_route_engines[i] == NULL) {
+      yt_route_engines[i] = e;
+      break;
+    }
+  }
+  os_unfair_lock_unlock(&yt_route_lock);
+}
+
+static void yt_platform_unwatch_routes(yt_engine* e) {
+  os_unfair_lock_lock(&yt_route_lock);
+  for (int i = 0; i < YT_ROUTE_WATCH_SLOTS; i++) {
+    if (yt_route_engines[i] == e) yt_route_engines[i] = NULL;
+  }
+  os_unfair_lock_unlock(&yt_route_lock);
+}
+#else
+// macOS: miniaudio follows the default device; its reroutes are reported as
+// YT_EVENT_ROUTE_CHANGED.
+static void yt_platform_watch_routes(yt_engine* e) { (void)e; }
+static void yt_platform_unwatch_routes(yt_engine* e) { (void)e; }
+#endif
 
 double yt_session_latency(void) {
 #if TARGET_OS_IOS

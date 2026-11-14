@@ -237,14 +237,14 @@ static void test_audio_interruption(void) {
   yt_engine_flush_capture(e);
   int64_t position = yt_engine_position(e), song, clock;
   int32_t flags;
-  yt_engine_signal_audio_event(e, 1);
+  yt_engine_signal_audio_event(e, YT_EVENT_STOPPED);
   CHECK(yt_engine_is_playing(e) == 0);
   yt_engine_render(e, out, input, 128);
   CHECK(yt_engine_position(e) == position);
   for (int i = 0; i < 128 * 2; i++) CHECK(out[i] == 0);
   CHECK(yt_engine_read_capture(e, capture, 4096, &song, &clock, &flags) == 0);
-  yt_engine_signal_audio_event(e, 2);
-  CHECK(yt_engine_take_audio_events(e) == 3);
+  yt_engine_signal_audio_event(e, YT_EVENT_INTERRUPTION_ENDED);
+  CHECK(yt_engine_take_audio_events(e) == (YT_EVENT_STOPPED | YT_EVENT_INTERRUPTION_ENDED));
   CHECK(yt_engine_take_audio_events(e) == 0);
   CHECK(yt_engine_start(e) == 0);
   CHECK(yt_engine_is_playing(e) == 0);
@@ -252,7 +252,55 @@ static void test_audio_interruption(void) {
   yt_engine_render(e, out, input, 128);
   CHECK(yt_engine_position(e) == position + 128);
   CHECK(yt_engine_read_capture(e, capture, 4096, &song, &clock, &flags) == 128);
+
+  // iOS announces route changes when playback and recording start: they are
+  // reported but must not stop anything.
+  yt_engine_signal_audio_event(e, YT_EVENT_ROUTE_CHANGED);
+  CHECK(yt_engine_is_playing(e) == 1);
+  yt_engine_render(e, out, input, 128);
+  CHECK(yt_engine_position(e) == position + 256);
+  CHECK(out[0] != 0);
+  CHECK(yt_engine_read_capture(e, capture, 4096, &song, &clock, &flags) == 128);
+  CHECK(yt_engine_take_audio_events(e) == YT_EVENT_ROUTE_CHANGED);
+
+  // Headphones unplugged: silenced at once, like an interruption.
+  yt_engine_signal_audio_event(e, YT_EVENT_ROUTE_CHANGED | YT_EVENT_DEVICE_LOST);
+  CHECK(yt_engine_is_playing(e) == 0);
+  yt_engine_render(e, out, input, 128);
+  CHECK(yt_engine_position(e) == position + 256);
+  for (int i = 0; i < 128 * 2; i++) CHECK(out[i] == 0);
+  CHECK(yt_engine_read_capture(e, capture, 4096, &song, &clock, &flags) == 0);
+  CHECK(yt_engine_take_audio_events(e) == (YT_EVENT_ROUTE_CHANGED | YT_EVENT_DEVICE_LOST));
   yt_engine_destroy(e);
+}
+
+static void test_audio_log(void) {
+  char buf[4096];
+  CHECK(yt_audio_log(buf, sizeof buf) == 0);
+  for (int i = 0; i < 30; i++) {
+    char line[32];
+    snprintf(line, sizeof line, "line %d", i);
+    yt_audio_log_add(line);
+  }
+  int32_t n = yt_audio_log(buf, sizeof buf);
+  CHECK(n == (int32_t)strlen(buf));
+  CHECK(strncmp(buf, "line 6\n", 7) == 0);  // the last 24, oldest first
+  CHECK(strstr(buf, "line 29\n") != NULL);
+  CHECK(strstr(buf, "line 5\n") == NULL);
+  // A line longer than a slot is cut before a character, never inside one.
+  char long_line[400] = "";
+  for (int i = 0; i < 60; i++) strcat(long_line, "\xe9\x9f\xb3");  // 音
+  yt_audio_log_add(long_line);
+  n = yt_audio_log(buf, sizeof buf);
+  const char* last = buf;
+  for (const char* p = buf; *p; p++) {
+    if (*p == '\n' && p[1] != '\0') last = p + 1;
+  }
+  size_t len = strcspn(last, "\n");
+  CHECK(len > 90 && len % 3 == 0);
+  // Too small a buffer: whole lines only, still terminated.
+  CHECK(yt_audio_log(buf, 12) <= 11);
+  CHECK(strlen(buf) <= 11);
 }
 
 int main(int argc, char** argv) {
@@ -261,6 +309,7 @@ int main(int argc, char** argv) {
   test_big_block_split();
   test_null_device();
   test_audio_interruption();
+  test_audio_log();
   for (int i = 1; i + 1 < argc; i += 2) test_decode(argv[i], atoi(argv[i + 1]));
 #ifdef __APPLE__
   test_aac_roundtrip(getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");

@@ -85,14 +85,67 @@ static int yt_fbuf_append(yt_fbuf* b, const float* src, int64_t n, int32_t src_c
 }
 
 // ---------------------------------------------------------------------------
+// Audio event log (diagnostics for test builds)
+// ---------------------------------------------------------------------------
+
+#define YT_LOG_LINES 24
+#define YT_LOG_LINE 112
+static ma_spinlock yt_log_lock = 0;
+static char yt_log_lines[YT_LOG_LINES][YT_LOG_LINE];
+static ma_uint32 yt_log_count = 0;  // lines ever added
+
+void yt_audio_log_add(const char* line) {
+  if (line == NULL) return;
+  ma_spinlock_lock(&yt_log_lock);
+  char* slot = yt_log_lines[yt_log_count % YT_LOG_LINES];
+  size_t n = strlen(line);
+  if (n >= YT_LOG_LINE) {
+    n = YT_LOG_LINE - 1;
+    // Cut before a UTF-8 character, not inside one.
+    while (n > 0 && ((unsigned char)line[n] & 0xC0) == 0x80) n--;
+  }
+  memcpy(slot, line, n);
+  slot[n] = '\0';
+  yt_log_count++;
+  ma_spinlock_unlock(&yt_log_lock);
+}
+
+int32_t yt_audio_log(char* buf, int32_t len) {
+  if (buf == NULL || len <= 0) return 0;
+  size_t used = 0;
+  buf[0] = '\0';
+  ma_spinlock_lock(&yt_log_lock);
+  ma_uint32 first = yt_log_count > YT_LOG_LINES ? yt_log_count - YT_LOG_LINES : 0;
+  for (ma_uint32 i = first; i < yt_log_count; i++) {
+    const char* line = yt_log_lines[i % YT_LOG_LINES];
+    size_t n = strlen(line);
+    if (used + n + 2 > (size_t)len) break;
+    memcpy(buf + used, line, n);
+    used += n;
+    buf[used++] = '\n';
+    buf[used] = '\0';
+  }
+  ma_spinlock_unlock(&yt_log_lock);
+  return (int32_t)used;
+}
+
+// ---------------------------------------------------------------------------
 // Platform layer (Apple implementation lives in yt_platform_apple.inc)
 // ---------------------------------------------------------------------------
+
+// Route-change watching for an engine with a device (iOS: tells a lost
+// headphone/Bluetooth output apart from the route reconfigurations iOS
+// announces whenever a session starts playing and recording).
+static void yt_platform_watch_routes(yt_engine* e);
+static void yt_platform_unwatch_routes(yt_engine* e);
 
 #if defined(__APPLE__) && defined(__OBJC__)
 #define YT_HAS_APPLE_PLATFORM 1
 #include "yt_platform_apple.inc"
 #else
 #define YT_HAS_APPLE_PLATFORM 0
+static void yt_platform_watch_routes(yt_engine* e) { (void)e; }
+static void yt_platform_unwatch_routes(yt_engine* e) { (void)e; }
 int32_t yt_mic_permission_status(void) { return 1; }
 void yt_request_mic_permission(void) {}
 int32_t yt_configure_session(int32_t record, int32_t measurement) {
@@ -409,8 +462,10 @@ static void yt_data_callback(ma_device* device, void* output, const void* input,
 // to its notifications without restarting/uninitializing inside the callback.
 void yt_engine_signal_audio_event(yt_engine* e, int32_t events) {
   if (!e) return;
-  ma_atomic_store_32(&e->playing, 0);
-  ma_atomic_store_32(&e->capture_suspended, 1);
+  if (events & YT_EVENTS_SILENCING) {
+    ma_atomic_store_32(&e->playing, 0);
+    ma_atomic_store_32(&e->capture_suspended, 1);
+  }
   // A counter/bitset with CAS: callbacks may arrive on different threads.
   ma_uint32 before;
   do { before = ma_atomic_load_32(&e->audio_events); }
@@ -425,14 +480,24 @@ static void yt_device_notification(const ma_device_notification* notification) {
   yt_engine* e = (yt_engine*)notification->pDevice->pUserData;
   switch (notification->type) {
     case ma_device_notification_type_interruption_began:
+      yt_audio_log_add("device: interruption began");
+      yt_engine_signal_audio_event(e, YT_EVENT_STOPPED);
+      break;
     case ma_device_notification_type_rerouted:
-      yt_engine_signal_audio_event(e, 1);
+      // miniaudio reports every AVAudioSession route change, including the
+      // ones iOS announces when playback and recording start. The audio unit
+      // keeps running through them; yt_platform_watch_routes() reports the
+      // ones that mean a lost output (YT_EVENT_DEVICE_LOST).
+      yt_engine_signal_audio_event(e, YT_EVENT_ROUTE_CHANGED);
       break;
     case ma_device_notification_type_stopped:
-      if (!ma_atomic_load_32(&e->stopping)) yt_engine_signal_audio_event(e, 1);
+      if (!ma_atomic_load_32(&e->stopping)) {
+        yt_audio_log_add("device: stopped by the system");
+        yt_engine_signal_audio_event(e, YT_EVENT_STOPPED);
+      }
       break;
     case ma_device_notification_type_interruption_ended:
-      yt_engine_signal_audio_event(e, 2);
+      yt_engine_signal_audio_event(e, YT_EVENT_INTERRUPTION_ENDED);
       break;
     default: break;
   }
@@ -506,6 +571,7 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
     return NULL;
   }
   e->has_device = 1;
+  if (!use_null_backend) yt_platform_watch_routes(e);
   return e;
 }
 
@@ -531,6 +597,8 @@ int32_t yt_engine_stop(yt_engine* e) {
 
 void yt_engine_destroy(yt_engine* e) {
   if (e == NULL) return;
+  // Unconditional: a no-op for engines that never watched routes.
+  yt_platform_unwatch_routes(e);
   if (e->has_device) ma_device_uninit(&e->device);
   if (e->has_context) ma_context_uninit(&e->context);
   for (int i = 0; i < YT_MAX_TRACKS; i++) free(e->tracks[i].data);

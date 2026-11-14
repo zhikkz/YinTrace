@@ -320,15 +320,32 @@ void main() {
     await tester.pump();
     expect(session.isPlaying, isFalse); // user resumes deliberately
     session.play();
-    engine.signalAudioEvent(1); // phone call or unplugged headphones
+    // iOS announces route changes when playback and recording start (the
+    // category applied, the route reconfigured): practice goes on.
+    engine.signalAudioEvent(AudioEvents.routeChanged);
+    session.tick();
+    expect(session.isPlaying, isTrue);
+    expect(session.pauseReason, isNull);
+    final before = engine.positionFrame;
+    engine.render(512, input: Float32List(512));
+    expect(engine.positionFrame, before + 512);
+    engine.signalAudioEvent(AudioEvents.stopped); // a phone call
     session.tick();
     expect(session.isPlaying, isFalse);
-    expect(session.pauseReason, contains('中断'));
+    expect(session.pauseReason, contains('打断'));
     engine.render(512, input: Float32List(512));
     expect(engine.readCapture(), isEmpty);
-    engine.signalAudioEvent(2); // call ends; still paused
+    engine.signalAudioEvent(AudioEvents.interruptionEnded); // call ends; still paused
     session.tick();
     expect(session.isPlaying, isFalse);
+    session.play();
+    expect(session.isPlaying, isTrue);
+    expect(session.pauseReason, isNull);
+    // Headphones unplugged: paused at once, so nothing plays from the speaker.
+    engine.signalAudioEvent(AudioEvents.routeChanged | AudioEvents.deviceLost);
+    expect(session.isPlaying, isFalse);
+    session.tick();
+    expect(session.pauseReason, contains('耳机'));
     session.play();
     expect(session.isPlaying, isTrue);
     // Render the song in 512 frame blocks with the singer as mic input,
