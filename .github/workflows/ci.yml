@@ -185,12 +185,25 @@ jobs:
           xcrun simctl bootstatus "$DEVICE" -b
           echo "YINTRACE_SIMULATOR=$DEVICE" >> "$GITHUB_ENV"
       - name: Exercise the Apple plugins with both real models
+        timeout-minutes: 30
         run: flutter test integration_test/ios_smoke_test.dart -d "$YINTRACE_SIMULATOR" --reporter expanded
-      # The device benchmark's short version: Core ML options reach ONNX
-      # Runtime, the import runs through the background job. Simulator
-      # numbers are not iPhone numbers.
+      # Installing a second test app on the same simulator can hang in simctl.
+      - name: Restart the simulator
+        run: |
+          xcrun simctl shutdown "$YINTRACE_SIMULATOR" || true
+          xcrun simctl boot "$YINTRACE_SIMULATOR"
+          xcrun simctl bootstatus "$YINTRACE_SIMULATOR" -b
+      # The device benchmark's short version, the way tools/device_benchmark.sh
+      # runs it: Core ML options reach ONNX Runtime, the import runs through
+      # the background job, the report is written. Not iPhone numbers.
       - name: Device benchmark (quick, simulator)
-        run: flutter test integration_test/device_benchmark_test.dart -d "$YINTRACE_SIMULATOR" --dart-define=BENCH_QUICK=1 --reporter expanded
+        timeout-minutes: 25
+        run: |
+          flutter drive -d "$YINTRACE_SIMULATOR" \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/device_benchmark_test.dart \
+            --dart-define=BENCH_QUICK=1
+          python3 tools/benchmark_report.py build/integration_response_data.json build/device-benchmark.md
       - name: Package unsigned app
         run: cd build/ios/archive/Runner.xcarchive/Products/Applications && zip -qr "$GITHUB_WORKSPACE/Runner-unsigned.zip" Runner.app
       - uses: actions/upload-artifact@v6
