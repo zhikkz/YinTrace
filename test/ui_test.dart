@@ -104,11 +104,7 @@ Widget host(AppServices services, Widget home) => AppScope(
   services: services,
   child: RepaintBoundary(
     key: shotKey,
-    child: MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: YinTraceApp.theme(Brightness.light),
-      home: home,
-    ),
+    child: MaterialApp(debugShowCheckedModeBanner: false, theme: YinTraceApp.theme(Brightness.light), home: home),
   ),
 );
 
@@ -126,10 +122,7 @@ void main() {
     services = AppServices(
       settings: AppSettings(null),
       songs: songs,
-      models: ModelManager(
-        dir: Directory('${tmp.path}/models'),
-        loadRecipe: (_) => throw StateError('unused'),
-      ),
+      models: ModelManager(dir: Directory('${tmp.path}/models'), loadRecipe: (_) => throw StateError('unused')),
     );
     // A "pure vocal" + accompaniment import (no models needed).
     final m = melody();
@@ -141,8 +134,7 @@ void main() {
         await ImportPipeline(
           audio: const WavAudioBackend(),
           repository: songs,
-          loadModel: (p, {required inputName, required outputName, coreML}) =>
-              throw StateError('unused'),
+          loadModel: (p, {required inputName, required outputName, coreML}) => throw StateError('unused'),
         ).run(
           ImportRequest(
             audioPath: '${tmp.path}/vocal.wav',
@@ -153,20 +145,13 @@ void main() {
             vocalsOnly: true,
           ),
         );
-    await songs.addPractice(
-      song.id,
-      PracticeRecord(at: DateTime.now(), score: 74, lineScores: {0: 80, 1: 66}),
-    );
-    await songs.addPractice(
-      song.id,
-      PracticeRecord(at: DateTime.now(), score: 82, lineScores: {0: 88, 1: 71}),
-    );
+    await songs.addPractice(song.id, PracticeRecord(at: DateTime.now(), score: 74, lineScores: {0: 80, 1: 66}));
+    await songs.addPractice(song.id, PracticeRecord(at: DateTime.now(), score: 82, lineScores: {0: 88, 1: 71}));
     // The singer: right on most characters, flat on 3–4, sharp on line 2's
     // 4th character, skipping the 9th character.
     final sung = <Syl>[
       for (var i = 0; i < m.length; i++)
-        if (i != 8)
-          Syl(m[i].start + 0.02, m[i].end, m[i].midi + (i == 3 || i == 4 ? -0.7 : (i == 13 ? 0.9 : 0.05))),
+        if (i != 8) Syl(m[i].start + 0.02, m[i].end, m[i].midi + (i == 3 || i == 4 ? -0.7 : (i == 13 ? 0.9 : 0.05))),
     ];
     singer = synthVoice(sung, 10, seed: 9);
   });
@@ -334,7 +319,8 @@ void main() {
     expect(mix.frames, greaterThanOrEqualTo(10 * sr));
     await tester.pumpWidget(const SizedBox());
     await settleIo(tester, rounds: 3);
-    final saved = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!.firstWhere((r) => r.id == rec.id);
+    final saved = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!
+        .firstWhere((r) => r.id == rec.id);
     expect(saved.mix.offsetMs, lessThan(0), reason: 'the alignment is remembered');
   }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
 
@@ -357,11 +343,19 @@ void main() {
     final dir = Directory('${tmp.path}/english')..createSync();
     writeWavFile('${dir.path}/vocal.wav', voice, 1, sr);
     final meta = (await tester.runAsync(
-      () => ImportPipeline(
-        audio: const WavAudioBackend(),
-        repository: services.songs,
-        loadModel: (p, {required inputName, required outputName, coreML}) => throw StateError('unused'),
-      ).run(ImportRequest(audioPath: '${dir.path}/vocal.wav', lyrics: english, title: 'Morning River', vocalsOnly: true)),
+      () =>
+          ImportPipeline(
+            audio: const WavAudioBackend(),
+            repository: services.songs,
+            loadModel: (p, {required inputName, required outputName, coreML}) => throw StateError('unused'),
+          ).run(
+            ImportRequest(
+              audioPath: '${dir.path}/vocal.wav',
+              lyrics: english,
+              title: 'Morning River',
+              vocalsOnly: true,
+            ),
+          ),
     ))!;
     final ref = (await tester.runAsync(() => services.songs.loadReference(meta.id)))!;
     expect(ref.language.code, 'en');
@@ -372,6 +366,41 @@ void main() {
     expect(find.text('Morning comes over the river'), findsOneWidget);
     expect(find.textContaining('哪个词的目标音不对'), findsOneWidget);
     await screenshot(tester, '2c_english_song');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a Japanese song keeps its kana together and Japanese glyphs', (tester) async {
+    phone(tester);
+    // Written for this test.
+    const japanese = '[00:01.00]きょうも空(そら)はあおい\n[00:05.00]まっすぐ歩(ある)いてゆこう\n';
+    final syllables = <Syl>[];
+    var t = 1.1;
+    for (final m in const <double>[64, 66, 68, 70, 67, 66, 63, 61, 65]) {
+      syllables.add(Syl(t, t + 0.3, m));
+      t += 0.38;
+    }
+    t = 5.1;
+    for (final m in const <double>[62, 64, 66, 68, 65, 63, 61, 64, 66, 68]) {
+      syllables.add(Syl(t, t + 0.3, m));
+      t += 0.38;
+    }
+    final dir = Directory('${tmp.path}/japanese')..createSync();
+    writeWavFile('${dir.path}/vocal.wav', synthVoice(syllables, 10), 1, sr);
+    final meta = (await tester.runAsync(
+      () => ImportPipeline(
+        audio: const WavAudioBackend(),
+        repository: services.songs,
+        loadModel: (p, {required inputName, required outputName, coreML}) => throw StateError('unused'),
+      ).run(ImportRequest(audioPath: '${dir.path}/vocal.wav', lyrics: japanese, title: '空', vocalsOnly: true)),
+    ))!;
+    final ref = (await tester.runAsync(() => services.songs.loadReference(meta.id)))!;
+    expect(ref.language.code, 'ja');
+    expect(ref.lines[0].tokens.map((t) => t.text), ['きょ', 'う', 'も', '空', 'は', 'あ', 'お', 'い']);
+    expect(ref.lines[1].tokens.first.text, 'まっ');
+    await tester.pumpWidget(host(services, SongPage(songId: meta.id)));
+    await settleIo(tester, rounds: 30);
+    final line = tester.widget<Text>(find.text('きょうも空(そら)はあおい'));
+    expect(line.style?.locale, const Locale('ja', 'JP'));
     await tester.pumpWidget(const SizedBox());
   });
 

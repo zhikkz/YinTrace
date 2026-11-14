@@ -190,6 +190,34 @@ void main() {
       expect(progress.last, 1);
       final out = const WavAudioBackend().decode(path);
       expect(out.frames, 8 * sr);
+      // Only the voice, over the whole song: as long as the song, so it lines
+      // up with it elsewhere; only the sung part: the voice and its reverb.
+      final stem = exportNow(
+        ExportJob(
+          voicePath: voicePath,
+          voiceStart: 3,
+          accompanimentPath: '${tmp.path}/acc.wav',
+          songDuration: 8,
+          settings: MixSettings(vocalOnly: true),
+          outputBase: '${tmp.path}/stem',
+        ).toMessage(),
+      );
+      expect(const WavAudioBackend().decode(stem).frames, 8 * sr);
+      final part = exportNow(
+        ExportJob(
+          voicePath: voicePath,
+          voiceStart: 3,
+          accompanimentPath: '${tmp.path}/acc.wav',
+          songDuration: 8,
+          settings: MixSettings(vocalOnly: true, wholeSong: false),
+          outputBase: '${tmp.path}/part',
+        ).toMessage(),
+      );
+      expect(
+        const WavAudioBackend().decode(part).frames,
+        ((2 + 2 + reverbTail) * sr).round(),
+        reason: '2 s before the voice, the voice, its reverb tail',
+      );
       final before = rms(out.samples, sr, 2 * sr, 2), during = rms(out.samples, 3 * sr + 2000, 4 * sr, 2);
       expect(during, greaterThan(before * 3), reason: 'the voice is in from 3 s');
     }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null ? 'needs the native core (AAC encoder probe)' : null);

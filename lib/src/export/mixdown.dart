@@ -273,7 +273,7 @@ String exportNow(Map<String, dynamic> job, {void Function(double)? onProgress}) 
     takeStart: voiceStart,
     takeEnd: voiceStart + voice.length / sr,
     songDuration: duration,
-    wholeSong: settings.wholeSong && !settings.vocalOnly,
+    wholeSong: settings.wholeSong,
   );
   final mix = renderMix(
     voice: voice,
@@ -281,7 +281,9 @@ String exportNow(Map<String, dynamic> job, {void Function(double)? onProgress}) 
     accompaniment: acc,
     settings: settings,
     from: from,
-    to: settings.vocalOnly ? math.min(to, voiceStart + voice.length / sr + reverbTail) : to,
+    // The voice alone over the whole song is a stem that lines up with the
+    // song in another app; only the sung part ends with its reverb.
+    to: settings.vocalOnly && !settings.wholeSong ? math.min(to, voiceStart + voice.length / sr + reverbTail) : to,
     songDuration: duration,
     sampleRate: sr,
     onProgress: (f) => onProgress?.call(0.15 + f * 0.7),
