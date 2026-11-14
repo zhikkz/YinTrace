@@ -338,6 +338,43 @@ void main() {
     expect(saved.mix.offsetMs, lessThan(0), reason: 'the alignment is remembered');
   }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
 
+  testWidgets('an English song reads as words', (tester) async {
+    phone(tester);
+    // Written for this test.
+    const english = '[00:01.00]Morning comes over the river\n[00:05.00]Carry the light on your shoulder\n';
+    final syllables = <Syl>[];
+    var t = 1.1;
+    for (final m in const <double>[64, 62, 67, 65, 64, 61, 59, 62]) {
+      syllables.add(Syl(t, t + 0.3, m));
+      t += 0.38;
+    }
+    t = 5.1;
+    for (final m in const <double>[67, 69, 67, 72, 70, 68, 66, 63]) {
+      syllables.add(Syl(t, t + 0.3, m));
+      t += 0.38;
+    }
+    final voice = synthVoice(syllables, 9);
+    final dir = Directory('${tmp.path}/english')..createSync();
+    writeWavFile('${dir.path}/vocal.wav', voice, 1, sr);
+    final meta = (await tester.runAsync(
+      () => ImportPipeline(
+        audio: const WavAudioBackend(),
+        repository: services.songs,
+        loadModel: (p, {required inputName, required outputName, coreML}) => throw StateError('unused'),
+      ).run(ImportRequest(audioPath: '${dir.path}/vocal.wav', lyrics: english, title: 'Morning River', vocalsOnly: true)),
+    ))!;
+    final ref = (await tester.runAsync(() => services.songs.loadReference(meta.id)))!;
+    expect(ref.language.code, 'en');
+    expect(ref.lines[0].tokens.map((t) => t.text), ['Morning', 'comes', 'over', 'the', 'river']);
+    expect(ref.lines[0].tokenText, 'Morning comes over the river');
+    await tester.pumpWidget(host(services, SongPage(songId: meta.id)));
+    await settleIo(tester, rounds: 30);
+    expect(find.text('Morning comes over the river'), findsOneWidget);
+    expect(find.textContaining('哪个词的目标音不对'), findsOneWidget);
+    await screenshot(tester, '2c_english_song');
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('import page validates the timed lyrics as you type', (tester) async {
     phone(tester);
     await tester.pumpWidget(host(services, const ImportPage()));
