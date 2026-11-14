@@ -244,10 +244,18 @@ void main() {
     await tester.tap(find.text('降半音'));
     await settleIo(tester, rounds: 5);
     expect((await stored()).shift, 11);
+    // Quick taps: every one is saved, in order.
+    for (var i = 0; i < 3; i++) {
+      await tester.tap(find.text('升半音'));
+      await tester.pump();
+    }
+    await settleIo(tester, rounds: 10);
+    expect((await stored()).shift, 14);
+    expect(find.textContaining('调高了 14 个半音'), findsOneWidget);
 
     await tester.scrollUntilVisible(find.text('这个字不计分'), 200, scrollable: find.byType(Scrollable).first);
     await tester.tap(find.text('这个字不计分'));
-    await settleIo(tester, rounds: 5);
+    await settleIo(tester, rounds: 10);
     expect((await stored()).skip, isTrue);
     expect(find.text('不计分'), findsOneWidget);
 

@@ -160,9 +160,11 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
     e.setTrackGain(_acc, m.vocalOnly ? 0 : m.accompaniment);
     e.setTrackGain(_dry, m.dryGain);
     e.setTrackGain(_wet, m.wetGain);
+    // Negative near the song start (the voice moved earlier): the engine
+    // skips the beginning of the voice, like the export does.
     final at = ((rec.start + m.offsetMs / 1000) * _sr).round();
-    e.setTrackOffset(_dry, math.max(0, at));
-    e.setTrackOffset(_wet, math.max(0, at));
+    e.setTrackOffset(_dry, at);
+    e.setTrackOffset(_wet, at);
   }
 
   void _change(void Function(MixSettings m) edit) {

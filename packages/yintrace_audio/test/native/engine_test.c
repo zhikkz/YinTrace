@@ -299,7 +299,20 @@ static void test_track_offset(void) {
   yt_engine_set_playing(e, 1);
   yt_engine_render(e, out, NULL, 10);
   CHECK(fabsf(out[0] - 0.25f) < 1e-3);
+  // A negative offset skips the track's beginning.
+  float ramp[300];
+  for (int i = 0; i < 300; i++) ramp[i] = (float)i / 1000.0f;
+  CHECK(yt_engine_load_track_pcm(e, 2, ramp, 300, 1) == 0);
+  yt_engine_set_track_gain(e, 0, 0);
+  yt_engine_set_track_gain(e, 1, 0);
+  yt_engine_set_track_offset(e, 2, -100);
+  yt_engine_seek(e, 0);
+  yt_engine_set_playing(e, 1);
+  yt_engine_render(e, out, NULL, 10);
+  CHECK(fabsf(out[0] - 0.1f) < 2e-3);  // track frame 100 at song frame 0
+  CHECK(fabsf(out[2 * 9] - 0.109f) < 2e-3);
   // Loading a track resets its offset.
+  yt_engine_unload_track(e, 2);
   CHECK(yt_engine_load_track_pcm(e, 1, b, 200, 1) == 0);
   CHECK(yt_engine_length(e) == 1000);
   yt_engine_destroy(e);

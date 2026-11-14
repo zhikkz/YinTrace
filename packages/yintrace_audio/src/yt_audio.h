@@ -121,7 +121,8 @@ YT_EXPORT int32_t yt_engine_load_track_file(yt_engine* engine, int32_t slot,
                                             int32_t err_len);
 YT_EXPORT void yt_engine_unload_track(yt_engine* engine, int32_t slot);
 // The song frame at which a track's first frame plays (default 0; reset by
-// loading the track). Before it the track is silent.
+// loading the track). Before it the track is silent; a negative frame skips
+// the track's beginning.
 YT_EXPORT void yt_engine_set_track_offset(yt_engine* engine, int32_t slot, int64_t frame);
 YT_EXPORT void yt_engine_set_track_gain(yt_engine* engine, int32_t slot,
                                         float gain);
