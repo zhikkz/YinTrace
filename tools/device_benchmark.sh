@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # 在连着的 iPhone 上测人声分离的速度和内存（profile 构建，速度接近正式版）：
-#   1. 两个模型分别用 CPU（不同线程数）和几种 Core ML 设置运行，比较加载时间、
-#      每次推理时间、内存峰值，以及 Core ML 的结果和 CPU 差多少；
-#   2. 用 App 实际的导入流程完整导入一首合成歌曲，记录各阶段耗时和“预计还需”的误差。
+#   1. 用 App 实际的导入流程完整导入一首合成歌曲，记录各阶段耗时和“预计还需”的误差；
+#   2. 两个模型分别用 CPU（不同线程数）和几种 Core ML 设置运行，比较加载时间、
+#      每次推理时间、内存峰值，以及 Core ML 的结果和 CPU 差多少。
+# 测试版 App 里的“设置 → 性能测试”跑的是同一份代码（lib/src/benchmark/），只有手机时用它。
 #
 #   tools/device_benchmark.sh                      列出设备
 #   tools/device_benchmark.sh <设备 ID> [歌曲秒数]  测速，歌曲默认 60 秒（想看整首歌可以用 240）
 #
 # 需要：Mac、Xcode、Flutter 3.47.9，iPhone 已连接并信任这台 Mac，
 # ios/Runner 已在 Xcode 里选好开发者团队（和平时 flutter run 一样）。
-# 第一次运行会在手机上下载两个 UVR 模型（194 MB）。全程 10 分钟左右，请保持手机亮屏解锁。
+# 第一次运行会在手机上下载两个 UVR 模型（194 MB）。全程 15 到 25 分钟，请保持手机亮屏解锁。
 # 结果：终端里的表格，build/device-benchmark.md（可以直接发给开发者）和
 # build/integration_response_data.json（原始数据）。测试只用合成音频，不上传任何东西。
 set -euo pipefail

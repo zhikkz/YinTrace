@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../app/services.dart';
+import '../benchmark/device_benchmark.dart' show benchmarkEnabled;
 import '../models/model_catalog.dart';
 import '../models/model_manager.dart';
 import 'about_page.dart';
+import 'benchmark_page.dart';
 import 'model_setup.dart';
 import 'theme.dart';
 
@@ -113,6 +115,20 @@ class _SettingsPageState extends State<SettingsPage> {
                 '你的音高线总比原唱靠右，就把延迟补偿调大；蓝牙耳机通常要 +150 到 +250 ms。'
                 '环境吵、音高线乱跳时，把麦克风门限调高。',
               ),
+              if (benchmarkEnabled) ...[
+                const _Section('测试版'),
+                _Group(
+                  children: [
+                    ListTile(
+                      title: const Text('性能测试'),
+                      subtitle: const Text('测这台手机分离人声的速度，生成一份报告'),
+                      trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+                      onTap: () => Navigator.of(context)
+                          .push(MaterialPageRoute<void>(builder: (_) => const BenchmarkPage())),
+                    ),
+                  ],
+                ),
+              ],
               const _Section('关于'),
               _Group(
                 children: [

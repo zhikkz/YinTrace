@@ -80,6 +80,14 @@ YT_EXPORT double yt_session_latency(void);
 // (iOS: os_proc_available_memory). -1 where there is no such limit or it is
 // unknown (other platforms, the simulator).
 YT_EXPORT int64_t yt_available_memory(void);
+// Hardware model identifier, e.g. "iPhone15,2" (Apple platforms). Writes a
+// NUL-terminated string to `buf` and returns its length; 0 when unknown.
+YT_EXPORT int32_t yt_device_model(char* buf, int32_t len);
+// Installed physical memory in bytes; -1 when unknown.
+YT_EXPORT int64_t yt_physical_memory(void);
+// The system's thermal state: 0 nominal, 1 fair, 2 serious, 3 critical
+// (the system slows the device down from "serious" on). -1 when unknown.
+YT_EXPORT int32_t yt_thermal_state(void);
 
 // ---------------------------------------------------------------------------
 // Engine

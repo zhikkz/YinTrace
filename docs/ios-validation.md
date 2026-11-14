@@ -1,5 +1,8 @@
 # iOS 验收（需要 Mac 和 iPhone）
 
+只有手机时，大部分项目可以用测试版完成，见 [只用 iPhone 测试](phone-testing.md)；
+Instruments 的内存测量和查看 App 内部文件需要 Mac。
+
 2026-11-14 的 [CI 实跑](https://github.com/zhikkz/YinTrace/actions/runs/43554773740) 已通过。
 iPhone 16 Pro 模拟器中，实际 Flutter/ORT 同进程峰值约 879.5 MB（短窗口推理），
 两个模型均连跑三次，AAC 往返、下载与组装及 AGPL 资产读取通过。
@@ -35,9 +38,9 @@ CI 归档证明可编译、所有 FFI 符号可见；模拟器冒烟测试覆盖
 - [ ] 先测试一段短音频，再测试 5 分钟整曲；用 Instruments 的 Allocations / VM Tracker
       记录整个进程的 Physical Footprint（包含 Flutter、ORT、解码和音频缓冲），
       目标明显低于 1.5 GB。连续导入两次，检查 session 关闭后内存是否释放。
-- [ ] 运行 `tools/device_benchmark.sh <设备 ID> 240`（见 [真机测速](device-benchmark.md)），
-      把生成的 `build/device-benchmark.md` 发给开发者：其中有完整导入的各阶段耗时、内存峰值、
-      “预计还需”的误差，以及 CPU 与 Core ML 的对比。
+- [ ] 在测试版里运行 设置 → 性能测试（4 分钟，见 [只用 iPhone 测试](phone-testing.md)）并复制报告，
+      或运行 `tools/device_benchmark.sh <设备 ID> 240`（见 [真机测速](device-benchmark.md)）：
+      报告里有完整导入的各阶段耗时、内存峰值、去和声用的窗口、“预计还需”的误差，以及 CPU 与 Core ML 的对比。
 - [ ] 分别记录 MDX / VR / 全流程耗时。README 的桌面结果不能用作 iPhone 承诺。
       导入页的“预计还需”在开始一分钟后应与实际剩余时间大致相符；记下偏差。
 - [ ] 导入完成后看 `songs/<id>/song.json` 的 `modelInfo.vr`：写着 `(window 320)` 表示系统报告的
