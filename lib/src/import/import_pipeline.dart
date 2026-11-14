@@ -185,6 +185,10 @@ class ImportPipeline {
         }
         modelInfo['mdx'] = mdxCfg.name;
         if (r.vrModelPath != null) {
+          // Keep only the MDX vocals while VR owns its large working set.
+          // Re-decode the local source after closing VR to make accompaniment;
+          // decoding twice costs far less memory than retaining a whole mix.
+          mix = Float32List(0);
           const vrCfg = VrConfig.karaoke6Hp;
           final vr = await loadModel(
             r.vrModelPath!,
@@ -202,6 +206,12 @@ class ImportPipeline {
             modelInfo['vr'] = vrCfg.name;
           } finally {
             await vr.close();
+          }
+        }
+        if (mix.isEmpty) {
+          mix = audio.decode(r.audioPath, sampleRate: 44100, channels: 2).samples;
+          if (mix.length != vocals.length) {
+            throw ImportException('处理期间音频长度发生了变化，请重新选择文件导入');
           }
         }
         // Reuse the decoded mixture after both models are done. No third

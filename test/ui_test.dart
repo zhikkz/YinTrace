@@ -260,9 +260,15 @@ void main() {
         ),
       ),
     );
+    // Return to the foreground while the background decode may still be
+    // pending. Loading completion must keep the microphone stopped.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await settleIo(tester, rounds: 5);
     expect(session.error, isNull);
     expect(session.started, isTrue);
+    session.engine!.render(512, input: Float32List(512));
+    expect(session.engine!.readCapture(), isEmpty);
     session.play();
     final engine = session.engine!;
     // The native device must stop both playback and capture on backgrounding.

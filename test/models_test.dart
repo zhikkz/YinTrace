@@ -442,9 +442,11 @@ void main() {
       expect(m.error, contains('校验失败'));
     });
 
-    test('deleting frees everything', () async {
+    test('deleting frees everything, including files from the fixed-window version', () async {
       final m = manager();
       await m.install();
+      File('${m.dir.path}/UVR-MDX-NET-Voc_FT.onnx').writeAsStringSync('old model');
+      File('${m.dir.path}/6_HP-Karaoke-UVR.onnx').writeAsStringSync('old model');
       await m.deleteAll();
       expect(m.isReady, isFalse);
       expect(m.phase, ModelPhase.missing);

@@ -19,8 +19,8 @@ enum VrStem {
 /// Stereo complex spectrogram, frequency-major per channel.
 class _StereoSpec {
   _StereoSpec(this.bins, this.frames)
-      : re = [Float32List(bins * frames), Float32List(bins * frames)],
-        im = [Float32List(bins * frames), Float32List(bins * frames)];
+    : re = [Float32List(bins * frames), Float32List(bins * frames)],
+      im = [Float32List(bins * frames), Float32List(bins * frames)];
 
   final int bins;
   final int frames;
@@ -38,13 +38,10 @@ class VrSeparator {
   VrSeparator(
     this.model,
     this.config, {
-    this.segmentSeconds = 30,
+    this.segmentSeconds = 12,
     this.marginSeconds = 3,
     this.crossfadeSeconds = 1,
-  }) : _stfts = [
-          for (final b in config.bands)
-            Stft(nFft: b.nFft, hop: b.hl)
-        ];
+  }) : _stfts = [for (final b in config.bands) Stft(nFft: b.nFft, hop: b.hl)];
 
   final TensorModel model;
   final VrConfig config;
@@ -56,8 +53,11 @@ class VrSeparator {
   int get _sr => config.bands.last.sr;
 
   /// Separates interleaved stereo PCM at the model rate (44.1 kHz).
-  Future<Float32List> separate(Float32List stereo,
-      {VrStem stem = VrStem.secondary, ProgressCallback? onProgress}) async {
+  Future<Float32List> separate(
+    Float32List stereo, {
+    VrStem stem = VrStem.secondary,
+    ProgressCallback? onProgress,
+  }) async {
     final frames = stereo.length ~/ 2;
     final segs = _segments(frames);
 
@@ -124,8 +124,13 @@ class VrSeparator {
     return [l, r];
   }
 
-  void _accumulate(Float32List out, Float32List weight, List<Float64List> wave,
-      (int, int, int, int) seg, int frames) {
+  void _accumulate(
+    Float32List out,
+    Float32List weight,
+    List<Float64List> wave,
+    (int, int, int, int) seg,
+    int frames,
+  ) {
     final (start, end, c0, c1) = seg;
     final fade = math.max(1, (crossfadeSeconds * _sr).round());
     final half = fade ~/ 2;
@@ -164,10 +169,7 @@ class VrSeparator {
       } else {
         final upper = waves[d + 1]!;
         final fromSr = bands[d + 1].sr;
-        waves[d] = [
-          resample(upper[0], fromSr, bp.sr),
-          resample(upper[1], fromSr, bp.sr),
-        ];
+        waves[d] = [resample(upper[0], fromSr, bp.sr), resample(upper[1], fromSr, bp.sr)];
       }
       specs[d] = _waveToSpectrogram(waves[d]!, d);
       if (d < n - 1) waves[d + 1] = null; // free
@@ -293,8 +295,7 @@ class VrSeparator {
   // ---------------------------------------------------------------------
 
   /// Returns the mask [2][bins+1][frames] (frequency-major per channel).
-  Future<List<Float32List>> _inferMask(
-      _StereoSpec x, double coef, void Function(double) progress) async {
+  Future<List<Float32List>> _inferMask(_StereoSpec x, double coef, void Function(double) progress) async {
     final c = config;
     final nBins = x.bins;
     final nFrame = x.frames;
@@ -381,17 +382,18 @@ class VrSeparator {
   }
 
   _StereoSpec _applyMask(_StereoSpec x, List<Float32List> mask, VrStem stem) {
-    final y = _StereoSpec(x.bins, x.frames);
+    // The unmasked spectrogram is no longer needed after inference.
+    // Reuse it instead of holding a second complex stereo spectrogram.
     final secondary = stem == VrStem.secondary;
     for (var ch = 0; ch < 2; ch++) {
       final m = mask[ch];
       for (var i = 0; i < m.length; i++) {
         final g = secondary ? 1 - m[i] : m[i];
-        y.re[ch][i] = x.re[ch][i] * g;
-        y.im[ch][i] = x.im[ch][i] * g;
+        x.re[ch][i] *= g;
+        x.im[ch][i] *= g;
       }
     }
-    return y;
+    return x;
   }
 
   // ---------------------------------------------------------------------
@@ -411,10 +413,18 @@ class VrSeparator {
       final h = bp.cropStop - bp.cropStart;
       for (var ch = 0; ch < 2; ch++) {
         for (var k = 0; k < h; k++) {
-          specS.re[ch].setRange((bp.cropStart + k) * frames, (bp.cropStart + k + 1) * frames,
-              specM.re[ch], (offset + k) * frames);
-          specS.im[ch].setRange((bp.cropStart + k) * frames, (bp.cropStart + k + 1) * frames,
-              specM.im[ch], (offset + k) * frames);
+          specS.re[ch].setRange(
+            (bp.cropStart + k) * frames,
+            (bp.cropStart + k + 1) * frames,
+            specM.re[ch],
+            (offset + k) * frames,
+          );
+          specS.im[ch].setRange(
+            (bp.cropStart + k) * frames,
+            (bp.cropStart + k + 1) * frames,
+            specM.im[ch],
+            (offset + k) * frames,
+          );
         }
       }
       offset += h;
@@ -487,10 +497,7 @@ class VrSeparator {
       return [l, r];
     }
     if (c.reverse) {
-      return [
-        Float64List.fromList(l.reversed.toList()),
-        Float64List.fromList(r.reversed.toList()),
-      ];
+      return [Float64List.fromList(l.reversed.toList()), Float64List.fromList(r.reversed.toList())];
     }
     if (c.midSide) {
       final a = Float64List(n), b = Float64List(n);

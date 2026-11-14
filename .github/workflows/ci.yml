@@ -31,6 +31,10 @@ jobs:
         run: |
           cmake -S packages/yintrace_audio/src -B build/host -DCMAKE_BUILD_TYPE=Release
           cmake --build build/host
+      - name: Disable Flutter and Dart analytics
+        run: |
+          flutter config --no-analytics
+          dart --disable-analytics
       - run: flutter pub get
       - run: flutter analyze
       - name: Plugin tests
@@ -110,6 +114,10 @@ jobs:
           git -C build/uvr checkout -q FETCH_HEAD -- lib_v5/spec_utils.py lib_v5/vr_network
       - name: Separate a clip with UVR's code and the real models
         run: python tools/reference/make_real_reference.py --uvr build/uvr --models build/uvr-models --out build/real-reference
+      - name: Disable Flutter and Dart analytics
+        run: |
+          flutter config --no-analytics
+          dart --disable-analytics
       - run: flutter pub get
       - name: Build native core for the import pipeline
         run: |
@@ -136,6 +144,10 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Disable Flutter and Dart analytics
+        run: |
+          flutter config --no-analytics
+          dart --disable-analytics
       - run: flutter pub get
       # An archive build runs the same strip step as a TestFlight/App Store build.
       - run: flutter build ipa --release --no-codesign

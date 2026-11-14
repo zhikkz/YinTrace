@@ -1,7 +1,7 @@
 # iOS 验收（需要 Mac 和 iPhone）
 
 CI 归档证明可编译、所有 FFI 符号可见；模拟器冒烟测试覆盖真实 ONNX
-推理、AAC 往返和运行中的许可登记。它们不能代替 iPhone 验收。
+推理、AAC 往返和运行中的 AGPL 资产。它们不能代替 iPhone 验收。
 请使用 Flutter 3.47.9，iOS 16+，在真机以 release 运行，记录机型、iOS、
 歌曲长度、两阶段耗时和 Instruments 的 Physical Footprint 峰值。
 
