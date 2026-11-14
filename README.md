@@ -30,7 +30,8 @@ Windows / macOS / Android 保留了可移植性。
 - [测试](#测试)
 - [移植到其他平台](#移植到其他平台)
 - [已知限制](#已知限制)
-- [致谢与第三方许可](#致谢与第三方许可)
+- [许可](#许可)
+- [致谢](#致谢)
 
 ---
 
@@ -240,16 +241,49 @@ macOS 构建（同时在 macOS 上测试 Core Audio 的解码与 AAC 编码路�
 ## 已知限制
 
 - **逐字对齐是启发式的**（拼音声母先验 + 清辅音间隙 / 音量凹陷 / 音高变化 + 全曲动态规划），
-  没有用语音识别模型。用示例歌曲的纯人声（4:19，36 句，380 个字）检查过：每句都对到了正确的
-  起点，没有测不到音高的字；但两个字唱在同一个长音里、中间没有任何辅音痕迹时，边界仍可能差一个字。在这种地方加一个空格（表示停顿）或修正时间戳可以改善。
+  没有用语音识别模型。用一首真实歌曲的纯人声（4:19，36 句，380 个字）检查过：每句都对到了正确的
+  起点，没有测不到音高的字；但两个字唱在同一个长音里、中间没有任何辅音痕迹时，
+  边界仍可能差一个字。在这种地方加一个空格（表示停顿）或修正时间戳可以改善。
 - 人声分离在手机 CPU 上需要几分钟；可以在设置里试试 Core ML 加速（不兼容时自动回退 CPU）。
 - 分离和去和声的质量取决于 UVR 模型本身；有残留伴奏的段落会被电平门限过滤，可能少测到个别字。
 - 练习时外放会让麦克风录到伴奏，请尽量戴耳机。
 - 这个仓库里的 iOS 部分在 Linux 环境中开发，C/Objective-C 代码无法在本地编译验证，
   请以 CI 的 iOS 构建结果和实机运行为准。
 
-## 致谢与第三方许可
+## 许可
 
-见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。分离算法的前后处理移植自
+YinTrace 是自由软件，按 **GNU Affero 通用公共许可证第 3 版（AGPL-3.0）** 发布，全文见 [LICENSE](LICENSE)。
+
+```
+YinTrace - 唱歌练习软件
+Copyright (C) 2026 zhikkz
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+```
+
+简单说：你可以自由使用、研究、修改和再分发；但只要你分发它（包括改过的版本、编译好的安装包），
+或者用改过的版本通过网络对外提供服务，就必须以同样的 AGPL-3.0 许可向对方提供完整的源代码。
+
+- 仓库里移植或引用的第三方部分（UVR 的分离算法和网络结构、miniaudio、pypinyin 的拼音数据等）
+  原本是 MIT、BSD、Apache 2.0 或公有领域，都与 AGPL-3.0 兼容；它们的版权声明和许可全文保留在
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，App 里在“设置 → 致谢与开源许可”也能看到。
+- **模型不属于本项目，也不受这份许可约束**：`UVR-MDX-NET-Voc_FT` 和 `6_HP-Karaoke-UVR` 由
+  Ultimate Vocal Remover 的开发者（Anjok07、aufr33）训练并发布，App 从 UVR 的官方模型库下载，
+  仓库和安装包里都没有权重。UVR 要求使用其模型的第三方应用注明 UVR 及其开发者。
+- 你导入的歌曲、歌词归各自的权利人所有，只保存在你的设备上；仓库里的示例歌词是为本项目写的。
+
+## 致谢
+
+分离算法的前后处理移植自
 [Ultimate Vocal Remover GUI](https://github.com/Anjok07/ultimatevocalremovergui)（MIT），
-模型 `UVR-MDX-NET-Voc_FT` 与 `6_HP-Karaoke-UVR` 来自 UVR 项目，使用时请注明 UVR 及其作者。
+其中 VR 架构来自 [tsurumeso/vocal-remover](https://github.com/tsurumeso/vocal-remover)，
+MDX-Net 来自 [Kuielab / Woosung Choi](https://github.com/kuielab/mdx-net)。
+音高检测是 YIN 算法（de Cheveigné & Kawahara, 2002）。完整列表见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

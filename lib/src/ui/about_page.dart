@@ -44,7 +44,16 @@ class AboutPage extends StatelessWidget {
               credit('音高检测', 'YIN 算法，Alain de Cheveigné 与 Hideki Kawahara，2002。'),
               credit('其他', '音频引擎 miniaudio（David Reid）；推理引擎 ONNX Runtime（Microsoft）；'
                   '拼音数据 pypinyin（mozillazg）；界面 Flutter。'),
-              const SizedBox(height: 6),
+              const SizedBox(height: 10),
+              Text('许可', style: context.type.titleLarge),
+              const SizedBox(height: 14),
+              Text('YinTrace 是自由软件，按 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）发布，不提供任何担保。'
+                  '你可以使用、修改和再分发它；分发它或用修改版对外提供网络服务时，要以同样的许可提供源代码。',
+                  style: context.type.bodyMedium),
+              const SizedBox(height: 10),
+              Text('$appCopyright\n源代码：${appSourceUrl.replaceFirst('https://', '')}',
+                  style: context.type.bodySmall?.copyWith(height: 1.6)),
+              const SizedBox(height: 18),
               OutlinedButton(
                 onPressed: () => showLicensePage(
                   context: context,
@@ -52,7 +61,7 @@ class AboutPage extends StatelessWidget {
                   applicationVersion: appVersion,
                 ),
                 child: Row(children: [
-                  const Expanded(child: Text('开源许可')),
+                  const Expanded(child: Text('许可全文与开源组件')),
                   Icon(Icons.chevron_right_rounded, color: p.inkFaint),
                 ]),
               ),

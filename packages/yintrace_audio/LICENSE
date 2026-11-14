@@ -1,6 +1,15 @@
 YinTrace native audio core.
+Copyright (C) 2026 zhikkz
 
-This package is part of the YinTrace repository; see the repository root for
-its license terms. It includes miniaudio (src/miniaudio.h), which is available
-under the public domain (Unlicense) or MIT No Attribution — see the end of that
-file. See ../../THIRD_PARTY_NOTICES.md for other third-party components.
+This package is part of YinTrace and is licensed under the GNU Affero General
+Public License, version 3. The full text is in the LICENSE file at the root of
+the YinTrace repository (https://github.com/zhikkz/YinTrace).
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE.
+
+It includes miniaudio (src/miniaudio.h) by David Reid, which is available
+under the public domain (Unlicense) or MIT No Attribution - see the end of
+that file. See THIRD_PARTY_NOTICES.md in the repository for other third-party
+components.
