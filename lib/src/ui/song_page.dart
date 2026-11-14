@@ -236,7 +236,7 @@ class _SongPageState extends State<SongPage> {
                     Text('我的录音', style: context.type.titleLarge),
                     const SizedBox(height: 2),
                     Text('点一段，配上伴奏做成成品导出。', style: context.type.bodySmall),
-                    for (final r in _recordings.take(8))
+                    for (final r in _recordings)
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.library_music_rounded),
