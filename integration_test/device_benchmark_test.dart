@@ -48,6 +48,7 @@ void log(String line) {
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('device benchmark: CPU against Core ML, and a complete import', (tester) async {
+    log('开始${_quick ? '（快速模式）' : ''}');
     final report = <String, Object?>{};
     final tmp = Directory.systemTemp.createTempSync('yintrace_bench');
     try {
@@ -115,10 +116,12 @@ void main() {
         }
       }
 
-      await model('MDX T=128', mdxPath, mdxIn);
+      // The quick version (simulator) tries Core ML on one model only: there
+      // Core ML compiles on the host CPU, which takes minutes per model.
+      await model('MDX T=128', mdxPath, mdxIn, ml: !_quick);
       await model('MDX T=128（固定形状）', staticMdx, mdxIn, cpu: false, referenceFrom: 'MDX T=128');
-      await model('VR 512', vrPath, vrIn);
-      await model('VR 320', vrPath, vr320In, ml: false);
+      await model('VR 512', vrPath, vrIn, ml: !_quick);
+      if (!_quick) await model('VR 320', vrPath, vr320In, ml: false);
       report['models'] = results;
       expect(results.where((r) => r['provider'] == 'CPU 4 线程' && r['error'] != null), isEmpty);
 
