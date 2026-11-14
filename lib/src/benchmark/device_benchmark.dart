@@ -14,13 +14,13 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
 import '../app/licenses.dart';
 import '../audio/wav.dart';
 import '../import/import_job.dart';
 import '../import/import_pipeline.dart';
+import '../import/vocal_acceleration.dart';
 import '../separation/mdx_separator.dart';
 import '../separation/model_config.dart';
 import '../separation/onnx_model.dart';
@@ -33,18 +33,21 @@ const _flag = String.fromEnvironment('YINTRACE_BENCHMARK');
 /// `--dart-define=YINTRACE_BENCHMARK=true`.
 const benchmarkEnabled = _flag == 'true' || _flag == '1';
 
-/// Core ML set-ups worth comparing (ONNX Runtime's Core ML provider options).
+/// Core ML set-ups worth comparing for the vocal model (ONNX Runtime's
+/// Core ML provider options), the app's own first. On an iPhone
+/// (iPhone18,3) every set-up made iOS close the app with the karaoke model,
+/// and the vocal model with its time axis fixed to 128 was no faster than
+/// the dynamic one, so neither is measured any more.
 const coreMLSetups = <String, Map<String, String>>{
+  'Core ML MLProgram CPU+GPU': vocalCoreMLOptions,
   // ONNX Runtime spells "all" in capitals (its header comment says "All").
   'Core ML MLProgram 全部单元': {'ModelFormat': 'MLProgram', 'MLComputeUnits': 'ALL'},
   'Core ML MLProgram CPU+神经网络引擎': {'ModelFormat': 'MLProgram', 'MLComputeUnits': 'CPUAndNeuralEngine'},
-  'Core ML MLProgram CPU+GPU': {'ModelFormat': 'MLProgram', 'MLComputeUnits': 'CPUAndGPU'},
   'Core ML NeuralNetwork 全部单元': {'ModelFormat': 'NeuralNetwork', 'MLComputeUnits': 'ALL'},
 };
 
 /// Names of the measured models in the report.
 const benchMdx = 'MDX T=128';
-const benchMdxStatic = 'MDX T=128（固定形状）';
 const benchVr = 'VR 512';
 const benchVr320 = 'VR 320';
 
@@ -61,8 +64,8 @@ class BenchmarkOptions {
   /// Length of the synthesized song that goes through the complete import.
   final int songSeconds;
 
-  /// The short version (CI simulator): CPU with 4 threads only, Core ML on
-  /// the fixed-shape MDX model with one set-up, one run each.
+  /// The short version (CI simulator): CPU with 4 threads only, Core ML
+  /// with the app's set-up only, one run each.
   final bool quick;
 }
 
@@ -100,7 +103,14 @@ class _Inputs {
 /// [revision] changes, so what was measured survives the system closing the
 /// app, and [DeviceBenchmark.resume] continues from it.
 class DeviceBenchmark extends ChangeNotifier {
-  DeviceBenchmark({required this.mdxPath, required this.vrPath, this.options = const BenchmarkOptions(), this.onLog});
+  DeviceBenchmark({
+    required this.mdxPath,
+    required this.vrPath,
+    this.options = const BenchmarkOptions(),
+    this.acceleration = const ImportAcceleration(),
+    this.onImported,
+    this.onLog,
+  });
 
   /// Continues [previous], a report whose run ended early. Finished steps
   /// are kept. The step that was running when the app was closed is
@@ -111,6 +121,8 @@ class DeviceBenchmark extends ChangeNotifier {
     Map<String, Object?> previous, {
     required String mdxPath,
     required String vrPath,
+    ImportAcceleration acceleration = const ImportAcceleration(),
+    void Function(Map<String, String> modelInfo)? onImported,
     void Function(String line)? onLog,
   }) {
     final o = previous['options'] is Map ? previous['options'] as Map : const {};
@@ -118,6 +130,8 @@ class DeviceBenchmark extends ChangeNotifier {
       mdxPath: mdxPath,
       vrPath: vrPath,
       options: BenchmarkOptions(songSeconds: (o['song_seconds'] as num?)?.toInt() ?? 60, quick: o['quick'] == true),
+      acceleration: acceleration,
+      onImported: onImported,
       onLog: onLog,
     );
     bench.report.addAll((jsonDecode(jsonEncode(previous)) as Map).cast<String, Object?>());
@@ -128,6 +142,13 @@ class DeviceBenchmark extends ChangeNotifier {
   final String mdxPath;
   final String vrPath;
   final BenchmarkOptions options;
+
+  /// How the complete import runs its models: as the app's own imports do
+  /// (VocalAcceleration.beforeImport).
+  final ImportAcceleration acceleration;
+
+  /// Gets what the import reported (for VocalAcceleration.afterImport).
+  final void Function(Map<String, String> modelInfo)? onImported;
   final void Function(String line)? onLog;
 
   /// The results so far (JSON values only).
@@ -154,7 +175,6 @@ class DeviceBenchmark extends ChangeNotifier {
   ImportJob? _job;
   late Directory _tmp;
   _Inputs? _inputs;
-  String? _staticMdx;
   int _caches = 0;
 
   /// The first CPU output of each model: what Core ML is compared with.
@@ -291,23 +311,16 @@ class DeviceBenchmark extends ChangeNotifier {
     _Step cpu(String name, int t) => _Step('$name · CPU $t 线程', () => _model(name, 'CPU $t 线程', threads: t));
     _Step ml(String name, MapEntry<String, Map<String, String>> e) =>
         _Step('$name · ${e.key}', () => _model(name, e.key, coreML: e.value));
-    _Step cache(String name) => _Step('$name · Core ML 编译缓存', () => _cache(name));
     // The import first, then everything on the CPU: the numbers that matter
     // most are in before a Core ML set-up can make iOS close the app.
-    // The quick version (simulator) tries Core ML on one model only: there
-    // Core ML compiles on the host CPU, which takes minutes per model.
     return [
       _Step('完整导入 ${benchDurationText(options.songSeconds)}的合成歌曲', _import),
       for (final t in threads) cpu(benchMdx, t),
       for (final t in threads) cpu(benchVr, t),
       if (!quick)
         for (final t in threads) cpu(benchVr320, t),
-      if (!quick)
-        for (final e in coreML) ml(benchMdx, e),
-      for (final e in coreML) ml(benchMdxStatic, e),
-      if (!quick)
-        for (final e in coreML) ml(benchVr, e),
-      if (!quick) ...[cache(benchMdx), cache(benchMdxStatic), cache(benchVr)],
+      for (final e in coreML) ml(benchMdx, e),
+      if (!quick) _Step('$benchMdx · Core ML 编译缓存', () => _cache(benchMdx)),
     ];
   }
 
@@ -332,6 +345,10 @@ class DeviceBenchmark extends ChangeNotifier {
           mdxModelPath: mdxPath,
           vrModelPath: vrPath,
           keepOriginal: false,
+          mdxCoreML: acceleration.coreML,
+          coreMLMarker: acceleration.marker,
+          verifyCoreML: acceleration.verify,
+          speed: acceleration.speed,
         ),
         '${_tmp.path}/songs',
       );
@@ -354,7 +371,13 @@ class DeviceBenchmark extends ChangeNotifier {
               notifyListeners();
             }
           case ImportDoneEvent(:final song):
-            r['vr'] = song.modelInfo['vr'];
+            final info = song.modelInfo;
+            r['vr'] = info['vr'];
+            r['mdx_runtime'] = info['mdxRuntime'];
+            r['coreml_check'] = info[ImportPipeline.coreMLInfo];
+            r['mdx_run_s'] = double.tryParse(info['mdxRunSeconds'] ?? '');
+            r['vr_run_s'] = double.tryParse(info['vrRunSeconds'] ?? '');
+            onImported?.call(info);
           case ImportFailedEvent(:final message, :final cancelled):
             if (cancelled) completed = false;
             r['error'] = cancelled ? '已停止' : message;
@@ -388,6 +411,7 @@ class DeviceBenchmark extends ChangeNotifier {
     };
     report['import'] = r;
     _say('导入用时 ${benchDurationText(total)}（${(total / seconds).toStringAsFixed(2)} 倍歌曲时长），'
+        '人声分离用 ${r['mdx_runtime'] ?? '–'}${r['coreml_check'] != null ? '（${r['coreml_check']}）' : ''}，'
         '去和声窗口：${r['vr'] ?? '–'}，内存峰值 +${_mbValue(r['peak_footprint_mb'] as double?)}'
         '${r['error'] != null ? '，错误：${r['error']}' : ''}');
     return completed;
@@ -429,7 +453,6 @@ class DeviceBenchmark extends ChangeNotifier {
     final inputs = _inputs ??= await _captureInputs();
     return switch (name) {
       benchMdx => (mdxPath, inputs.mdx),
-      benchMdxStatic => (await _staticMdxPath(), inputs.mdx),
       benchVr => (vrPath, inputs.vr),
       _ => (vrPath, inputs.vr320),
     };
@@ -442,19 +465,8 @@ class DeviceBenchmark extends ChangeNotifier {
     return _captureInBackground(math.min(options.songSeconds.toDouble(), synthLoopSeconds));
   }
 
-  Future<String> _staticMdxPath() async {
-    if (_staticMdx case final path?) return path;
-    final recipe = jsonDecode(await rootBundle.loadString('assets/models/mdx_graph.json')) as Map<String, dynamic>;
-    final offsets = (recipe['patchOffsets'] as List).cast<int>();
-    final out = '${_tmp.path}/mdx-static-128.onnx';
-    await _writeStaticMdxInBackground(mdxPath, out, offsets);
-    return _staticMdx = out;
-  }
-
-  /// The CPU output Core ML is compared with: of the same model, or of the
-  /// dynamic one for the fixed-shape MDX (same weights, same input).
-  Future<Float32List?> _reference(String name) async {
-    final key = name == benchMdxStatic ? benchMdx : name;
+  /// The CPU output Core ML is compared with.
+  Future<Float32List?> _reference(String key) async {
     if (_cpuOutputs[key] case final out?) return out;
     // The CPU steps ran before the app was closed: compute it again.
     _say('先在 CPU 上算一遍 $key 的参考输出');
@@ -587,9 +599,6 @@ Future<void> _writeSongInBackground(String path, int seconds) =>
 
 Future<_Inputs> _captureInBackground(double seconds) => Isolate.run(() => _capture(seconds));
 
-Future<void> _writeStaticMdxInBackground(String source, String out, List<int> offsets) =>
-    Isolate.run(() => writeStaticMdx(source, out, offsets));
-
 String _mb(int? bytes) => bytes == null ? '未知' : '${(bytes / 1e6).round()} MB';
 
 String _mbValue(double? mb) => mb == null ? '未知' : '${mb.round()} MB';
@@ -649,20 +658,6 @@ Future<_Inputs> _capture(double seconds) async {
     await one((m) => VrSeparator(m, VrConfig.karaoke6Hp).separate(clip), 1),
     await one((m) => VrSeparator(m, VrConfig.karaoke6Hp.withWindowSize(320)).separate(clip), 2),
   );
-}
-
-/// The dynamic MDX model with its time axis fixed to 128 again (the same six
-/// bytes the install recipe changed, now `dim_value: 128`). Core ML may run a
-/// fixed shape better.
-void writeStaticMdx(String dynamicPath, String out, List<int> patchOffsets) {
-  final bytes = File(dynamicPath).readAsBytesSync();
-  for (final offset in patchOffsets) {
-    if (bytes[offset] != 0x12 || bytes[offset + 1] != 0x01 || bytes[offset + 2] != 0x54) {
-      throw StateError('unexpected bytes at $offset');
-    }
-    bytes.setAll(offset, const [0x08, 0x80, 0x01]); // dim_value: 128
-  }
-  File(out).writeAsBytesSync(bytes, flush: true);
 }
 
 /// Writes [seconds] of [synthSong] to [path] as 16-bit stereo WAV at

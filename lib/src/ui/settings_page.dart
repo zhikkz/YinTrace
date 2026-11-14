@@ -40,6 +40,16 @@ class _SettingsPageState extends State<SettingsPage> {
                     listenable: services.models,
                     builder: (context, _) => _ModelsRow(models: services.models),
                   ),
+                  if (services.acceleration.supported)
+                    ListenableBuilder(
+                      listenable: services.acceleration,
+                      builder: (context, _) => SwitchListTile(
+                        title: const Text('用 GPU 加速人声分离'),
+                        subtitle: Text(services.acceleration.status),
+                        value: services.acceleration.active,
+                        onChanged: services.acceleration.setEnabled,
+                      ),
+                    ),
                 ],
               ),
               const _Footnote(

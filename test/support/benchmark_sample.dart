@@ -1,5 +1,9 @@
 import 'package:yintrace/src/benchmark/device_benchmark.dart';
 
+/// A model name of the first benchmark version (no longer measured): old
+/// reports with it still render.
+const oldStatic = 'MDX T=128（固定形状）';
+
 /// A report shaped like a finished run on a phone (made-up numbers).
 Map<String, Object?> sampleReport() => {
   'version': benchmarkReportVersion,
@@ -30,7 +34,7 @@ Map<String, Object?> sampleReport() => {
     {'model': benchMdx, 'provider': 'CPU 4 线程', 'load_s': 0.8, 'first_run_s': 2.1, 'run_s': 1.9, 'thermal': 'fair'},
     {'model': benchMdx, 'provider': 'CPU 2 线程', 'load_s': 0.7, 'first_run_s': 3.1, 'run_s': 3.0},
     {
-      'model': benchMdxStatic,
+      'model': oldStatic,
       'provider': 'Core ML MLProgram 全部单元',
       'load_s': 25.0,
       'first_run_s': 0.9,
@@ -38,7 +42,7 @@ Map<String, Object?> sampleReport() => {
       'snr_vs_cpu_db': 61.2,
     },
     {
-      'model': benchMdxStatic,
+      'model': oldStatic,
       'provider': 'Core ML NeuralNetwork 全部单元',
       'load_s': 30.0,
       'first_run_s': 0.4,

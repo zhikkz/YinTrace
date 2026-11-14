@@ -135,7 +135,7 @@ void main() {
         await ImportPipeline(
           audio: const WavAudioBackend(),
           repository: songs,
-          loadModel: (p, {required inputName, required outputName}) =>
+          loadModel: (p, {required inputName, required outputName, coreML}) =>
               throw StateError('unused'),
         ).run(
           ImportRequest(

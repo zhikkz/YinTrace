@@ -104,8 +104,8 @@ class ImportJob {
 
     final pipeline = ImportPipeline(
       audio: const NativeAudioBackend(),
-      loadModel: (path, {required inputName, required outputName}) =>
-          OnnxTensorModel.load(path, inputName: inputName, outputName: outputName),
+      loadModel: (path, {required inputName, required outputName, coreML}) =>
+          OnnxTensorModel.load(path, inputName: inputName, outputName: outputName, coreML: coreML),
       repository: SongRepository(Directory(root)),
       availableMemory: () => NativeAudio.availableMemory,
     );

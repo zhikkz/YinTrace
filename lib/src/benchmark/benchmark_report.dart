@@ -17,8 +17,10 @@ List<String> benchmarkConclusions(Map<String, Object?> data) {
   if (imp['error'] != null) {
     out.add('完整导入没有成功：${imp['error']}');
   } else if (total is num && song is num && factor is num) {
+    final runtime = imp['mdx_runtime'];
     out.add('导入 ${benchDurationText(song)}的歌用了 ${benchDurationText(total)}，'
-        '是歌曲时长的 ${factor.toStringAsFixed(2)} 倍。');
+        '是歌曲时长的 ${factor.toStringAsFixed(2)} 倍'
+        '${runtime == 'Core ML' ? '（人声分离用 GPU）' : runtime == 'CPU' ? '（人声分离用 CPU）' : ''}。');
   }
   final models = _rows(data);
   for (final name in {for (final m in models) m['model'] as String}) {
@@ -111,7 +113,10 @@ String benchmarkMarkdown(Map<String, Object?> data) {
             ['合成歌曲时长', imp['song_seconds'] is num ? benchDurationText(imp['song_seconds'] as num) : '–'],
             ['总耗时', _num(imp['total_s'], 1, ' 秒')],
             ['耗时 / 歌曲时长', _num(imp['realtime_factor'], 2, ' 倍')],
+            if (imp['mdx_runtime'] != null) ['人声分离用', _runtime(imp)],
             ['去和声窗口', '${imp['vr'] ?? '–'}'],
+            if (imp['mdx_run_s'] != null) ['人声分离每次（导入中，含前后处理）', _num(imp['mdx_run_s'], 3, ' 秒')],
+            if (imp['vr_run_s'] != null) ['去和声每次（导入中，含前后处理）', _num(imp['vr_run_s'], 3, ' 秒')],
             ['内存峰值增量', _num(imp['peak_footprint_mb'], 0, ' MB')],
             for (final e in stages.entries) ['阶段：${e.key}', _num(e.value, 1, ' 秒')],
             for (final e in estimates.entries) ['“预计还需”在 ${e.key} 处的误差', _num(e.value, 0, ' 秒')],
@@ -171,6 +176,19 @@ String benchmarkMarkdown(Map<String, Object?> data) {
 }
 
 Map<String, Object?> _map(Object? v) => v is Map ? v.cast<String, Object?>() : const {};
+
+/// How the import ran the vocal model, and the outcome of the Core ML check.
+String _runtime(Map<String, Object?> imp) {
+  final check = '${imp['coreml_check'] ?? ''}';
+  final note = switch (check) {
+    '' => '',
+    _ when check.startsWith('checked') => '，和 CPU 对比一致（${check.replaceFirst('checked ', '')}）',
+    _ when check.startsWith('mismatch') => '；GPU 的结果和 CPU 不一致（${check.replaceFirst('mismatch ', '')}），改用了 CPU',
+    _ when check.startsWith('invalid') => '；GPU 算出了无效的数值，改用了 CPU',
+    _ => '；GPU 出错，改用了 CPU：${check.replaceFirst('error: ', '')}',
+  };
+  return '${imp['mdx_runtime'] == 'Core ML' ? 'GPU（Core ML）' : 'CPU'}$note';
+}
 
 List<Map<String, Object?>> _rows(Map<String, Object?> data) => [
   for (final m in (data['models'] is List ? data['models'] as List : const []))

@@ -8,6 +8,7 @@ import 'package:yintrace/src/analysis/lrc.dart';
 import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace/src/benchmark/benchmark_report.dart';
 import 'package:yintrace/src/benchmark/device_benchmark.dart';
+import 'package:yintrace/src/import/vocal_acceleration.dart';
 import 'package:yintrace/src/ui/benchmark_page.dart';
 import 'package:yintrace/src/ui/theme.dart';
 
@@ -52,25 +53,6 @@ void main() {
     expect(peak, closeTo(0.8, 0.01));
   });
 
-  test('the fixed-shape MDX model changes exactly the recipe bytes', () {
-    final dir = Directory.systemTemp.createTempSync('yt_bench_test');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final bytes = Uint8List(64)..fillRange(0, 64, 7);
-    bytes.setAll(10, const [0x12, 0x01, 0x54]);
-    bytes.setAll(40, const [0x12, 0x01, 0x54]);
-    File('${dir.path}/in.onnx').writeAsBytesSync(bytes);
-    writeStaticMdx('${dir.path}/in.onnx', '${dir.path}/out.onnx', const [10, 40]);
-    final out = File('${dir.path}/out.onnx').readAsBytesSync();
-    final expected = Uint8List.fromList(bytes)
-      ..setAll(10, const [0x08, 0x80, 0x01])
-      ..setAll(40, const [0x08, 0x80, 0x01]);
-    expect(out, expected);
-    expect(
-      () => writeStaticMdx('${dir.path}/in.onnx', '${dir.path}/bad.onnx', const [20]),
-      throwsStateError,
-    );
-  });
-
   group('plan', () {
     test('the quick version measures a few set-ups', () {
       final bench = DeviceBenchmark(
@@ -82,8 +64,9 @@ void main() {
         '完整导入 12 秒的合成歌曲',
         '$benchMdx · CPU 4 线程',
         '$benchVr · CPU 4 线程',
-        '$benchMdxStatic · ${coreMLSetups.keys.first}',
+        '$benchMdx · Core ML MLProgram CPU+GPU',
       ]);
+      expect(coreMLSetups.values.first, vocalCoreMLOptions, reason: 'the app\'s own set-up comes first');
     });
 
     test('the full version: import, every CPU set-up, then Core ML', () {
@@ -92,13 +75,13 @@ void main() {
       expect(steps.toSet(), hasLength(steps.length), reason: 'labels are the step ids');
       final firstCoreML = steps.indexWhere((s) => s.contains('Core ML'));
       expect(steps.sublist(1, firstCoreML).every((s) => s.contains(' · CPU ')), isTrue);
-      for (final model in [benchMdx, benchMdxStatic, benchVr]) {
-        for (final setup in coreMLSetups.keys) {
-          expect(steps, contains('$model · $setup'));
-        }
-        expect(steps, contains('$model · Core ML 编译缓存'));
+      for (final setup in coreMLSetups.keys) {
+        expect(steps, contains('$benchMdx · $setup'));
       }
-      expect(steps.where((s) => s.startsWith('$benchVr320 · ')).every((s) => s.contains('CPU')), isTrue);
+      expect(steps.last, '$benchMdx · Core ML 编译缓存');
+      // The karaoke model only on the CPU: every Core ML set-up made iOS
+      // close the app on an iPhone.
+      expect(steps.where((s) => s.startsWith('VR ')).every((s) => s.contains(' · CPU ')), isTrue);
     });
 
     test('resuming skips the set-up that made iOS close the app', () {
@@ -132,7 +115,7 @@ void main() {
       expect(c, [
         '导入 4 分钟的歌用了 5 分 12 秒，是歌曲时长的 1.30 倍。',
         '$benchMdx：仍是「CPU 4 线程」最快（没有更快且结果足够接近的设置），每次 1.900 秒。',
-        '$benchMdxStatic：最快且结果可靠的是「Core ML MLProgram 全部单元」，每次 0.500 秒，是 CPU 4 线程的 3.80 倍速度。',
+        '$oldStatic：最快且结果可靠的是「Core ML MLProgram 全部单元」，每次 0.500 秒，是 CPU 4 线程的 3.80 倍速度。',
         '$benchVr：仍是「CPU 4 线程」最快（没有更快且结果足够接近的设置），每次 2.200 秒。',
       ]);
     });
@@ -141,20 +124,20 @@ void main() {
       final report = sampleReport()
         ..['crashed'] = ['$benchVr · Core ML MLProgram 全部单元']
         ..['backgrounded'] = ['$benchMdx · CPU 2 线程']
-        ..['step_errors'] = {'$benchMdxStatic · Core ML 编译缓存': 'StateError: unexpected bytes at 66762437'};
+        ..['step_errors'] = {'$benchMdx · Core ML 编译缓存': 'StateError: no cache directory'};
       final md = benchmarkMarkdown(jsonDecode(jsonEncode(report)) as Map<String, Object?>);
       expect(md, startsWith('# YinTrace 真机测速报告\n'));
       expect(md, contains('- 设备：iPhone15,2，6 核，内存 5.6 GB'));
       expect(md, contains('- 开始时系统允许 App 再用的内存：2950 MB\n'));
       expect(md, contains('App 被系统关闭了（多半是内存不够），已跳过：$benchVr · Core ML MLProgram 全部单元'));
       expect(md, contains('App 离开过前台，数字可能偏慢：$benchMdx · CPU 2 线程'));
-      expect(md, contains('- 这些项目出错了：$benchMdxStatic · Core ML 编译缓存（StateError: unexpected bytes at 66762437）'));
+      expect(md, contains('- 这些项目出错了：$benchMdx · Core ML 编译缓存（StateError: no cache directory）'));
       expect(md, contains('手机发热，系统可能降了速：$benchVr · Core ML MLProgram CPU+GPU'));
       expect(md, isNot(contains('没有做完')));
       expect(md, contains('| 总耗时 | 312.4 秒 |'));
       expect(md, contains('| 阶段：分离人声 | 150.3 秒 |'));
       expect(md, contains('| “预计还需”在 75% 处的误差 | – |'));
-      expect(md, contains('| $benchMdxStatic | Core ML MLProgram 全部单元 | 25.0 秒 | 0.90 秒 | 0.500 秒 | 3.80 倍 | 61.2 dB | – |  |'));
+      expect(md, contains('| $oldStatic | Core ML MLProgram 全部单元 | 25.0 秒 | 0.90 秒 | 0.500 秒 | 3.80 倍 | 61.2 dB | – |  |'));
       expect(md, contains(r'OrtException \| CoreML: unsupported op；发热'), reason: 'a | in an error must not split the cell');
       expect(md.indexOf('## 完整导入'), lessThan(md.indexOf('## 结论')));
       expect(md.indexOf('## 结论'), lessThan(md.indexOf('## 单个模型')));
@@ -213,7 +196,7 @@ void main() {
     testWidgets('first visit: what the test does and how long it takes', (tester) async {
       await open(tester, null);
       expect(find.text('开始测试'), findsOneWidget);
-      expect(find.textContaining('全程约 20 到 30 分钟'), findsOneWidget);
+      expect(find.textContaining('全程大约 5 到 10 分钟'), findsOneWidget);
       expect(find.text('复制报告'), findsNothing);
     });
 

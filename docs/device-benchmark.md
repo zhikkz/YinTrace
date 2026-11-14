@@ -4,13 +4,15 @@
 
 1. **手机上现在有多快**：用 App 实际的导入流程（后台线程、CPU、和正式版相同的设置）完整导入一首
    合成歌曲，记录各阶段耗时、整体是歌曲时长的几倍、内存峰值，以及导入页“预计还需”的误差。
-2. **Core ML 能不能更快**：两个模型分别用 CPU（2 / 4 / 全部线程）和几种 Core ML 设置
-   （MLProgram 或 NeuralNetwork 格式；全部计算单元、CPU+神经网络引擎、CPU+GPU）运行，
+2. **CPU 和 Core ML 各有多快**：两个模型分别用 CPU（2 / 4 / 全部线程）运行，人声模型再用几种 Core ML 设置
+   （MLProgram 或 NeuralNetwork 格式；CPU+GPU、全部计算单元、CPU+神经网络引擎）运行，
    比较加载时间（含 Core ML 编译）、每次推理时间、内存峰值，以及 Core ML 的结果和 CPU 差多少。
-   MDX 还额外测一个把时间轴固定回 128 的版本（Core ML 对固定形状通常更快）。
 
-App 目前只用 CPU。测出 Core ML 明显更快、且结果和 CPU 足够接近（差值比 40 dB 以上）之后，
-再把它接到导入流程里。
+第一次在 iPhone 上测（iPhone18,3，结果见 [推理速度与内存](inference-memory.md#iphone-实测)）：
+人声模型用 Core ML 的 GPU（MLProgram，CPU+GPU）比 CPU 快约 2.9 倍、结果一致，App 已经改用它
+（每台设备第一次导入会再和 CPU 对比一次）；去和声模型的每种 Core ML 设置都让 App 被系统关闭，只用 CPU。
+所以测速现在只比较人声模型的 Core ML 设置（App 用的那种排第一），去和声模型只测 CPU；完整导入按 App
+当前的设置运行，报告里写明人声分离用的是 GPU 还是 CPU、和 CPU 的对比结果，以及两个模型在导入中每次的耗时。
 
 有两种跑法，测速代码相同（`lib/src/benchmark/`），报告也相同：
 
