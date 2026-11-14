@@ -183,10 +183,11 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
     } else {
       try {
         if (widget.engineFactory == null) NativeAudio.configureSession(record: false);
-        if (!_deviceOn) {
-          e.start();
-          _deviceOn = true;
-        }
+        // Every time: after unplugged headphones or a call the engine is
+        // silenced until it is started again (a no-op while it runs).
+        e.takeAudioEvents();
+        e.start();
+        _deviceOn = true;
         if (e.positionSeconds >= e.lengthSeconds - 0.05) e.seek(Duration.zero);
         e.play();
       } catch (err) {

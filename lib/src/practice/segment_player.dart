@@ -41,10 +41,11 @@ class SegmentPlayer extends ChangeNotifier {
     e.setTrackGain(vocalSlot, vocalGain);
     e.setTrackGain(toneSlot, toneGain);
     e.seekFrame(0);
-    if (!_deviceOn) {
-      e.start();
-      _deviceOn = true;
-    }
+    // Every time: after unplugged headphones or a call the engine is
+    // silenced until it is started again (a no-op while it runs).
+    e.takeAudioEvents();
+    e.start();
+    _deviceOn = true;
     e.play();
     _poll ??= Timer.periodic(const Duration(milliseconds: 100), (_) {
       if (!playing) {

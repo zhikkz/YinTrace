@@ -10,6 +10,7 @@ import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace/src/import/import_pipeline.dart';
 import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
+import 'package:yintrace/src/practice/segment_player.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
 import 'support/synth_voice.dart';
@@ -107,5 +108,20 @@ void main() {
     expect(session.reviewing, isFalse);
     expect(session.engine!.positionSeconds, closeTo(session.reference.lines[0].start - 1.0, 0.02));
     expect(session.scorer.lineResult(0).score, line0);
+  }, skip: lib == null);
+
+  test('the pitch editor plays again after the output was lost', () {
+    final player = SegmentPlayer(
+      engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+      configureSession: false,
+    );
+    final tone = Float32List(4410)..fillRange(0, 4410, 0.25);
+    player.play(tone: tone);
+    expect(player.engine!.render(64)[0], closeTo(0.25, 1e-3));
+    player.engine!.signalAudioEvent(AudioEvents.deviceLost); // headphones unplugged
+    expect(player.engine!.render(64)[0], 0);
+    player.play(tone: tone);
+    expect(player.engine!.render(64)[0], closeTo(0.25, 1e-3));
+    player.dispose();
   }, skip: lib == null);
 }
