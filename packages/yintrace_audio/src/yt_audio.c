@@ -656,7 +656,8 @@ static void yt_install_track(yt_engine* e, int32_t slot, int16_t* data, int64_t 
 
 void yt_engine_set_track_offset(yt_engine* e, int32_t slot, int64_t frame) {
   if (e == NULL || slot < 0 || slot >= YT_MAX_TRACKS) return;
-  if (frame < 0) frame = 0;
+  // Negative: the track's first -frame frames play before the song starts
+  // (i.e. are skipped).
   yt_track_lock(e);
   e->tracks[slot].offset = frame;
   yt_recompute_length(e);

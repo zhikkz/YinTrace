@@ -190,12 +190,22 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     await _save();
   }
 
-  Future<void> _save() async {
-    try {
-      await AppScope.of(context).songs.saveReference(widget.songId, _ref!);
-    } catch (e) {
-      _snack('没能保存：$e');
+  Future<void>? _saving;
+
+  /// Saves the reference. Quick taps queue up: writes of the same file must
+  /// not overlap (each writes the newest state).
+  Future<void> _save() {
+    final songs = AppScope.of(context).songs;
+    final ref = _ref!;
+    Future<void> write() async {
+      try {
+        await songs.saveReference(widget.songId, ref);
+      } catch (e) {
+        _snack('没能保存：$e');
+      }
     }
+
+    return _saving = (_saving ?? Future<void>.value()).then((_) => write());
   }
 
   Future<void> _restoreLine() async {

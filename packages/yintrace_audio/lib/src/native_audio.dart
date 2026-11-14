@@ -370,8 +370,8 @@ class PracticeEngine {
     _b.engineUnloadTrack(_ptr, slot);
   }
 
-  /// Plays track [slot] from song frame [frame] on (silent before). Loading
-  /// the track resets it to 0.
+  /// Plays track [slot] from song frame [frame] on (silent before; negative
+  /// skips the track's beginning). Loading the track resets it to 0.
   void setTrackOffset(int slot, int frame) {
     _check();
     _b.engineSetTrackOffset(_ptr, slot, frame);
