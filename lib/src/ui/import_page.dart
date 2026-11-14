@@ -8,6 +8,7 @@ import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../import/import_job.dart';
 import '../import/import_pipeline.dart';
+import '../import/vocal_acceleration.dart';
 import '../models/model_catalog.dart';
 import 'model_setup.dart';
 import 'song_page.dart';
@@ -100,6 +101,11 @@ class _ImportPageState extends State<ImportPage> {
     if (!mounted) return;
     final mdx = services.models.pathFor(vocalModel);
     final vr = services.models.pathFor(karaokeModel);
+    // Core ML for the vocal model where it works on this device.
+    final accel = _vocalsOnly || mdx == null
+        ? const ImportAcceleration()
+        : await services.acceleration.beforeImport(mdx);
+    if (!mounted) return;
     final request = ImportRequest(
       audioPath: _audioPath!,
       lyrics: _lyrics.text,
@@ -109,6 +115,10 @@ class _ImportPageState extends State<ImportPage> {
       accompanimentPath: _vocalsOnly ? _accPath : null,
       mdxModelPath: _vocalsOnly ? null : mdx,
       vrModelPath: _vocalsOnly || _skipHarmony ? null : vr,
+      mdxCoreML: accel.coreML,
+      coreMLMarker: accel.marker,
+      verifyCoreML: accel.verify,
+      speed: accel.speed,
     );
     setState(() {
       _error = null;
@@ -130,6 +140,7 @@ class _ImportPageState extends State<ImportPage> {
           if (mounted) setState(() => _progress = progress);
         case ImportDoneEvent(:final song):
           _finish();
+          await services.acceleration.afterImport(song.modelInfo);
           if (!mounted) return;
           await Navigator.of(context)
               .pushReplacement(MaterialPageRoute<void>(builder: (_) => SongPage(songId: song.id)));

@@ -7,9 +7,15 @@
 | UVR-MDX-NET-Voc_FT | segment size 128（UVR 可选值，UVR 默认 256），重叠 0.25（UVR 默认） | 内存约为 256 的一半；每秒音频的计算量比 256 略少 |
 | 6_HP-Karaoke-UVR | 窗口 512（UVR 默认），按 UVR 整曲的窗口网格分段 | 推理次数是 320 窗口的四分之一 |
 | 6_HP-Karaoke-UVR（内存不足时） | 窗口 320 | 系统报告的剩余内存不够 512 时自动使用 |
+| UVR-MDX-NET-Voc_FT 在 Apple 设备上 | Core ML：MLProgram 格式，CPU+GPU，编译结果缓存 | iPhone 上每次 0.26 秒，CPU 0.76 秒，差值比 109 dB（见下文 iPhone 实测） |
 
-两个模型都在 CPU 上运行，4 个 intra-op 线程，ONNX Runtime 的 CPU arena 关闭，
-顺序加载、用完即关。
+去和声模型（以及其它平台上的人声模型）在 CPU 上运行，4 个 intra-op 线程（iPhone 上 2 个和 6 个都更慢），
+ONNX Runtime 的 CPU arena 关闭，顺序加载、用完即关。
+
+人声模型的 Core ML 在每台设备第一次导入（以及 App 或系统更新后）时，用第一段有声音的内容和 CPU 的结果对比，
+差值比低于 40 dB、算出无效数值或出错，就用 CPU 做完这首歌并在这台设备上停用 Core ML；创建 Core ML 会话
+到第一段结果返回之间留一个标记文件，下次导入前还在，说明 App 在那里被系统关闭，同样停用。设置里可以关掉或重新打开
+（`lib/src/import/vocal_acceleration.dart`）。
 
 ### MDX：重叠 0.25
 
@@ -123,6 +129,44 @@ python tools/benchmark_inference.py build/uvr-models/6_HP-Karaoke-UVR-dynamic.on
 （不再需要交叉淡化的权重缓冲，分段更紧凑）。峰值是两个进程 RSS 之和；Linux 上 Python 进程
 关闭 session 后 RSS 不会回落，所以两者在流水线末尾相加，比实际同一时刻的占用偏高；
 iPhone 上 ORT 在 App 进程内，关闭 session 即释放。真机仍须用 release + Instruments 测量。
+
+## iPhone 实测
+
+2026-11-14，iPhone18,3（iOS 27.0.1，6 核，8 GB），测试版的“性能测试”（release 构建）；开始时系统允许
+App 再用 3440 MB。完整导入走 App 自己的后台导入流程，4 分钟的合成歌曲，两个模型都用 CPU：
+
+| 项目 | 结果 |
+|---|---|
+| 总耗时 | 236.2 秒（0.98 倍歌曲时长） |
+| 分离人声 | 94.9 秒（110 次，每次约 0.86 秒，含张量传递和 STFT） |
+| 去和声（窗口 512） | 135.1 秒（96 次，每次约 1.4 秒） |
+| 测音高 / 对齐 / 保存 | 4.0 / 0.9 / 1.2 秒 |
+| 内存峰值增量 | 1856 MB |
+| “预计还需”的误差（25% / 50% / 75% 处） | +44 / −3 / −5 秒 |
+
+单个模型，每次推理的中位数（秒），括号里是与 CPU 的差值比：
+
+| 模型 | CPU 4 线程 | CPU 2 线程 | CPU 6 线程 | Core ML MLProgram CPU+GPU | MLProgram 全部单元 | MLProgram CPU+神经网络引擎 | NeuralNetwork 全部单元 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MDX T=128 | 0.755 | 0.943 | 0.816 | 0.260（109.0 dB） | 0.257（109.0 dB） | 0.983（103.8 dB） | 0.588（44.2 dB） |
+| VR 512 | 1.187 | 1.499 | 1.231 | App 被系统关闭 | App 被系统关闭 | App 被系统关闭 | App 被系统关闭 |
+| VR 320 | 0.766 | 0.855 | 0.799 | 未测 | 未测 | 未测 | 未测 |
+
+- MDX 在 GPU 上快约 2.9 倍，结果与 CPU 一致；神经网络引擎反而比 CPU 慢，NeuralNetwork 格式的差值比只有 44 dB、
+  内存峰值增量 1.6 GB。所以 App 用 MLProgram + CPU+GPU。Core ML 的几项是在系统报告发热（serious）时测的，
+  可能偏慢。
+- 把时间轴固定回 128 的 MDX 并不更快（0.276 秒）。Core ML 编译缓存让加载从 0.8 秒降到 0.2 秒，
+  第一次推理从 2.4 秒降到 0.5 秒，App 现在保留这个缓存。
+- VR 的四种 Core ML 设置和缓存测试各让 App 被系统关闭一次（报告分不出是内存不够还是崩溃），所以 VR 只用 CPU，
+  测速里也不再测它们。
+- 导入的前 1/4（还在分离人声）“预计还需”短了 44 秒：在这台 iPhone 上一次 VR 相当于 1.6 次 MDX，之前按桌面和
+  模拟器估的是 1.1。现在各阶段按这台 iPhone 的实测秒数加权，每次导入后记下这台设备自己的每次耗时，下次估算用
+  （`ImportPipeline.defaultRunSeconds`）。
+- 各项的内存峰值增量受测量顺序影响（第一个测的 MDX CPU 4 线程是 781 MB，之后的 CPU 2 / 6 线程约 300 MB），
+  只能粗看。导入的峰值增量 1856 MB，4 GB 和 6 GB 的 iPhone 还没测，VR 512 / 320 的内存门限仍按桌面估计。
+
+人声分离改用 Core ML 后，按上面的每次耗时估算，这首 4 分钟的歌分离人声约 40 秒、整个导入约 3 分钟，
+需要下一次测速确认。
 
 ## iOS 模拟器
 

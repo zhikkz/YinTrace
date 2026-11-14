@@ -19,8 +19,8 @@ class OnnxTensorModel implements TensorModel {
   ///
   /// [coreML] puts Apple's Core ML execution provider in front of the CPU,
   /// with ONNX Runtime's Core ML options (e.g. `{'ModelFormat':
-  /// 'MLProgram', 'MLComputeUnits': 'CPUAndNeuralEngine'}`). The app only
-  /// uses the CPU; the device benchmark compares the two.
+  /// 'MLProgram', 'MLComputeUnits': 'CPUAndGPU'}`). The app uses it for the
+  /// vocal model (see VocalAcceleration); the karaoke model stays on the CPU.
   static Future<OnnxTensorModel> load(
     String path, {
     String? inputName,

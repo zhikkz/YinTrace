@@ -14,6 +14,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:yintrace/src/app/services.dart';
 import 'package:yintrace/src/benchmark/benchmark_report.dart';
 import 'package:yintrace/src/benchmark/device_benchmark.dart';
+import 'package:yintrace/src/import/vocal_acceleration.dart';
 import 'package:yintrace/src/models/model_catalog.dart';
 
 // --dart-define=BENCH_QUICK=1 (or true).
@@ -37,6 +38,9 @@ void main() {
       mdxPath: services.models.pathFor(vocalModel)!,
       vrPath: services.models.pathFor(karaokeModel)!,
       options: const BenchmarkOptions(songSeconds: _songSeconds, quick: _quick),
+      // The vocal model with Core ML, checked against the CPU on its first
+      // chunk, as on a device the first time.
+      acceleration: const ImportAcceleration(coreML: vocalCoreMLOptions, verify: true),
       onLog: log,
     );
     try {
@@ -48,7 +52,12 @@ void main() {
     final report = bench.report;
     expect(report['error'], isNull);
     expect(report['finished_at'], isNotNull);
-    expect((report['import'] as Map)['error'], isNull);
+    final imp = report['import'] as Map;
+    expect(imp['error'], isNull);
+    expect(imp['mdx_runtime'], 'Core ML');
+    expect('${imp['coreml_check']}', startsWith('checked'));
+    expect(imp['mdx_run_s'], greaterThan(0));
+    expect(imp['vr_run_s'], greaterThan(0));
     final cpu4 = (report['models'] as List).cast<Map>().where((r) => r['provider'] == 'CPU 4 线程').toList();
     expect(cpu4.map((r) => r['model']), _quick ? [benchMdx, benchVr] : [benchMdx, benchVr, benchVr320]);
     expect(cpu4.where((r) => r['error'] != null), isEmpty);

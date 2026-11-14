@@ -47,7 +47,7 @@ void main() {
             await ImportPipeline(
               audio: const NativeAudioBackend(),
               repository: repo,
-              loadModel: (path, {required inputName, required outputName}) async {
+              loadModel: (path, {required inputName, required outputName, coreML}) async {
                 final model = await PythonOrtModel.start(path, python: env['PYTHON'] ?? 'python3');
                 loaded.add(model);
                 return model;

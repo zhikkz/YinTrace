@@ -12,9 +12,8 @@
 2. Dart `OrtSessionOptions.coreMLOptions`：把 Core ML 执行提供者的字符串选项
    （ModelFormat、MLComputeUnits、RequireStaticInputShapes、ModelCacheDirectory 等）
    经 ORT 公开的 `appendCoreMLExecutionProviderWithOptionsV2:` 传入；不传时保持上游
-   原来的默认 Core ML 行为。App 本身只用 CPU，这个选项目前只给真机测速
-   （`lib/src/benchmark/device_benchmark.dart`：测试版的“性能测试”和
-   `integration_test/device_benchmark_test.dart`）使用。
+   原来的默认 Core ML 行为。App 用它让人声分离模型在 GPU 上运行
+   （`lib/src/import/vocal_acceleration.dart`），真机测速（`lib/src/benchmark/`）用它比较各种设置。
 
 新增 YinTrace 代码适用根目录 AGPL-3.0-only；第三方原始代码保留 MIT。
 

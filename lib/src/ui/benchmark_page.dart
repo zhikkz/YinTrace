@@ -118,10 +118,25 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
     if (!mounted) return;
     final mdx = services.models.pathFor(vocalModel)!;
     final vr = services.models.pathFor(karaokeModel)!;
+    // The complete import runs the way the app's own imports do.
+    final accel = await services.acceleration.beforeImport(mdx);
+    if (!mounted) return;
     final last = _last;
     final bench = resume && last != null
-        ? DeviceBenchmark.resume(last, mdxPath: mdx, vrPath: vr)
-        : DeviceBenchmark(mdxPath: mdx, vrPath: vr, options: BenchmarkOptions(songSeconds: _songSeconds));
+        ? DeviceBenchmark.resume(
+            last,
+            mdxPath: mdx,
+            vrPath: vr,
+            acceleration: accel,
+            onImported: services.acceleration.afterImport,
+          )
+        : DeviceBenchmark(
+            mdxPath: mdx,
+            vrPath: vr,
+            options: BenchmarkOptions(songSeconds: _songSeconds),
+            acceleration: accel,
+            onImported: services.acceleration.afterImport,
+          );
     _bench?.removeListener(_changed);
     bench.addListener(_changed);
     setState(() {
@@ -202,7 +217,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
         const SizedBox(height: 24),
         Text('测试前', style: context.type.titleMedium),
         const SizedBox(height: 10),
-        bullet('全程约 20 到 30 分钟。请接上电源，手机发热时系统会降速。'),
+        bullet('全程大约 5 到 10 分钟。请接上电源，手机发热时系统会降速。'),
         bullet('让 YinTrace 一直在前台，不要锁屏或切到别的 App（屏幕会保持常亮）。'),
         bullet('第一次会先下载两个分离模型（194 MB），最好连着 Wi‑Fi。'),
         bullet('中途被打断也没关系：已经测完的项目会保留，回来可以接着测。'),

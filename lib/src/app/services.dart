@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:yintrace_audio/yintrace_audio.dart';
 
+import '../import/vocal_acceleration.dart';
 import '../library/song_repository.dart';
 import '../models/model_manager.dart';
 import '../models/model_catalog.dart';
@@ -14,11 +15,20 @@ import 'settings.dart';
 
 /// Long-lived app objects.
 class AppServices {
-  AppServices({required this.settings, required this.songs, required this.models});
+  AppServices({
+    required this.settings,
+    required this.songs,
+    required this.models,
+    VocalAcceleration? acceleration,
+  }) : acceleration = acceleration ?? VocalAcceleration.unavailable();
 
   final AppSettings settings;
   final SongRepository songs;
   final ModelManager models;
+
+  /// Whether the vocal model runs with Core ML here, and how fast this
+  /// device separated songs before.
+  final VocalAcceleration acceleration;
 
   static Future<AppServices> init() async {
     final support = await getApplicationSupportDirectory();
@@ -35,7 +45,8 @@ class AppServices {
       },
     );
     final settings = await AppSettings.load(File('${support.path}/settings.json'));
-    return AppServices(settings: settings, songs: songs, models: models);
+    final acceleration = await VocalAcceleration.load(support);
+    return AppServices(settings: settings, songs: songs, models: models, acceleration: acceleration);
   }
 }
 
