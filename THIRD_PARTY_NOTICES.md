@@ -1,6 +1,10 @@
 # Third-party notices
 
-YinTrace is built on the work listed here. The app shows the same credits
+YinTrace is free software released under the GNU Affero General Public
+License, version 3 (see `LICENSE`). It is built on the work listed here. Those
+parts were published under permissive terms (MIT, BSD, Apache 2.0, public
+domain) that are compatible with the AGPL; their copyright notices and license
+texts are kept below, as those licenses require. The app shows the same credits
 under 设置 → 致谢与开源许可, together with the licenses of every Flutter
 package it links.
 
@@ -130,7 +134,9 @@ of the header. YinTrace uses it under MIT No Attribution.
 ## ONNX Runtime (MIT License)
 
 https://github.com/microsoft/onnxruntime — linked through the
-`flutter_onnxruntime` plugin (MIT License, © MASIC AI).
+`flutter_onnxruntime` plugin (MIT License, © MASIC AI). ONNX Runtime itself
+bundles further open-source components; their notices are in
+`ThirdPartyNotices.txt` of the ONNX Runtime repository.
 
     MIT License
 

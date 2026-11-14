@@ -222,7 +222,10 @@ void main() {
     await tester.pumpWidget(host(services, const AboutPage()));
     await tester.pump();
     expect(find.textContaining('Anjok07 和 aufr33'), findsOneWidget);
-    expect(find.text('开源许可'), findsOneWidget);
+    // Further down the app states its own license and where the source is.
+    await tester.scrollUntilVisible(find.text('许可全文与开源组件'), 300, scrollable: find.byType(Scrollable).first);
+    expect(find.textContaining('AGPL-3.0'), findsOneWidget);
+    expect(find.textContaining('github.com/zhikkz/YinTrace'), findsOneWidget);
     await screenshot(tester, '8_about');
   });
 

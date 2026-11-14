@@ -3,6 +3,13 @@ import 'package:flutter/foundation.dart';
 /// Version shown in the app (kept in step with pubspec.yaml by a test).
 const appVersion = '1.0.0';
 
+/// YinTrace is free software under the GNU AGPL v3. The About page shows
+/// these notices; the license text itself (the LICENSE file at the root of
+/// the repository) is bundled by Flutter and appears on the in-app license
+/// page under "yintrace".
+const appCopyright = 'Copyright © 2026 zhikkz';
+const appSourceUrl = 'https://github.com/zhikkz/YinTrace';
+
 /// Licenses of third-party work that is not a pub package (those are
 /// collected by Flutter automatically). Shown by the in-app license page.
 /// See also THIRD_PARTY_NOTICES.md at the root of the repository.
@@ -24,6 +31,8 @@ The MDX-Net architecture and its demixing procedure derive from https://github.c
 ${_mit('Copyright (c) 2020 KINoAI')}'''),
         LicenseEntryWithLineBreaks(const ['ONNX Runtime'], '''
 https://github.com/microsoft/onnxruntime
+
+ONNX Runtime bundles further open-source components; their notices are in ThirdPartyNotices.txt of the ONNX Runtime repository.
 
 ${_mit('Copyright (c) Microsoft Corporation')}'''),
         const LicenseEntryWithLineBreaks(['miniaudio'], '''
