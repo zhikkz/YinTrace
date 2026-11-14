@@ -4,7 +4,9 @@ import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../app/services.dart';
 import '../import/import_pipeline.dart';
+import '../library/recording.dart';
 import '../library/song.dart';
+import 'export_page.dart';
 import 'import_page.dart' show lyricsHint;
 import 'lyrics_style.dart';
 import 'pitch_editor_page.dart';
@@ -29,6 +31,7 @@ class _SongPageState extends State<SongPage> {
   SongReference? _ref;
   PitchTrack? _track;
   List<PracticeRecord> _history = const [];
+  List<Recording> _recordings = const [];
   String? _error;
   bool _loaded = false;
 
@@ -48,12 +51,14 @@ class _SongPageState extends State<SongPage> {
       final ref = await repo.loadReference(widget.songId);
       final track = await repo.loadPitchTrack(widget.songId);
       final history = await repo.loadHistory(widget.songId);
+      final recordings = await repo.loadRecordings(widget.songId);
       if (!mounted) return;
       setState(() {
         _meta = meta;
         _ref = ref;
         _track = track;
         _history = history;
+        _recordings = recordings;
       });
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -63,6 +68,13 @@ class _SongPageState extends State<SongPage> {
   Future<void> _practice({int? line}) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => PracticePage(meta: _meta!, reference: _ref!, contour: _track, loopLine: line),
+    ));
+    await _load();
+  }
+
+  Future<void> _openRecording(Recording r) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ExportPage(songId: widget.songId, recordingId: r.id),
     ));
     await _load();
   }
@@ -214,6 +226,33 @@ class _SongPageState extends State<SongPage> {
               ),
             ),
           ),
+          if (_recordings.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('我的录音', style: context.type.titleLarge),
+                    const SizedBox(height: 2),
+                    Text('点一段，配上伴奏做成成品导出。', style: context.type.bodySmall),
+                    for (final r in _recordings.take(8))
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.library_music_rounded),
+                        title: Text(_recordingTitle(r)),
+                        subtitle: Text(
+                          '从 ${clock(r.start)} 起，${clock(r.duration)}'
+                          '${r.score == null ? '' : '，${r.score!.round()} 分'}',
+                          style: context.type.bodySmall?.copyWith(fontFeatures: tabular),
+                        ),
+                        trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+                        onTap: () => _openRecording(r),
+                      ),
+                  ],
+                ),
+              ),
+            ),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
@@ -286,4 +325,10 @@ class _SongPageState extends State<SongPage> {
       ),
     );
   }
+}
+
+String _recordingTitle(Recording r) {
+  final t = r.createdAt;
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${t.month} 月 ${t.day} 日 ${two(t.hour)}:${two(t.minute)}';
 }

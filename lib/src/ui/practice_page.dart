@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
@@ -7,8 +9,10 @@ import '../analysis/reference.dart';
 import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../app/test_build.dart';
+import '../export/recordings.dart';
 import '../library/song.dart';
 import '../practice/practice_session.dart';
+import 'export_page.dart';
 import 'lyrics_style.dart';
 import 'pitch_graph.dart';
 import 'results_sheet.dart';
@@ -25,6 +29,8 @@ class PracticePage extends StatefulWidget {
     this.contour,
     this.loopLine,
     this.sessionFactory,
+    this.exportPageBuilder,
+    this.backgroundWork = true,
   });
 
   final SongMeta meta;
@@ -34,6 +40,8 @@ class PracticePage extends StatefulWidget {
 
   /// For tests.
   final PracticeSession Function(BuildContext context)? sessionFactory;
+  final Widget Function(String songId, String recordingId)? exportPageBuilder;
+  final bool backgroundWork;
 
   @override
   State<PracticePage> createState() => _PracticePageState();
@@ -45,6 +53,9 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
   final _started = Stopwatch();
   bool _shownResults = false;
   bool _init = false;
+
+  /// The take kept as a recording: (take version, recording id).
+  (int, String)? _kept;
 
   @override
   void initState() {
@@ -138,9 +149,56 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
         _session.listenBack(line: line);
       case ListenOriginalAction(:final line):
         _session.listenOriginal(line: line);
+      case ExportTakeAction():
+        await _makeTrack();
       case null:
         break;
     }
+  }
+
+  /// Keeps the take (once per version of it) and opens 制作成品 for it.
+  Future<void> _makeTrack() async {
+    final take = _session.take;
+    if (take == null || take.isEmpty) return;
+    _session.stopListening();
+    // The preview needs the audio device: practice waits until it is back.
+    _session.suspend(reason: '练习已暂停，点播放继续');
+    var id = _kept != null && _kept!.$1 == take.version ? _kept!.$2 : null;
+    if (id == null) {
+      final songs = AppScope.of(context).songs;
+      unawaited(showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(
+          content: Row(
+            children: [
+              SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
+              SizedBox(width: 16),
+              Text('正在保存录音…'),
+            ],
+          ),
+        ),
+      ));
+      try {
+        final score = _session.scorer.overallScore();
+        final r = await keepTake(songs, widget.meta.id, take,
+            score: score.isNaN ? null : score, background: widget.backgroundWork);
+        id = r.id;
+        _kept = (take.version, r.id);
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('没能保存录音：$e')));
+      } finally {
+        if (mounted) Navigator.of(context).pop();
+      }
+    }
+    if (id == null || !mounted) return;
+    final recordingId = id;
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) =>
+          widget.exportPageBuilder?.call(widget.meta.id, recordingId) ??
+          ExportPage(songId: widget.meta.id, recordingId: recordingId),
+    ));
+    if (mounted) _session.resume();
   }
 
   void _togglePlay() {

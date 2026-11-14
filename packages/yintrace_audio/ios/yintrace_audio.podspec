@@ -18,7 +18,7 @@ Portable C audio core used by YinTrace through dart:ffi.
   s.source_files     = 'Classes/**/*'
   s.dependency 'Flutter'
   s.platform = :ios, '16.0'
-  s.frameworks = 'AVFoundation', 'AudioToolbox', 'CoreAudio', 'CoreFoundation'
+  s.frameworks = 'AVFoundation', 'AudioToolbox', 'CoreAudio', 'CoreFoundation', 'UIKit'
   s.requires_arc     = true
 
   s.pod_target_xcconfig = {

@@ -239,6 +239,17 @@ class NativeAudio {
     }
   }
 
+  /// Shows the system share sheet for [path] (iOS: save to Files, AirDrop,
+  /// messages...). Returns false where there is none.
+  static bool shareFile(String path) {
+    final p = path.toNativeUtf8();
+    try {
+      return _b.shareFile(p.cast()) == 0;
+    } finally {
+      malloc.free(p);
+    }
+  }
+
   /// Excludes a file or directory from device backups (for data that can be
   /// downloaded again). Returns whether the platform accepted it.
   static bool excludeFromBackup(String path) {
@@ -357,6 +368,13 @@ class PracticeEngine {
   void unloadTrack(int slot) {
     _check();
     _b.engineUnloadTrack(_ptr, slot);
+  }
+
+  /// Plays track [slot] from song frame [frame] on (silent before). Loading
+  /// the track resets it to 0.
+  void setTrackOffset(int slot, int frame) {
+    _check();
+    _b.engineSetTrackOffset(_ptr, slot, frame);
   }
 
   void setTrackGain(int slot, double gain) {

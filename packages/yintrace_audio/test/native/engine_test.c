@@ -274,6 +274,37 @@ static void test_audio_interruption(void) {
   yt_engine_destroy(e);
 }
 
+static void test_track_offset(void) {
+  char err[256];
+  yt_engine* e = yt_engine_create(44100, YT_MODE_OFFLINE, 0, err, sizeof err);
+  CHECK(e != NULL);
+  static float a[1000], b[200], out[600 * 2];
+  for (int i = 0; i < 1000; i++) a[i] = 0.1f;
+  for (int i = 0; i < 200; i++) b[i] = 0.25f;
+  CHECK(yt_engine_load_track_pcm(e, 0, a, 1000, 1) == 0);
+  CHECK(yt_engine_load_track_pcm(e, 1, b, 200, 1) == 0);
+  yt_engine_set_track_offset(e, 1, 1100);  // after track 0 has ended
+  CHECK(yt_engine_length(e) == 1300);
+  yt_engine_seek(e, 900);
+  yt_engine_set_playing(e, 1);
+  yt_engine_render(e, out, NULL, 600);
+  CHECK(fabsf(out[0] - 0.1f) < 1e-3);           // frame 900: track 0 only
+  CHECK(out[2 * 100] == 0 && out[2 * 199] == 0);  // 1000..1099: silence
+  CHECK(fabsf(out[2 * 200] - 0.25f) < 1e-3);    // 1100: track 1 starts
+  CHECK(fabsf(out[2 * 399 + 1] - 0.25f) < 1e-3);
+  CHECK(out[2 * 400] == 0);                     // 1300: the end
+  CHECK(yt_engine_is_playing(e) == 0);
+  // Starting inside the offset track.
+  yt_engine_seek(e, 1250);
+  yt_engine_set_playing(e, 1);
+  yt_engine_render(e, out, NULL, 10);
+  CHECK(fabsf(out[0] - 0.25f) < 1e-3);
+  // Loading a track resets its offset.
+  CHECK(yt_engine_load_track_pcm(e, 1, b, 200, 1) == 0);
+  CHECK(yt_engine_length(e) == 1000);
+  yt_engine_destroy(e);
+}
+
 static void test_audio_log(void) {
   char buf[4096];
   CHECK(yt_audio_log(buf, sizeof buf) == 0);
@@ -310,6 +341,7 @@ int main(int argc, char** argv) {
   test_null_device();
   test_audio_interruption();
   test_audio_log();
+  test_track_offset();
   for (int i = 1; i + 1 < argc; i += 2) test_decode(argv[i], atoi(argv[i + 1]));
 #ifdef __APPLE__
   test_aac_roundtrip(getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");

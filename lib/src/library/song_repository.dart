@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
+import 'recording.dart';
 import 'song.dart';
 
 /// Stores songs on the device, one directory per song:
@@ -17,6 +18,7 @@ import 'song.dart';
 /// songs/<id>/accompaniment.m4a karaoke track (original minus lead vocal)
 /// songs/<id>/original.<ext>    the imported file
 /// songs/<id>/history.json      practice results
+/// songs/<id>/takes/<take>.m4a  recordings the singer kept (+ <take>.json)
 /// ```
 class SongRepository {
   SongRepository(this.root);
@@ -119,6 +121,39 @@ class SongRepository {
     }
     await save(meta);
     return meta;
+  }
+
+  Directory takesDir(String id) => Directory('${root.path}/$id/takes');
+  String recordingPath(String songId, Recording r) => '${takesDir(songId).path}/${r.file}';
+
+  /// The recordings kept for a song, newest first.
+  Future<List<Recording>> loadRecordings(String id) async {
+    final dir = takesDir(id);
+    if (!dir.existsSync()) return [];
+    final out = <Recording>[];
+    for (final f in dir.listSync().whereType<File>()) {
+      if (!f.path.endsWith('.json')) continue;
+      try {
+        final r = Recording.fromJson(jsonDecode(await f.readAsString()) as Map<String, dynamic>);
+        if (File(recordingPath(id, r)).existsSync()) out.add(r);
+      } catch (_) {
+        // Skip a broken entry.
+      }
+    }
+    out.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return out;
+  }
+
+  Future<void> saveRecording(String songId, Recording r) async {
+    takesDir(songId).createSync(recursive: true);
+    await _writeAtomic('${takesDir(songId).path}/${r.id}.json', jsonEncode(r.toJson()));
+  }
+
+  Future<void> deleteRecording(String songId, Recording r) async {
+    for (final path in [recordingPath(songId, r), '${takesDir(songId).path}/${r.id}.json']) {
+      final f = File(path);
+      if (f.existsSync()) await f.delete();
+    }
   }
 
   Future<void> delete(String id) async {

@@ -43,7 +43,8 @@ class NativeAudioBackend implements AudioBackend {
       if (NativeAudio.encodeM4a(m4a, interleaved, sampleRate, channels, bitrate: bitrate)) {
         return m4a;
       }
-    } on NativeAudioException {
+    } catch (_) {
+      // No AAC encoder here (or it failed): WAV instead.
       final f = File(m4a);
       if (f.existsSync()) f.deleteSync();
     }

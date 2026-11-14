@@ -241,14 +241,25 @@ ThemeData buildTheme(Brightness brightness) {
       overlayColor: p.ink.withValues(alpha: 0.08),
       trackHeight: 3,
     ),
+    // Switches and selections are neutral ink: 石绿 only ever means "good".
     switchTheme: SwitchThemeData(
       trackColor: WidgetStateProperty.resolveWith((s) {
         if (s.contains(WidgetState.disabled)) return p.staff;
-        return s.contains(WidgetState.selected) ? p.malachite : p.staffStrong;
+        return s.contains(WidgetState.selected) ? p.ink : p.staffStrong;
       }),
-      thumbColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.disabled) ? p.staffStrong : Colors.white),
+      thumbColor: WidgetStateProperty.resolveWith((s) {
+        if (s.contains(WidgetState.disabled)) return p.staffStrong;
+        return s.contains(WidgetState.selected) ? p.paper : Colors.white;
+      }),
       trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: ButtonStyle(
+        backgroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? p.ink : p.surface),
+        foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? p.paper : p.ink),
+        iconColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? p.paper : p.ink),
+        side: WidgetStatePropertyAll(BorderSide(color: p.staffStrong)),
+      ),
     ),
     listTileTheme: ListTileThemeData(
       contentPadding: const EdgeInsets.symmetric(horizontal: 20),

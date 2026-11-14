@@ -63,6 +63,10 @@ YT_EXPORT int32_t yt_encode_m4a(const char* path, const float* data,
 // platform has no such concept, < 0 on error.
 YT_EXPORT int32_t yt_exclude_from_backup(const char* path);
 
+// Shows the system share sheet for a file (iOS). Returns 0 when the sheet
+// was requested, -1 where there is none, -2 when the file does not exist.
+YT_EXPORT int32_t yt_share_file(const char* path);
+
 // ---------------------------------------------------------------------------
 // Audio session / permissions (meaningful on iOS and macOS, no-ops elsewhere)
 // ---------------------------------------------------------------------------
@@ -116,6 +120,9 @@ YT_EXPORT int32_t yt_engine_load_track_file(yt_engine* engine, int32_t slot,
                                             const char* path, char* err,
                                             int32_t err_len);
 YT_EXPORT void yt_engine_unload_track(yt_engine* engine, int32_t slot);
+// The song frame at which a track's first frame plays (default 0; reset by
+// loading the track). Before it the track is silent.
+YT_EXPORT void yt_engine_set_track_offset(yt_engine* engine, int32_t slot, int64_t frame);
 YT_EXPORT void yt_engine_set_track_gain(yt_engine* engine, int32_t slot,
                                         float gain);
 // Mixes the microphone into the output (0 = off).
