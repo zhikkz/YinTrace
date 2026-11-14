@@ -10,21 +10,40 @@
 /// times (`<00:12.30>字`).
 library;
 
-/// One unit that gets its own pitch segment: a CJK character, a kana, or a
-/// Latin word.
+import 'lyrics_language.dart';
+
+/// One unit that gets its own pitch segment: a CJK character, a kana (with
+/// the small kana, sokuon or long vowel mark after it), a kanji word with
+/// its reading, or a Latin word.
 class LyricToken {
-  const LyricToken(this.text, {this.spaceBefore = false, this.time});
+  const LyricToken(this.text, {this.spaceBefore = false, bool? pauseBefore, this.time, this.reading})
+    : pauseBefore = pauseBefore ?? spaceBefore;
 
   final String text;
 
-  /// The lyrics had a space (a pause) before this token.
+  /// Shown with a space before it: between words, and at a pause.
   final bool spaceBefore;
+
+  /// The singer pauses before this token: punctuation, or a space between
+  /// CJK characters. (A space between two words is not a pause.)
+  final bool pauseBefore;
 
   /// Explicit start time from enhanced LRC (`<mm:ss.xx>`), if any.
   final double? time;
 
+  /// Kana reading of a kanji token, from ruby in the lyrics: `心(こころ)`.
+  final String? reading;
+
+  LyricToken shifted(double offset) => LyricToken(
+    text,
+    spaceBefore: spaceBefore,
+    pauseBefore: pauseBefore,
+    time: time == null ? null : time! - offset,
+    reading: reading,
+  );
+
   @override
-  String toString() => text;
+  String toString() => reading == null ? text : '$text($reading)';
 }
 
 class LyricLine {
@@ -72,35 +91,62 @@ String formatLrcTime(double seconds) {
 }
 
 bool _isCjk(int r) =>
-    (r >= 0x4E00 && r <= 0x9FFF) || // CJK unified
-    (r >= 0x3400 && r <= 0x4DBF) || // ext A
-    (r >= 0x20000 && r <= 0x2CEAF) || // ext B-F
-    (r >= 0xF900 && r <= 0xFAFF) || // compatibility
-    (r >= 0x3040 && r <= 0x30FF) || // hiragana / katakana
+    isIdeograph(r) ||
+    isKana(r) ||
     (r >= 0xAC00 && r <= 0xD7AF); // hangul syllables
 
 bool _isWordChar(int r) =>
     (r >= 0x30 && r <= 0x39) ||
-    (r >= 0x41 && r <= 0x5A) ||
-    (r >= 0x61 && r <= 0x7A) ||
-    (r >= 0xC0 && r <= 0x24F) || // latin-1 + extended letters
+    isLatinLetter(r) ||
+    (r >= 0xFF10 && r <= 0xFF19) || // fullwidth digits
+    (r >= 0xFF21 && r <= 0xFF3A) || // fullwidth letters
+    (r >= 0xFF41 && r <= 0xFF5A) ||
     r == 0x27 || // apostrophe (don't)
     r == 0x2019;
 
-/// Splits a lyric line into tokens. Punctuation is dropped; whitespace and
-/// punctuation mark a pause before the next token.
+bool _isSpace(int r) => r == 0x20 || r == 0x09 || r == 0x3000 || r == 0xA0;
+
+bool _isHiraganaReading(String s) =>
+    s.isNotEmpty && s.runes.every((r) => (r >= 0x3041 && r <= 0x309F) || r == 0x30FC);
+
+class _TokenBuilder {
+  _TokenBuilder(this.text, {required this.space, required this.pause, this.time, required this.word});
+  String text;
+  final bool space;
+  final bool pause;
+  final double? time;
+  final bool word;
+  String? reading;
+  bool get ideographs => text.isNotEmpty && text.runes.every(isIdeograph);
+  LyricToken build() => LyricToken(text, spaceBefore: space, pauseBefore: pause, time: time, reading: reading);
+}
+
+/// Splits a lyric line into tokens. Punctuation is dropped. Punctuation, and
+/// a space next to a CJK character, mark a pause before the next token; a
+/// space between two words only separates them.
+///
+/// Japanese: small kana, the sokuon and the long vowel mark join the kana
+/// before them (きょう → きょ, う), and a hiragana reading in brackets right
+/// after kanji (`心(こころ)`, `明日（あした）`) becomes that token's reading.
 List<LyricToken> tokenize(String text) {
-  final tokens = <LyricToken>[];
-  var pendingSpace = false;
+  final tokens = <_TokenBuilder>[];
+  var pendingSpace = false, pendingPunct = false;
   final word = StringBuffer();
   double? pendingTime;
   double? wordTime;
 
+  void add(String s, {required bool isWord, double? time}) {
+    final prev = tokens.isEmpty ? null : tokens.last;
+    final gap = pendingSpace || pendingPunct;
+    final pause = prev != null && (pendingPunct || (pendingSpace && !(isWord && prev.word)));
+    tokens.add(_TokenBuilder(s, space: prev != null && gap, pause: pause, time: time, word: isWord));
+    pendingSpace = pendingPunct = false;
+  }
+
   void flushWord() {
     if (word.isEmpty) return;
-    tokens.add(LyricToken(word.toString(), spaceBefore: pendingSpace && tokens.isNotEmpty, time: wordTime));
+    add(word.toString(), isWord: true, time: wordTime);
     word.clear();
-    pendingSpace = false;
     wordTime = null;
   }
 
@@ -121,11 +167,36 @@ List<LyricToken> tokenize(String text) {
       len = 2;
     }
     final ch = text.substring(i, i + len);
+    if (rune == 0x28 || rune == 0xFF08) {
+      // Ruby right after kanji: 心(こころ).
+      final close = text.indexOf(rune == 0x28 ? ')' : '）', i + 1);
+      final prev = tokens.isEmpty ? null : tokens.last;
+      if (close > i + 1 && word.isEmpty && !pendingSpace && !pendingPunct && prev != null && prev.ideographs &&
+          prev.reading == null) {
+        final reading = text.substring(i + 1, close);
+        if (_isHiraganaReading(reading)) {
+          // The reading covers the run of kanji just before it.
+          while (tokens.length >= 2) {
+            final a = tokens[tokens.length - 2], b = tokens.last;
+            if (!a.ideographs || a.reading != null || b.space || b.pause) break;
+            a.text += b.text;
+            tokens.removeLast();
+          }
+          tokens.last.reading = reading;
+          i = close + 1;
+          continue;
+        }
+      }
+    }
     if (_isCjk(rune)) {
       flushWord();
-      tokens.add(LyricToken(ch, spaceBefore: pendingSpace && tokens.isNotEmpty, time: pendingTime));
-      pendingSpace = false;
-      pendingTime = null;
+      final prev = tokens.isEmpty ? null : tokens.last;
+      if (extendsPreviousKana(rune) && prev != null && !prev.word && !pendingSpace && !pendingPunct) {
+        prev.text += ch; // きょ, かっ, そー
+      } else {
+        add(ch, isWord: false, time: pendingTime);
+        pendingTime = null;
+      }
     } else if (_isWordChar(rune)) {
       if (word.isEmpty) {
         wordTime = pendingTime;
@@ -133,14 +204,17 @@ List<LyricToken> tokenize(String text) {
       }
       word.write(ch);
     } else {
-      // whitespace / punctuation
       flushWord();
-      pendingSpace = true;
+      if (_isSpace(rune)) {
+        pendingSpace = true;
+      } else {
+        pendingPunct = true;
+      }
     }
     i += len;
   }
   flushWord();
-  return tokens;
+  return [for (final t in tokens) t.build()];
 }
 
 /// Parses LRC text. Lines are sorted by time; empty lyric lines (used in
@@ -198,10 +272,7 @@ LrcParseResult parseLrc(String source) {
       continue;
     }
     final start = (e.$1 - offset).clamp(0.0, double.infinity).toDouble();
-    final shifted = <LyricToken>[
-      for (final t in tokens)
-        LyricToken(t.text, spaceBefore: t.spaceBefore, time: t.time == null ? null : t.time! - offset)
-    ];
+    final shifted = [for (final t in tokens) t.shifted(offset)];
     lines.add(LyricLine(start: start, text: e.$2, tokens: shifted));
   }
   for (var i = 0; i < lines.length; i++) {

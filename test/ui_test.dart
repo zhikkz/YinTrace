@@ -207,8 +207,8 @@ void main() {
     expect(tester.widget<FilledButton>(start).onPressed, isNull);
     await tester.enterText(find.byType(TextField).last, lyrics);
     await tester.pump();
-    await tester.scrollUntilVisible(find.text('2 句，17 个字'), 200, scrollable: find.byType(Scrollable).first);
-    expect(find.text('2 句，17 个字'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('2 句，17 个字（中文）'), 200, scrollable: find.byType(Scrollable).first);
+    expect(find.text('2 句，17 个字（中文）'), findsOneWidget);
     // Back to the top, then switch to "already separated vocals".
     await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
     await tester.pump(const Duration(milliseconds: 500));

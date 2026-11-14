@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../analysis/lyrics_language.dart';
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../library/song.dart';
 import '../practice/scoring.dart';
+import 'lyrics_style.dart';
 import 'pitch_graph.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -94,12 +96,14 @@ class ResultsSheet extends StatelessWidget {
             ),
           if (problems.isNotEmpty) ...[
             const SizedBox(height: 28),
-            Text('先练这几个字', style: context.type.titleLarge),
+            Text('先练这几个${scorer.reference.language.unit}', style: context.type.titleLarge),
             const SizedBox(height: 12),
             Wrap(
               spacing: 10,
               runSpacing: 10,
-              children: [for (final t in problems.take(12)) _GlyphTile(result: t)],
+              children: [
+                for (final t in problems.take(12)) _GlyphTile(result: t, language: scorer.reference.language),
+              ],
             ),
             const SizedBox(height: 10),
             _Legend(),
@@ -169,8 +173,9 @@ String _shortIssue(TokenResult t) {
 }
 
 class _GlyphTile extends StatelessWidget {
-  const _GlyphTile({required this.result});
+  const _GlyphTile({required this.result, required this.language});
   final TokenResult result;
+  final LyricsLanguage language;
 
   @override
   Widget build(BuildContext context) {
@@ -189,8 +194,18 @@ class _GlyphTile extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Text(result.token.text,
-                style: TextStyle(fontSize: 30, height: 1.1, fontWeight: FontWeight.w600, color: color)),
+            // A word shrinks to fit the tile.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                result.token.text,
+                maxLines: 1,
+                style: lyricsStyle(
+                  TextStyle(fontSize: 30, height: 1.1, fontWeight: FontWeight.w600, color: color),
+                  language,
+                ),
+              ),
+            ),
             const SizedBox(height: 6),
             Text(_shortIssue(result),
                 style: context.type.labelSmall?.copyWith(color: p.inkSoft, fontFeatures: tabular)),
@@ -249,10 +264,10 @@ class _LineResultRow extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text.rich(TextSpan(children: [
-                    for (final t in result.tokens)
+                    for (final (k, t) in result.tokens.indexed)
                       TextSpan(
-                        text: '${t.token.spaceBefore ? '　' : ''}${t.token.text}',
-                        style: context.type.titleMedium?.copyWith(
+                        text: '${tokenGap(k > 0 ? result.tokens[k - 1].token : null, t.token)}${t.token.text}',
+                        style: lyricsStyle(context.type.titleMedium, reference.language)?.copyWith(
                           color: !t.attempted || t.score.isNaN
                               ? p.inkFaint
                               : (t.issues.isEmpty ? p.ink : issueColor(p, t.issues)),

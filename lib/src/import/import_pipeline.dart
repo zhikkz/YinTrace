@@ -671,11 +671,18 @@ class _ImportClock {
 }
 
 /// Re-aligns an existing song after its lyrics changed (no re-separation).
+/// Pitch corrections are kept on the lines whose text did not change.
 Future<void> realignSong(SongRepository repo, String id, String lyrics) async {
   final lrc = parseLrc(lyrics);
   if (lrc.lines.isEmpty) throw ImportException('没有解析到带时间的歌词');
   final track = await repo.loadPitchTrack(id);
-  await repo.saveReference(id, buildReference(track, lrc.lines));
+  final reference = buildReference(track, lrc.lines);
+  try {
+    reference.applyCorrectionsFrom(await repo.loadReference(id));
+  } catch (_) {
+    // No earlier reference to take corrections from.
+  }
+  await repo.saveReference(id, reference);
   final meta = await repo.load(id);
   meta.lyrics = lyrics;
   await repo.save(meta);
