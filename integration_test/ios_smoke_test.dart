@@ -2,9 +2,11 @@
 // Downloads only the two official UVR files at runtime. No model weights or
 // user audio/lyrics are bundled with this test.
 import 'dart:io';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:yintrace/src/app/licenses.dart';
@@ -40,15 +42,24 @@ void main() {
       final decoded = NativeAudio.decodeFile(path, channels: 1);
       expect(decoded.duration, closeTo(1, 0.1));
 
+      // TestWidgetsFlutterBinding intentionally omits ServicesBinding's
+      // automatic license loader. Read the same on-device asset that the
+      // normal app binding displays on LicensePage, rather than assuming the
+      // integration harness registered it.
+      final notices = await rootBundle.load('NOTICES.Z');
+      final licenseText = utf8.decode(gzip.decode(notices.buffer.asUint8List()));
+      expect(licenseText, contains('GNU AFFERO GENERAL PUBLIC LICENSE'));
+      expect(licenseText, contains('Version 3, 19 November 2007'));
       final entries = await LicenseRegistry.licenses.toList();
-      expect(
-        entries.any((e) => e.paragraphs.any((p) => p.text.contains('GNU AFFERO GENERAL PUBLIC LICENSE'))),
-        isTrue,
-      );
+      expect(entries.any((e) => e.packages.contains('Ultimate Vocal Remover GUI')), isTrue);
+      // ignore: avoid_print
+      print('iOS simulator: native audio, AAC and bundled AGPL OK; downloading models');
 
       await services.models.install();
       expect(services.models.error, isNull);
       expect(services.models.isReady, isTrue);
+      // ignore: avoid_print
+      print('iOS simulator: both models installed');
       for (final pair in [
         (vocalModel, MdxConfig.vocFt.inputShape),
         (karaokeModel, VrConfig.karaoke6Hp.inputShape),

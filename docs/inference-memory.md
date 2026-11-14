@@ -48,7 +48,9 @@ ORT 1.29+ 的 API 禁用调用可能晚于初始化遥测，所以工具还在 i
   新 ONNX SHA-256：`6247a65bd0e23c18d8f98df3ad5b40c0f8d4acc0da6949bf61847c3dad50c26e`。
 - 两个阶段依次加载和关闭 session。MDX 将两个声道累加及 divider 改为单块滚动缓冲，
   不再按整曲分配三份单声道数组；5 分钟时原约 159 MB 变为约 1.6 MB。
-  伴奏在 VR 完成后复用原混音，分析前丢弃不再使用的 stereo 引用。
+  VR 阶段不再保留原混音：关闭 VR session 后重新解码本地源文件，再原地减去主唱生成伴奏。
+  VR 音频分段由 30 秒缩为 12 秒（仍有两侧 3 秒上下文），并原地应用掩码，避免复制复数频谱。
+  这会多做一些上下文推理和一次解码，以换取较低内存；分析前丢弃不用的 stereo 引用。
   音频解码、VR 输入/输出仍与曲长有关；这还不是全流程流式解码。
 
 ## 数值与耗时
@@ -64,3 +66,17 @@ Dart MDX 与 UVR 的信号/差值比为 117.7 dB；VR 主唱 126.5 dB、被移�
 整进程 1.5 GB 目标仍需 iPhone release + Instruments 验收，步骤见
 [ios-validation.md](ios-validation.md)。模拟器冒烟测试另设 1.5 GB 峰值回归门限，
 但不替代长歌曲、真实设备和连续导入测试。
+
+
+长音频宿主机采样工具（只在 Linux 上使用）：
+
+```bash
+MODELS_DIR=$PWD/build/uvr-models REAL_IMPORT_AUDIO=/path/to/audio.wav \
+REAL_IMPORT_LYRICS=/path/to/lyrics.lrc PYTHON=python \
+YINTRACE_AUDIO_LIB=$PWD/build/host/libyintrace_audio.so \
+python tools/benchmark_import.py --out build/import-memory.json
+```
+
+工具以 10 Hz 同时采样 flutter_tester 与它的 ORT 子进程，排除 Flutter CLI / 编译器。
+它补充独立进程的峰值测量，不能把两个不同时间的峰值相加当作实际同一时刻的峰值，
+也不能将宿主机 RSS 直接等同 iPhone 的 Physical Footprint。

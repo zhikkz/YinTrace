@@ -140,11 +140,7 @@ class ModelManager extends ChangeNotifier {
       }
       // Previous releases used fixed-time ONNX files. They cannot be reused
       // as the new graph, and would otherwise waste 194 MB after an upgrade.
-      for (final old in ['UVR-MDX-NET-Voc_FT.onnx', '6_HP-Karaoke-UVR.onnx']) {
-        if (specs.any((s) => s.installedName == old)) continue;
-        final file = File('${dir.path}/$old');
-        if (file.existsSync()) file.deleteSync();
-      }
+      _removeObsoleteModels();
       _current = null;
       _set(ModelPhase.ready);
     } on DownloadCancelled {
@@ -244,9 +240,18 @@ class ModelManager extends ChangeNotifier {
         if (f.existsSync()) f.deleteSync();
       }
     }
+    _removeObsoleteModels();
     _received = 0;
     _error = null;
     _set(ModelPhase.missing);
+  }
+
+  void _removeObsoleteModels() {
+    for (final old in ['UVR-MDX-NET-Voc_FT.onnx', '6_HP-Karaoke-UVR.onnx']) {
+      if (specs.any((s) => s.installedName == old)) continue;
+      final file = File('${dir.path}/$old');
+      if (file.existsSync()) file.deleteSync();
+    }
   }
 
   void _fail(String message) {

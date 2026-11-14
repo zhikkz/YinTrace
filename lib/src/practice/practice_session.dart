@@ -127,7 +127,14 @@ class PracticeSession extends ChangeNotifier {
         options: LivePitchOptions(gateDb: settings.micGateDb, latencySeconds: _latency),
       );
       _endCount = e.endCount;
-      if (!_suspended) e.start();
+      if (_suspended || pauseReason != null) {
+        // Backgrounding and returning while decode is still in flight must
+        // not reopen the microphone before the user resumes.
+        e.stop();
+        e.flushCapture();
+      } else {
+        e.start();
+      }
       started = true;
       if (loopLine != null) {
         setLoopLine(loopLine);
