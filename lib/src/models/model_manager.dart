@@ -36,7 +36,7 @@ class ModelManager extends ChangeNotifier {
   final Directory dir;
 
   /// Loads the recipe that assembles the karaoke model (bundled asset).
-  final Future<ModelRecipe> Function() loadRecipe;
+  final Future<ModelRecipe> Function(ModelSpec spec) loadRecipe;
   final List<ModelSpec> specs;
   final ResumableDownload Function() downloaderFactory;
 
@@ -108,6 +108,12 @@ class ModelManager extends ChangeNotifier {
       for (final spec in specs) {
         if (isInstalled(spec)) continue;
         _current = spec;
+        final original = File('${dir.path}/${spec.fileName}');
+        if (spec.needsAssembly && original.existsSync() && original.lengthSync() == spec.bytes) {
+          await _verifyAndInstall(spec, original.path, deleteSource: true);
+          _received = _onDisk();
+          continue;
+        }
         final part = _partFile(spec);
         final base = _received - (part.existsSync() ? part.lengthSync().clamp(0, spec.bytes) : 0);
         _set(ModelPhase.downloading);
@@ -115,17 +121,29 @@ class ModelManager extends ChangeNotifier {
         _download = download;
         final meter = _SpeedMeter();
         try {
-          await download.fetch(Uri.parse(spec.url), part, expectedBytes: spec.bytes, onProgress: (n) {
-            _received = base + n;
-            _speed = meter.update(n);
-            _notifyThrottled();
-          });
+          await download.fetch(
+            Uri.parse(spec.url),
+            part,
+            expectedBytes: spec.bytes,
+            onProgress: (n) {
+              _received = base + n;
+              _speed = meter.update(n);
+              _notifyThrottled();
+            },
+          );
         } finally {
           _download = null;
           download.close();
         }
         _received = base + spec.bytes;
         await _verifyAndInstall(spec, part.path, deleteSource: true);
+      }
+      // Previous releases used fixed-time ONNX files. They cannot be reused
+      // as the new graph, and would otherwise waste 194 MB after an upgrade.
+      for (final old in ['UVR-MDX-NET-Voc_FT.onnx', '6_HP-Karaoke-UVR.onnx']) {
+        if (specs.any((s) => s.installedName == old)) continue;
+        final file = File('${dir.path}/$old');
+        if (file.existsSync()) file.deleteSync();
       }
       _current = null;
       _set(ModelPhase.ready);
@@ -151,7 +169,7 @@ class ModelManager extends ChangeNotifier {
     final tmp = '$target.tmp';
     if (spec.needsAssembly) {
       _set(ModelPhase.preparing);
-      final recipe = await loadRecipe();
+      final recipe = await loadRecipe(spec);
       if (recipe.sourceSha256 != spec.sha256) {
         throw ModelDownloadException('内置的模型配方和 ${spec.fileName} 不匹配');
       }
@@ -203,7 +221,9 @@ class ModelManager extends ChangeNotifier {
       _current = null;
       _received = _onDisk();
       _set(isReady ? ModelPhase.ready : ModelPhase.missing);
-      if (installed == 0) _fail('选的文件不是这两个模型（${specs.map((s) => s.fileName).join('、')}）');
+      if (installed == 0) {
+        _fail('选的文件不是这两个模型（${specs.map((s) => s.fileName).join('、')}）');
+      }
     } on ModelDownloadException catch (e) {
       _fail(e.message);
     } catch (e) {

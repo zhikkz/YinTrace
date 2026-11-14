@@ -8,6 +8,7 @@ import 'package:yintrace_audio/yintrace_audio.dart';
 
 import '../library/song_repository.dart';
 import '../models/model_manager.dart';
+import '../models/model_catalog.dart';
 import '../models/model_recipe.dart';
 import 'settings.dart';
 
@@ -39,9 +40,10 @@ class AppServices {
 }
 
 /// The recipe bundled with the app that assembles the karaoke model.
-Future<ModelRecipe> loadBundledRecipe() async {
-  final json = await rootBundle.loadString('assets/models/karaoke_graph.json');
-  final graph = await rootBundle.load('assets/models/karaoke_graph.bin');
+Future<ModelRecipe> loadBundledRecipe(ModelSpec spec) async {
+  final name = spec.id == vocalModel.id ? 'mdx_graph' : 'karaoke_graph';
+  final json = await rootBundle.loadString('assets/models/$name.json');
+  final graph = await rootBundle.load('assets/models/$name.bin');
   return ModelRecipe.parse(json, graph.buffer.asUint8List(graph.offsetInBytes, graph.lengthInBytes));
 }
 

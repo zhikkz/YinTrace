@@ -14,7 +14,9 @@ class MdxConfig {
   });
 
   /// Defaults of UVR-MDX-NET-Voc_FT (UVR model hash 77d07b2667ddf05b9e3175941b4454a0).
-  static const vocFt = MdxConfig();
+  // UVR segment size 128: lower activation memory with a modest context
+  // tradeoff. The constructor keeps UVR's original 256 for reference tests.
+  static const vocFt = MdxConfig(dimT: 128, overlap: 0.5);
 
   final String name;
   final int nFft;
@@ -110,9 +112,18 @@ class VrConfig {
 
   /// Stems UVR treats as "non accompaniment" (affects aggressiveness).
   bool get primaryIsNonAccompaniment => const {
-        'Vocals', 'Other', 'Bass', 'Drums', 'Guitar', 'Piano', 'Synthesizer',
-        'Strings', 'Woodwinds', 'Brass', 'Wind Inst',
-      }.contains(primaryStem);
+    'Vocals',
+    'Other',
+    'Bass',
+    'Drums',
+    'Guitar',
+    'Piano',
+    'Synthesizer',
+    'Strings',
+    'Woodwinds',
+    'Brass',
+    'Wind Inst',
+  }.contains(primaryStem);
 
   /// 6_HP-Karaoke-UVR (UVR model hash 6b5916069a49be3fe29d4397ecfd73fa):
   /// VR v5 network with the band configuration `3band_44100_msb2`. Its
@@ -120,6 +131,7 @@ class VrConfig {
   /// stem is the lead vocal.
   static const karaoke6Hp = VrConfig(
     name: '6_HP-Karaoke-UVR',
+    windowSize: 320,
     bins: 640,
     sr: 44100,
     preFilterStart: 639,
@@ -128,7 +140,17 @@ class VrConfig {
     isKaraoke: true,
     bands: [
       VrBand(sr: 11025, hl: 108, nFft: 1024, cropStart: 0, cropStop: 187, lpfStart: 92, lpfStop: 186),
-      VrBand(sr: 22050, hl: 216, nFft: 768, cropStart: 0, cropStop: 212, hpfStart: 68, hpfStop: 34, lpfStart: 174, lpfStop: 209),
+      VrBand(
+        sr: 22050,
+        hl: 216,
+        nFft: 768,
+        cropStart: 0,
+        cropStop: 212,
+        hpfStart: 68,
+        hpfStop: 34,
+        lpfStart: 174,
+        lpfStop: 209,
+      ),
       VrBand(sr: 44100, hl: 432, nFft: 640, cropStart: 66, cropStop: 307, hpfStart: 86, hpfStop: 72),
     ],
   );

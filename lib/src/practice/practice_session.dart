@@ -64,6 +64,9 @@ class PracticeSession extends ChangeNotifier {
   String? error;
   bool finished = false;
   bool started = false;
+  bool _disposed = false;
+  bool _suspended = false;
+  String? pauseReason;
 
   PracticeEngine? get engine => _engine;
   bool get isPlaying => _engine?.isPlaying ?? false;
@@ -81,17 +84,18 @@ class PracticeSession extends ChangeNotifier {
   double get duration => math.max(meta.duration, _engine?.lengthSeconds ?? 0);
 
   ScoringOptions _scoringOptions() => ScoringOptions(
-        greatCents: settings.toleranceCents.toDouble(),
-        okCents: settings.toleranceCents * 2.0,
-        octaveTolerant: settings.octaveTolerant,
-      );
+    greatCents: settings.toleranceCents.toDouble(),
+    okCents: settings.toleranceCents * 2.0,
+    octaveTolerant: settings.octaveTolerant,
+  );
 
   /// Opens the audio device and loads the tracks.
   Future<void> start() async {
     if (started) return;
     try {
       final perm = await NativeAudio.requestMicPermission();
-      if (perm == MicPermission.denied) {
+      if (_disposed) return;
+      if (perm != MicPermission.granted) {
         error = '没有麦克风权限：请在 系统设置 → 隐私与安全性 → 麦克风 中允许 YinTrace';
         notifyListeners();
         return;
@@ -123,13 +127,14 @@ class PracticeSession extends ChangeNotifier {
         options: LivePitchOptions(gateDb: settings.micGateDb, latencySeconds: _latency),
       );
       _endCount = e.endCount;
-      e.start();
+      if (!_suspended) e.start();
       started = true;
       if (loopLine != null) {
         setLoopLine(loopLine);
       }
       notifyListeners();
     } catch (err) {
+      if (_disposed) return;
       error = '无法启动音频：$err';
       notifyListeners();
     }
@@ -141,7 +146,10 @@ class PracticeSession extends ChangeNotifier {
     if (e == null) return;
     final hasAcc = meta.accompanimentFile != null || meta.originalFile != null;
     e.setTrackGain(TrackSlot.accompaniment, settings.accompanimentVolume);
-    e.setTrackGain(TrackSlot.guideVocal, hasAcc ? settings.guideVocalVolume : math.max(0.6, settings.guideVocalVolume));
+    e.setTrackGain(
+      TrackSlot.guideVocal,
+      hasAcc ? settings.guideVocalVolume : math.max(0.6, settings.guideVocalVolume),
+    );
     scorer.options = _scoringOptions();
     final t = _tracker;
     if (t != null) {
@@ -153,7 +161,20 @@ class PracticeSession extends ChangeNotifier {
 
   void play() {
     final e = _engine;
-    if (e == null) return;
+    if (e == null || _suspended || _disposed) return;
+    try {
+      NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
+      e.takeAudioEvents();
+      e.flushCapture();
+      _tracker?.reset();
+      e.start();
+      applyMix();
+      pauseReason = null;
+    } catch (err) {
+      pauseReason = '音频暂时不可用，请稍后点播放重试';
+      notifyListeners();
+      return;
+    }
     if (finished || e.positionSeconds >= e.lengthSeconds - 0.05) {
       finished = false;
       seek(loopLine != null ? _loopRange(loopLine!).$1 : 0);
@@ -164,6 +185,28 @@ class PracticeSession extends ChangeNotifier {
 
   void pause() {
     _engine?.pause();
+    notifyListeners();
+  }
+
+  /// Stop the hardware too: pausing the song alone still records the mic.
+  void suspend({String reason = '练习已暂停，点播放继续'}) {
+    _suspended = true;
+    pauseReason = reason;
+    final e = _engine;
+    if (e != null) {
+      e.pause();
+      e.stop();
+      e.flushCapture();
+    }
+    _tracker?.reset();
+    lastSample = null;
+    lastVoiced = null;
+    notifyListeners();
+  }
+
+  /// Returning to the app makes playback available, without starting the mic.
+  void resume() {
+    _suspended = false;
     notifyListeners();
   }
 
@@ -212,7 +255,12 @@ class PracticeSession extends ChangeNotifier {
   void tick() {
     final e = _engine;
     final tr = _tracker;
-    if (e == null || tr == null) return;
+    if (e == null || tr == null || _suspended) return;
+    if (e.takeAudioEvents() != 0) {
+      suspend(reason: '音频被中断或耳机已切换，点播放继续');
+      resume();
+      return;
+    }
     var changed = false;
     for (final block in e.readCapture()) {
       for (final p in tr.addBlock(block.samples, block.songFrame, block.clockFrame, block.playing)) {
@@ -247,7 +295,9 @@ class PracticeSession extends ChangeNotifier {
     for (final line in scorer.results()) {
       if (line.line.start > p) break;
       for (final t in line.tokens) {
-        if (t.attempted && !t.score.isNaN && t.token.end < p) out[t.token] = t.score;
+        if (t.attempted && !t.score.isNaN && t.token.end < p) {
+          out[t.token] = t.score;
+        }
       }
     }
     return out;
@@ -259,7 +309,7 @@ class PracticeSession extends ChangeNotifier {
     final results = scorer.results();
     final lines = <int, double>{
       for (var i = 0; i < results.length; i++)
-        if (results[i].attempted) i: results[i].score
+        if (results[i].attempted) i: results[i].score,
     };
     if (lines.isEmpty) return null;
     final record = PracticeRecord(
@@ -275,6 +325,7 @@ class PracticeSession extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     final e = _engine;
     _engine = null;
     if (e != null) {

@@ -19,7 +19,7 @@ class TunerPage extends StatefulWidget {
   State<TunerPage> createState() => _TunerPageState();
 }
 
-class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMixin {
+class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   PracticeEngine? _engine;
   LivePitchTracker? _tracker;
   late final Ticker _ticker;
@@ -28,35 +28,88 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
   double _now = 0;
   String? _error;
   double _lo = 52, _hi = 76;
+  bool _paused = false;
+  bool _starting = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _ticker = createTicker(_tick);
     WidgetsBinding.instance.addPostFrameCallback((_) => _start());
   }
 
   Future<void> _start() async {
+    if (_starting || !mounted) return;
+    _starting = true;
     final settings = AppScope.of(context).settings;
     try {
-      if (await NativeAudio.requestMicPermission() == MicPermission.denied) {
+      final permission = await NativeAudio.requestMicPermission();
+      if (!mounted) return;
+      if (permission != MicPermission.granted) {
         setState(() => _error = '没有麦克风权限。到 系统设置 → 隐私与安全性 → 麦克风，打开 YinTrace。');
         return;
       }
       NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
       final e = PracticeEngine.create(mode: EngineMode.capture);
       _engine = e;
-      _tracker = LivePitchTracker(sampleRate: e.sampleRate, options: LivePitchOptions(gateDb: settings.micGateDb));
-      e.start();
+      _tracker = LivePitchTracker(
+        sampleRate: e.sampleRate,
+        options: LivePitchOptions(gateDb: settings.micGateDb),
+      );
+      if (!_paused) e.start();
       _ticker.start();
     } catch (err) {
-      setState(() => _error = '麦克风打不开：$err');
+      if (mounted) setState(() => _error = '麦克风打不开：$err');
+    } finally {
+      _starting = false;
     }
+  }
+
+  void _pause() {
+    _engine?.stop();
+    _engine?.flushCapture();
+    _tracker?.reset();
+    if (mounted) {
+      setState(() {
+        _paused = true;
+        _last = null;
+      });
+    }
+  }
+
+  Future<void> _continue() async {
+    setState(() {
+      _paused = false;
+      _error = null;
+    });
+    if (_engine == null) {
+      await _start();
+      return;
+    }
+    try {
+      NativeAudio.configureSession(record: true, measurement: AppScope.of(context).settings.measurementMode);
+      _engine!.takeAudioEvents();
+      _engine!.flushCapture();
+      _tracker?.reset();
+      _engine!.start();
+    } catch (_) {
+      _pause();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _pause();
   }
 
   void _tick(Duration _) {
     final e = _engine, tr = _tracker;
-    if (e == null || tr == null) return;
+    if (e == null || tr == null || _paused) return;
+    if (e.takeAudioEvents() != 0) {
+      _pause();
+      return;
+    }
     var changed = false;
     for (final b in e.readCapture()) {
       for (final p in tr.addBlock(b.samples, b.songFrame, b.clockFrame, false)) {
@@ -82,6 +135,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
     final e = _engine;
     if (e != null) {
@@ -100,27 +154,46 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     return Scaffold(
       appBar: AppBar(title: const Text('自由练习')),
       body: _error != null
-          ? Padding(padding: const EdgeInsets.all(28), child: Text(_error!, style: context.type.bodyLarge))
+          ? Padding(
+              padding: const EdgeInsets.all(28),
+              child: Text(_error!, style: context.type.bodyLarge),
+            )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (_paused)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        const Text('采集已暂停'),
+                        FilledButton(onPressed: _continue, child: const Text('继续练习')),
+                      ],
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(recent ? noteName(last.midi) : '–',
-                          style: context.type.displayLarge?.copyWith(fontSize: 76, fontWeight: FontWeight.w300)),
+                      Text(
+                        recent ? noteName(last.midi) : '–',
+                        style: context.type.displayLarge?.copyWith(fontSize: 76, fontWeight: FontWeight.w300),
+                      ),
                       const SizedBox(width: 14),
                       Padding(
                         padding: const EdgeInsets.only(bottom: 10),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(recent ? '简谱 ${solfegeName(last.midi)}' : '对着麦克风唱一个长音',
-                                style: context.type.titleMedium),
-                            Text(recent ? '${last.frequency.toStringAsFixed(1)} Hz' : '音高会实时画在下面',
-                                style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
+                            Text(
+                              recent ? '简谱 ${solfegeName(last.midi)}' : '对着麦克风唱一个长音',
+                              style: context.type.titleMedium,
+                            ),
+                            Text(
+                              recent ? '${last.frequency.toStringAsFixed(1)} Hz' : '音高会实时画在下面',
+                              style: context.type.bodySmall?.copyWith(fontFeatures: tabular),
+                            ),
                           ],
                         ),
                       ),
@@ -128,9 +201,13 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
                       if (cents != null)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 12),
-                          child: Text('${cents >= 0 ? '+' : ''}${cents.round()}',
-                              style: context.type.headlineSmall?.copyWith(
-                                  color: p.deviation(cents, tolerance: 15), fontFeatures: tabular)),
+                          child: Text(
+                            '${cents >= 0 ? '+' : ''}${cents.round()}',
+                            style: context.type.headlineSmall?.copyWith(
+                              color: p.deviation(cents, tolerance: 15),
+                              fontFeatures: tabular,
+                            ),
+                          ),
                         ),
                     ],
                   ),
@@ -141,13 +218,15 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                  child: Row(children: [
-                    Text('偏低', style: context.type.labelSmall?.copyWith(color: p.azurite)),
-                    const Spacer(),
-                    Text('±50 音分', style: context.type.labelSmall),
-                    const Spacer(),
-                    Text('偏高', style: context.type.labelSmall?.copyWith(color: p.cinnabar)),
-                  ]),
+                  child: Row(
+                    children: [
+                      Text('偏低', style: context.type.labelSmall?.copyWith(color: p.azurite)),
+                      const Spacer(),
+                      Text('±50 音分', style: context.type.labelSmall),
+                      const Spacer(),
+                      Text('偏高', style: context.type.labelSmall?.copyWith(color: p.cinnabar)),
+                    ],
+                  ),
                 ),
                 Expanded(
                   child: CustomPaint(

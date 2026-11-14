@@ -3,7 +3,7 @@
 
 YinTrace uses exactly two UVR models:
 
-  * ``UVR-MDX-NET-Voc_FT.onnx``  - already ONNX, used as downloaded.
+  * ``UVR-MDX-NET-Voc_FT.onnx``  - ONNX; patched to a dynamic time axis at install.
   * ``6_HP-Karaoke-UVR.pth``     - PyTorch weights of UVR's VR architecture.
 
 ONNX Runtime on a phone cannot read a ``.pth``. Instead of shipping converted
@@ -41,6 +41,7 @@ import argparse
 import hashlib
 import json
 import os
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 import pickle
 import struct
 import sys
@@ -51,7 +52,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(HERE, "..", "assets", "models")
 
 SOURCE_NAME = "6_HP-Karaoke-UVR.pth"
-OUTPUT_NAME = "6_HP-Karaoke-UVR.onnx"
+OUTPUT_NAME = "6_HP-Karaoke-UVR-dynamic.onnx"
 # 3band_44100_msb2: 640 bins (+1), processed in windows of 512 frames.
 BINS = 640
 WINDOW = 512
@@ -69,6 +70,9 @@ def build_network():
     import torch.nn.functional as F
 
     def crop_center(h1, h2):
+        # The deployed windows (320 and 512) are divisible by 32, so every
+        # encoder/decoder skip has equal time extent. Keep the no-op crop out
+        # of ONNX to avoid extra activation copies. Both shapes are verified.
         if h1.size()[3] == h2.size()[3]:
             return h1
         s_time = (h1.size()[3] - h2.size()[3]) // 2
@@ -215,7 +219,8 @@ def export_onnx(torch, model, out_path):
     with torch.no_grad():
         torch.onnx.export(model, (torch.rand(*shape),), out_path, dynamo=False,
                           input_names=["input"], output_names=["mask"], opset_version=OPSET,
-                          training=torch.onnx.TrainingMode.PRESERVE, do_constant_folding=False)
+                          training=torch.onnx.TrainingMode.PRESERVE, do_constant_folding=False,
+                          dynamic_axes={"input": {3: "T"}, "mask": {3: "T"}})
     return shape
 
 
@@ -383,6 +388,7 @@ def make_recipe(pth_path, onnx_path):
         "output": {"name": OUTPUT_NAME, "bytes": len(onnx_bytes), "sha256": hashlib.sha256(onnx_bytes).hexdigest()},
         "graph": {"bytes": len(skeleton), "sha256": hashlib.sha256(bytes(skeleton)).hexdigest()},
         "input": {"name": "input", "shape": [1, 2, BINS + 1, WINDOW]},
+        "dynamicAxes": {"input": {"3": "T"}, "mask": {"3": "T"}},
         "outputName": "mask",
         "segments": segments,
     }
@@ -408,15 +414,21 @@ def assemble(recipe, skeleton, pth_path, out_path):
 def compare_with_torch(torch, model, onnx_path, shape):
     import numpy as np
     import onnxruntime as ort
+    ort.disable_telemetry_events()
 
-    x = np.random.default_rng(0).random(shape, dtype=np.float32)
-    with torch.no_grad():
-        ref = model(torch.from_numpy(x)).numpy()
-    sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
-    out = sess.run(None, {sess.get_inputs()[0].name: x})[0]
-    if out.shape != ref.shape:
-        sys.exit(f"shape mismatch {out.shape} vs {ref.shape}")
-    return float(np.max(np.abs(out - ref)))
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 4
+    sess = ort.InferenceSession(onnx_path, options, providers=["CPUExecutionProvider"])
+    errors = []
+    for window in (320, 512):
+        x = np.random.default_rng(0).random((*shape[:3], window), dtype=np.float32)
+        with torch.no_grad():
+            ref = model(torch.from_numpy(x)).numpy()
+        out = sess.run(None, {sess.get_inputs()[0].name: x})[0]
+        if out.shape != ref.shape:
+            sys.exit(f"shape mismatch {out.shape} vs {ref.shape}")
+        errors.append(float(np.max(np.abs(out - ref))))
+    return max(errors)
 
 
 def write_assets(out_dir, skeleton, recipe):

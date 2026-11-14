@@ -29,12 +29,12 @@ import 'support/synth_voice.dart';
 import 'ui_test.dart' show loadFonts, screenshot, settleIo, shotKey;
 
 Widget host(AppServices services, Widget home, {Brightness brightness = Brightness.light}) => AppScope(
-      services: services,
-      child: RepaintBoundary(
-        key: shotKey,
-        child: MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(brightness), home: home),
-      ),
-    );
+  services: services,
+  child: RepaintBoundary(
+    key: shotKey,
+    child: MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(brightness), home: home),
+  ),
+);
 
 void main() {
   final dir = Platform.environment['DESIGN_SONG_DIR'];
@@ -51,12 +51,20 @@ void main() {
     tmp = Directory.systemTemp.createTempSync('yt_design');
     final repo = SongRepository(Directory('${tmp.path}/songs'));
     services = AppServices(
-        settings: AppSettings(null), songs: repo, models: ModelManager(dir: Directory('${tmp.path}/models'), loadRecipe: () => throw StateError('unused')));
+      settings: AppSettings(null),
+      songs: repo,
+      models: ModelManager(
+        dir: Directory('${tmp.path}/models'),
+        loadRecipe: (_) => throw StateError('unused'),
+      ),
+    );
     final id = repo.newSongId();
     File('$dir/reference.json').copySync(repo.pathFor(id, SongRepository.referenceFile));
     File('$dir/pitch.bin').copySync(repo.pathFor(id, SongRepository.pitchFile));
     File('$dir/vocal.wav').copySync(repo.pathFor(id, 'vocals.wav'));
-    ref = SongReference.fromJson(jsonDecode(File('$dir/reference.json').readAsStringSync()) as Map<String, dynamic>);
+    ref = SongReference.fromJson(
+      jsonDecode(File('$dir/reference.json').readAsStringSync()) as Map<String, dynamic>,
+    );
     song = SongMeta(
       id: id,
       title: Platform.environment['DESIGN_TITLE'] ?? '示例歌曲',
@@ -67,22 +75,30 @@ void main() {
       vocalsFile: 'vocals.wav',
     );
     await repo.save(song);
-    await repo.addPractice(id, PracticeRecord(at: DateTime.now(), score: 78, lineScores: {
-      for (var i = 0; i < ref.lines.length; i++) i: 60 + (i * 37 % 38).toDouble()
-    }));
+    await repo.addPractice(
+      id,
+      PracticeRecord(
+        at: DateTime.now(),
+        score: 78,
+        lineScores: {for (var i = 0; i < ref.lines.length; i++) i: 60 + (i * 37 % 38).toDouble()},
+      ),
+    );
     song = await repo.load(id);
     // Two more (fake) songs so the library has some variety.
     for (final t in [('平凡之路', '朴树'), ('起风了', '买辣椒也用券')]) {
       final other = repo.newSongId();
       File('$dir/reference.json').copySync(repo.pathFor(other, SongRepository.referenceFile));
-      await repo.save(SongMeta(
+      await repo.save(
+        SongMeta(
           id: other,
           title: t.$1,
           artist: t.$2,
           createdAt: DateTime(2026, 11, 1),
           duration: 241,
           lyrics: '',
-          vocalsFile: 'vocals.wav'));
+          vocalsFile: 'vocals.wav',
+        ),
+      );
     }
   });
 
@@ -127,23 +143,25 @@ void main() {
       }
       final singer = synthVoice(syls, 80, seed: 3);
       late PracticeSession session;
-      await tester.pumpWidget(host(
-        services,
-        PracticePage(
-          meta: song,
-          reference: ref,
-          contour: contour,
-          sessionFactory: (_) => session = PracticeSession(
+      await tester.pumpWidget(
+        host(
+          services,
+          PracticePage(
             meta: song,
             reference: ref,
             contour: contour,
-            repository: services.songs,
-            settings: services.settings,
-            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+            sessionFactory: (_) => session = PracticeSession(
+              meta: song,
+              reference: ref,
+              contour: contour,
+              repository: services.songs,
+              settings: services.settings,
+              engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+            ),
           ),
+          brightness: b,
         ),
-        brightness: b,
-      ));
+      );
       await settleIo(tester, rounds: 40);
       session.seek(67.5);
       session.play();

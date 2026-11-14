@@ -16,8 +16,7 @@ class NativeAudioException implements Exception {
 
 /// Decoded, interleaved float PCM.
 class DecodedAudio {
-  DecodedAudio(this.samples, this.channels, this.sampleRate)
-      : assert(samples.length % channels == 0);
+  DecodedAudio(this.samples, this.channels, this.sampleRate) : assert(samples.length % channels == 0);
 
   /// Interleaved samples.
   final Float32List samples;
@@ -95,16 +94,14 @@ class NativeAudio {
 
   /// Decodes an audio file (mp3, m4a/aac, wav, flac, ... depending on the
   /// platform) to float PCM. This is CPU heavy; call it from an isolate.
-  static DecodedAudio decodeFile(String path,
-      {int sampleRate = 44100, int channels = 2}) {
+  static DecodedAudio decodeFile(String path, {int sampleRate = 44100, int channels = 2}) {
     return using((arena) {
       final cPath = path.toNativeUtf8(allocator: arena).cast<Char>();
       final frames = arena<Int64>();
       final err = arena<Char>(512);
       final ptr = _b.decodeFile(cPath, sampleRate, channels, frames, err, 512);
       if (ptr == nullptr) {
-        throw NativeAudioException(
-            'decode failed: ${err.cast<Utf8>().toDartString()}');
+        throw NativeAudioException('decode failed: ${err.cast<Utf8>().toDartString()}');
       }
       final count = frames.value * channels;
       final view = ptr.asTypedList(count);
@@ -116,27 +113,28 @@ class NativeAudio {
 
   /// Encodes PCM to AAC/.m4a. Returns false when the platform has no
   /// encoder (callers should fall back to WAV).
-  static bool encodeM4a(String path, Float32List interleaved, int sampleRate,
-      int channels,
-      {int bitrate = 160000}) {
+  static bool encodeM4a(
+    String path,
+    Float32List interleaved,
+    int sampleRate,
+    int channels, {
+    int bitrate = 160000,
+  }) {
     return using((arena) {
       final cPath = path.toNativeUtf8(allocator: arena).cast<Char>();
       final data = arena<Float>(interleaved.length);
       data.asTypedList(interleaved.length).setAll(0, interleaved);
-      final r = _b.encodeM4a(cPath, data, interleaved.length ~/ channels,
-          sampleRate, channels, bitrate);
+      final r = _b.encodeM4a(cPath, data, interleaved.length ~/ channels, sampleRate, channels, bitrate);
       if (r == -1) return false;
       if (r != 0) throw NativeAudioException('AAC encoding failed ($r)');
       return true;
     });
   }
 
-  static MicPermission get micPermission =>
-      MicPermission.values[_b.micPermissionStatus().clamp(0, 2)];
+  static MicPermission get micPermission => MicPermission.values[_b.micPermissionStatus().clamp(0, 2)];
 
   /// Shows the system microphone prompt if needed and waits for the answer.
-  static Future<MicPermission> requestMicPermission(
-      {Duration timeout = const Duration(minutes: 2)}) async {
+  static Future<MicPermission> requestMicPermission({Duration timeout = const Duration(minutes: 2)}) async {
     var status = micPermission;
     if (status != MicPermission.undetermined) return status;
     _b.requestMicPermission();
@@ -172,10 +170,10 @@ class NativeAudio {
 /// captures the microphone with song-position tags.
 class PracticeEngine {
   PracticeEngine._(this._ptr, this.sampleRate, this.mode)
-      : _capBuf = malloc<Float>(_capMax),
-        _song = malloc<Int64>(),
-        _clock = malloc<Int64>(),
-        _flags = malloc<Int32>();
+    : _capBuf = malloc<Float>(_capMax),
+      _song = malloc<Int64>(),
+      _clock = malloc<Int64>(),
+      _flags = malloc<Int32>();
 
   static const int maxTracks = 4;
   static const int _capMax = 4096;
@@ -191,17 +189,16 @@ class PracticeEngine {
 
   static YtBindings get _b => YtBindings.instance;
 
-  static PracticeEngine create(
-      {int sampleRate = 44100,
-      EngineMode mode = EngineMode.duplex,
-      bool nullBackend = false}) {
+  static PracticeEngine create({
+    int sampleRate = 44100,
+    EngineMode mode = EngineMode.duplex,
+    bool nullBackend = false,
+  }) {
     return using((arena) {
       final err = arena<Char>(512);
-      final ptr =
-          _b.engineCreate(sampleRate, mode.value, nullBackend ? 1 : 0, err, 512);
+      final ptr = _b.engineCreate(sampleRate, mode.value, nullBackend ? 1 : 0, err, 512);
       if (ptr == nullptr) {
-        throw NativeAudioException(
-            'engine init failed: ${err.cast<Utf8>().toDartString()}');
+        throw NativeAudioException('engine init failed: ${err.cast<Utf8>().toDartString()}');
       }
       return PracticeEngine._(ptr, sampleRate, mode);
     });
@@ -222,6 +219,16 @@ class PracticeEngine {
     _b.engineStop(_ptr);
   }
 
+  /// Device events since the last poll. Bit 1: stopped/rerouted/interrupted;
+  /// bit 2: interruption ended. Both require an explicit restart.
+  int takeAudioEvents() => _disposed ? 0 : _b.engineTakeAudioEvents(_ptr);
+
+  /// Signal from a platform adapter (also usable by offline tests).
+  void signalAudioEvent(int events) {
+    _check();
+    _b.engineSignalAudioEvent(_ptr, events);
+  }
+
   void dispose() {
     if (_disposed) return;
     _disposed = true;
@@ -240,8 +247,7 @@ class PracticeEngine {
     using((arena) {
       final data = arena<Float>(interleaved.length);
       data.asTypedList(interleaved.length).setAll(0, interleaved);
-      final r = _b.engineLoadTrackPcm(
-          _ptr, slot, data, interleaved.length ~/ channels, channels);
+      final r = _b.engineLoadTrackPcm(_ptr, slot, data, interleaved.length ~/ channels, channels);
       if (r != 0) throw NativeAudioException('load track failed ($r)');
     });
   }
@@ -250,11 +256,15 @@ class PracticeEngine {
     _check();
     using((arena) {
       final err = arena<Char>(512);
-      final r = _b.engineLoadTrackFile(_ptr, slot,
-          path.toNativeUtf8(allocator: arena).cast<Char>(), err, 512);
+      final r = _b.engineLoadTrackFile(
+        _ptr,
+        slot,
+        path.toNativeUtf8(allocator: arena).cast<Char>(),
+        err,
+        512,
+      );
       if (r != 0) {
-        throw NativeAudioException(
-            'load track failed: ${err.cast<Utf8>().toDartString()}');
+        throw NativeAudioException('load track failed: ${err.cast<Utf8>().toDartString()}');
       }
     });
   }
@@ -291,8 +301,7 @@ class PracticeEngine {
     _b.engineSeek(_ptr, frame);
   }
 
-  void seek(Duration position) =>
-      seekFrame((position.inMicroseconds * sampleRate / 1e6).round());
+  void seek(Duration position) => seekFrame((position.inMicroseconds * sampleRate / 1e6).round());
 
   int get positionFrame => _disposed ? 0 : _b.enginePosition(_ptr);
   double get positionSeconds => positionFrame / sampleRate;
@@ -305,8 +314,7 @@ class PracticeEngine {
     if (startSeconds == null || endSeconds == null) {
       _b.engineSetLoop(_ptr, 0, 0);
     } else {
-      _b.engineSetLoop(_ptr, (startSeconds * sampleRate).round(),
-          (endSeconds * sampleRate).round());
+      _b.engineSetLoop(_ptr, (startSeconds * sampleRate).round(), (endSeconds * sampleRate).round());
     }
   }
 
@@ -327,8 +335,14 @@ class PracticeEngine {
     for (var i = 0; i < maxBlocks; i++) {
       final n = _b.engineReadCapture(_ptr, _capBuf, _capMax, _song, _clock, _flags);
       if (n <= 0) break;
-      out.add(CaptureBlock(Float32List.fromList(_capBuf.asTypedList(n)),
-          _song.value, _clock.value, (_flags.value & 1) != 0));
+      out.add(
+        CaptureBlock(
+          Float32List.fromList(_capBuf.asTypedList(n)),
+          _song.value,
+          _clock.value,
+          (_flags.value & 1) != 0,
+        ),
+      );
     }
     return out;
   }

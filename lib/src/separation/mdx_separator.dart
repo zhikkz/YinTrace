@@ -9,8 +9,7 @@ import 'tensor_model.dart';
 ///
 /// Input and output are interleaved stereo float PCM at 44.1 kHz.
 class MdxSeparator {
-  MdxSeparator(this.model, this.config)
-      : _stft = Stft(nFft: config.nFft, hop: config.hop);
+  MdxSeparator(this.model, this.config) : _stft = Stft(nFft: config.nFft, hop: config.hop);
 
   final TensorModel model;
   final MdxConfig config;
@@ -35,8 +34,7 @@ class MdxSeparator {
 
   /// Separates the model's primary stem (Vocals for Voc_FT), scaled by the
   /// model's `compensate` factor exactly like UVR.
-  Future<Float32List> separate(Float32List stereo,
-      {ProgressCallback? onProgress}) async {
+  Future<Float32List> separate(Float32List stereo, {ProgressCallback? onProgress}) async {
     final c = config;
     final frames = stereo.length ~/ 2;
     final chunk = c.chunkSize;
@@ -47,8 +45,13 @@ class MdxSeparator {
 
     // The padded mixture is `trim` zeros + input + `pad` zeros; it is read
     // straight from [stereo] to keep memory low on phones.
-    final result = [Float32List(total), Float32List(total)];
-    final divider = Float32List(total);
+    // Only the unfinalized overlap needs accumulation. Once the next chunk
+    // starts, earlier samples cannot change. Keep one chunk in a ring instead
+    // of three song-length arrays (159 MB for a five-minute song).
+    final result = Float32List(chunk * 2);
+    final divider = Float32List(chunk);
+    final output = Float32List(frames * 2);
+    var finalized = 0;
 
     final step = _step;
     final nChunks = (total + step - 1) ~/ step;
@@ -87,40 +90,43 @@ class MdxSeparator {
         final re = Float32List.sublistView(out, 2 * ch * planeSize, (2 * ch + 1) * planeSize);
         final im = Float32List.sublistView(out, (2 * ch + 1) * planeSize, (2 * ch + 2) * planeSize);
         final wave = _stft.inverse(Spectrogram.from(c.dimF, c.dimT, re, im), length: chunk);
-        final dst = result[ch];
         if (window != null) {
           for (var i = 0; i < actual; i++) {
-            dst[start + i] += wave[i] * window[i];
+            result[2 * ((start + i) % chunk) + ch] += wave[i] * window[i];
           }
         } else {
           for (var i = 0; i < actual; i++) {
-            dst[start + i] += wave[i];
+            result[2 * ((start + i) % chunk) + ch] += wave[i];
           }
         }
       }
       if (window != null) {
         for (var i = 0; i < actual; i++) {
-          divider[start + i] += window[i];
+          divider[(start + i) % chunk] += window[i];
         }
       } else {
         for (var i = 0; i < actual; i++) {
-          divider[start + i] += 1;
+          divider[(start + i) % chunk] += 1;
         }
+      }
+      final until = math.min(start + step, total);
+      for (; finalized < until; finalized++) {
+        final slot = finalized % chunk;
+        final i = finalized - trim;
+        final d = divider[slot];
+        if (i >= 0 && i < frames && d > 1e-8) {
+          output[2 * i] = result[2 * slot] / d * c.compensate;
+          output[2 * i + 1] = result[2 * slot + 1] / d * c.compensate;
+        }
+        result[2 * slot] = 0;
+        result[2 * slot + 1] = 0;
+        divider[slot] = 0;
       }
       done++;
       onProgress?.call(done / nChunks);
     }
 
-    final out = Float32List(frames * 2);
-    final k = c.compensate;
-    for (var i = 0; i < frames; i++) {
-      final d = divider[trim + i];
-      if (d > 1e-8) {
-        out[2 * i] = result[0][trim + i] / d * k;
-        out[2 * i + 1] = result[1][trim + i] / d * k;
-      }
-    }
-    return out;
+    return output;
   }
 
   /// `numpy.hanning` (symmetric).

@@ -11,12 +11,19 @@ endian) in both directions.
 import struct
 import sys
 
+import os
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
+
 import numpy as np
 import onnxruntime as ort
+ort.disable_telemetry_events()
 
 
 def main():
-    sess = ort.InferenceSession(sys.argv[1], providers=["CPUExecutionProvider"])
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 4
+    options.enable_cpu_mem_arena = False
+    sess = ort.InferenceSession(sys.argv[1], options, providers=["CPUExecutionProvider"])
     name = sess.get_inputs()[0].name
     inp, out = sys.stdin.buffer, sys.stdout.buffer
     while True:

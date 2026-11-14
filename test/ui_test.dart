@@ -90,16 +90,16 @@ Future<void> settleIo(WidgetTester tester, {int rounds = 15}) async {
 }
 
 Widget host(AppServices services, Widget home) => AppScope(
-      services: services,
-      child: RepaintBoundary(
-        key: shotKey,
-        child: MaterialApp(
-          debugShowCheckedModeBanner: false,
-          theme: YinTraceApp.theme(Brightness.light),
-          home: home,
-        ),
-      ),
-    );
+  services: services,
+  child: RepaintBoundary(
+    key: shotKey,
+    child: MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: YinTraceApp.theme(Brightness.light),
+      home: home,
+    ),
+  ),
+);
 
 void main() {
   late Directory tmp;
@@ -117,7 +117,7 @@ void main() {
       songs: songs,
       models: ModelManager(
         dir: Directory('${tmp.path}/models'),
-        loadRecipe: () => throw StateError('unused'),
+        loadRecipe: (_) => throw StateError('unused'),
       ),
     );
     // A "pure vocal" + accompaniment import (no models needed).
@@ -126,25 +126,32 @@ void main() {
     final acc = Float32List(voice.length * 2);
     writeWavFile('${tmp.path}/vocal.wav', voice, 1, sr);
     writeWavFile('${tmp.path}/acc.wav', acc, 2, sr);
-    song = await ImportPipeline(
-      audio: const WavAudioBackend(),
-      repository: songs,
-      loadModel: (p, {required inputName, required outputName, useCoreML = false}) => throw StateError('unused'),
-    ).run(ImportRequest(
-      audioPath: '${tmp.path}/vocal.wav',
-      accompanimentPath: '${tmp.path}/acc.wav',
-      lyrics: lyrics,
-      title: '夜航（示例）',
-      artist: '演示',
-      vocalsOnly: true,
-    ));
-    await songs.addPractice(song.id, PracticeRecord(at: DateTime.now(), score: 82, lineScores: {0: 88, 1: 71}));
+    song =
+        await ImportPipeline(
+          audio: const WavAudioBackend(),
+          repository: songs,
+          loadModel: (p, {required inputName, required outputName, useCoreML = false}) =>
+              throw StateError('unused'),
+        ).run(
+          ImportRequest(
+            audioPath: '${tmp.path}/vocal.wav',
+            accompanimentPath: '${tmp.path}/acc.wav',
+            lyrics: lyrics,
+            title: '夜航（示例）',
+            artist: '演示',
+            vocalsOnly: true,
+          ),
+        );
+    await songs.addPractice(
+      song.id,
+      PracticeRecord(at: DateTime.now(), score: 82, lineScores: {0: 88, 1: 71}),
+    );
     // The singer: right on most characters, flat on 3–4, sharp on line 2's
     // 4th character, skipping the 9th character.
     final sung = <Syl>[
       for (var i = 0; i < m.length; i++)
         if (i != 8)
-          Syl(m[i].start + 0.02, m[i].end, m[i].midi + (i == 3 || i == 4 ? -0.7 : (i == 13 ? 0.9 : 0.05)))
+          Syl(m[i].start + 0.02, m[i].end, m[i].midi + (i == 3 || i == 4 ? -0.7 : (i == 13 ? 0.9 : 0.05))),
     ];
     singer = synthVoice(sung, 10, seed: 9);
   });
@@ -235,27 +242,53 @@ void main() {
     final ref = await tester.runAsync(() => services.songs.loadReference(song.id));
     final contour = await tester.runAsync(() => services.songs.loadPitchTrack(song.id));
     late PracticeSession session;
-    await tester.pumpWidget(host(
-      services,
-      PracticePage(
-        meta: song,
-        reference: ref!,
-        contour: contour,
-        sessionFactory: (_) => session = PracticeSession(
+    await tester.pumpWidget(
+      host(
+        services,
+        PracticePage(
           meta: song,
-          reference: ref,
+          reference: ref!,
           contour: contour,
-          repository: services.songs,
-          settings: services.settings,
-          engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+          sessionFactory: (_) => session = PracticeSession(
+            meta: song,
+            reference: ref,
+            contour: contour,
+            repository: services.songs,
+            settings: services.settings,
+            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+          ),
         ),
       ),
-    ));
+    );
     await settleIo(tester, rounds: 5);
     expect(session.error, isNull);
     expect(session.started, isTrue);
     session.play();
     final engine = session.engine!;
+    // The native device must stop both playback and capture on backgrounding.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    final heldPosition = engine.positionFrame;
+    expect(session.isPlaying, isFalse);
+    engine.render(512, input: Float32List(512));
+    expect(engine.positionFrame, heldPosition);
+    expect(engine.readCapture(), isEmpty);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(session.isPlaying, isFalse); // user resumes deliberately
+    session.play();
+    engine.signalAudioEvent(1); // phone call or unplugged headphones
+    session.tick();
+    expect(session.isPlaying, isFalse);
+    expect(session.pauseReason, contains('中断'));
+    engine.render(512, input: Float32List(512));
+    expect(engine.readCapture(), isEmpty);
+    engine.signalAudioEvent(2); // call ends; still paused
+    session.tick();
+    expect(session.isPlaying, isFalse);
+    session.play();
+    expect(session.isPlaying, isTrue);
     // Render the song in 512 frame blocks with the singer as mic input,
     // pumping frames so the page's ticker pulls and scores the capture.
     Future<void> runUntil(double seconds) async {

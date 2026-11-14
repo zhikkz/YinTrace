@@ -134,6 +134,13 @@ YT_EXPORT int64_t yt_engine_capture_overruns(yt_engine* engine);
 // Discards every pending captured block.
 YT_EXPORT void yt_engine_flush_capture(yt_engine* engine);
 
+// Audio-device events (bit 1: interrupted/rerouted/stopped, bit 2: interruption ended).
+// signal() is for platform adapters; it atomically silences playback/capture.
+// take() clears pending events. Restart only from the control thread, never a
+// miniaudio notification callback. Callers must ask the user to resume playback.
+YT_EXPORT void yt_engine_signal_audio_event(yt_engine* engine, int32_t events);
+YT_EXPORT int32_t yt_engine_take_audio_events(yt_engine* engine);
+
 // Runs the engine's audio callback directly (offline mode and tests).
 // `out` receives interleaved stereo, `in` is mono; either may be NULL.
 YT_EXPORT void yt_engine_render(yt_engine* engine, float* out, const float* in,
