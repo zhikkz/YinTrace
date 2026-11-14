@@ -13,7 +13,8 @@
    （ModelFormat、MLComputeUnits、RequireStaticInputShapes、ModelCacheDirectory 等）
    经 ORT 公开的 `appendCoreMLExecutionProviderWithOptionsV2:` 传入；不传时保持上游
    原来的默认 Core ML 行为。App 本身只用 CPU，这个选项目前只给真机测速
-   （`integration_test/device_benchmark_test.dart`）使用。
+   （`lib/src/benchmark/device_benchmark.dart`：测试版的“性能测试”和
+   `integration_test/device_benchmark_test.dart`）使用。
 
 新增 YinTrace 代码适用根目录 AGPL-3.0-only；第三方原始代码保留 MIT。
 

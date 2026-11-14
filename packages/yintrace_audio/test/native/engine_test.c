@@ -280,6 +280,26 @@ int main(int argc, char** argv) {
     CHECK(yt_exclude_from_backup(marker) == 0);
     remove(marker);
   }
+  {
+    // Device facts for the benchmark report.
+    char model[64];
+    int32_t n = yt_device_model(model, sizeof model);
+    CHECK(n >= 0 && n < (int32_t)sizeof model && (int32_t)strlen(model) == n);
+    char tiny[2];
+    CHECK(yt_device_model(tiny, sizeof tiny) <= 1);
+    int32_t thermal = yt_thermal_state();
+    CHECK(thermal >= -1 && thermal <= 3);
+#ifdef __APPLE__
+    printf("device model %s, %lld bytes, thermal state %d\n", model, (long long)yt_physical_memory(), thermal);
+    CHECK(n > 0);
+    CHECK(yt_physical_memory() > 0);
+    CHECK(thermal >= 0);
+#else
+    CHECK(n == 0 && model[0] == '\0');
+    CHECK(yt_physical_memory() == -1);
+    CHECK(thermal == -1);
+#endif
+  }
 #ifndef __APPLE__
   // No AAC encoder outside Apple platforms: callers fall back to WAV.
   float one[2] = {0, 0};

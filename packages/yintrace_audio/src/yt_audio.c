@@ -102,6 +102,12 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
 }
 double yt_session_latency(void) { return 0.0; }
 int64_t yt_available_memory(void) { return -1; }
+int32_t yt_device_model(char* buf, int32_t len) {
+  if (buf != NULL && len > 0) buf[0] = '\0';
+  return 0;
+}
+int64_t yt_physical_memory(void) { return -1; }
+int32_t yt_thermal_state(void) { return -1; }
 int32_t yt_exclude_from_backup(const char* path) {
   (void)path;
   return 0;

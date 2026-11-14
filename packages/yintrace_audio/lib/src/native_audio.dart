@@ -48,6 +48,9 @@ class DecodedAudio {
 
 enum MicPermission { undetermined, granted, denied }
 
+/// The system's thermal state (Apple's NSProcessInfo.thermalState).
+enum ThermalState { nominal, fair, serious, critical }
+
 /// Engine device modes.
 enum EngineMode {
   playback(0),
@@ -159,6 +162,31 @@ class NativeAudio {
   static int? get availableMemory {
     final bytes = _b.availableMemory();
     return bytes > 0 ? bytes : null;
+  }
+
+  /// Hardware model identifier such as "iPhone15,2", or null where unknown.
+  /// (On the simulator this is the host's architecture.)
+  static String? get deviceModel {
+    final buf = malloc<Char>(64);
+    try {
+      final n = _b.deviceModel(buf, 64);
+      return n > 0 ? buf.cast<Utf8>().toDartString(length: n) : null;
+    } finally {
+      malloc.free(buf);
+    }
+  }
+
+  /// Installed physical memory in bytes, or null where unknown.
+  static int? get physicalMemory {
+    final bytes = _b.physicalMemory();
+    return bytes > 0 ? bytes : null;
+  }
+
+  /// The system's thermal state, or null where unknown. From
+  /// [ThermalState.serious] on, the system slows the device down.
+  static ThermalState? get thermalState {
+    final s = _b.thermalState();
+    return s >= 0 && s < ThermalState.values.length ? ThermalState.values[s] : null;
   }
 
   /// Excludes a file or directory from device backups (for data that can be

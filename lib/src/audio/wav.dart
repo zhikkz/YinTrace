@@ -70,8 +70,21 @@ WavData decodeWav(Uint8List bytes) {
 
 /// Encodes interleaved float samples as 16-bit PCM WAV.
 Uint8List encodeWav16(Float32List samples, int channels, int sampleRate) {
-  final dataBytes = samples.length * 2;
   final b = BytesBuilder(copy: false);
+  b.add(wav16Header(samples.length, channels, sampleRate));
+  final pcm = Int16List(samples.length);
+  for (var i = 0; i < samples.length; i++) {
+    final v = (samples[i] * 32767).round();
+    pcm[i] = v > 32767 ? 32767 : (v < -32768 ? -32768 : v);
+  }
+  b.add(pcm.buffer.asUint8List());
+  return b.takeBytes();
+}
+
+/// The 44-byte header of a 16-bit PCM WAV file holding [sampleCount]
+/// interleaved samples.
+Uint8List wav16Header(int sampleCount, int channels, int sampleRate) {
+  final dataBytes = sampleCount * 2;
   final header = ByteData(44);
   void str(int o, String s) {
     for (var i = 0; i < 4; i++) {
@@ -92,14 +105,7 @@ Uint8List encodeWav16(Float32List samples, int channels, int sampleRate) {
   header.setUint16(34, 16, Endian.little);
   str(36, 'data');
   header.setUint32(40, dataBytes, Endian.little);
-  b.add(header.buffer.asUint8List());
-  final pcm = Int16List(samples.length);
-  for (var i = 0; i < samples.length; i++) {
-    final v = (samples[i] * 32767).round();
-    pcm[i] = v > 32767 ? 32767 : (v < -32768 ? -32768 : v);
-  }
-  b.add(pcm.buffer.asUint8List());
-  return b.takeBytes();
+  return header.buffer.asUint8List();
 }
 
 WavData readWavFile(String path) => decodeWav(File(path).readAsBytesSync());

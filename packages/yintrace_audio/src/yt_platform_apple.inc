@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
+#include <sys/sysctl.h>
 #if TARGET_OS_IOS
 #include <os/proc.h>
 #endif
@@ -103,6 +104,41 @@ int64_t yt_available_memory(void) {
 }
 
 #pragma clang diagnostic pop
+
+int32_t yt_device_model(char* buf, int32_t len) {
+  if (buf == NULL || len <= 0) return 0;
+  buf[0] = '\0';
+#if TARGET_OS_OSX
+  const char* key = "hw.model";  // "hw.machine" is only the CPU architecture there
+#else
+  const char* key = "hw.machine";  // the simulator reports the host's architecture
+#endif
+  size_t size = (size_t)len;
+  if (sysctlbyname(key, buf, &size, NULL, 0) != 0) {
+    buf[0] = '\0';
+    return 0;
+  }
+  buf[len - 1] = '\0';
+  return (int32_t)strlen(buf);
+}
+
+int64_t yt_physical_memory(void) {
+  return (int64_t)[[NSProcessInfo processInfo] physicalMemory];
+}
+
+int32_t yt_thermal_state(void) {
+  switch ([[NSProcessInfo processInfo] thermalState]) {
+    case NSProcessInfoThermalStateNominal:
+      return 0;
+    case NSProcessInfoThermalStateFair:
+      return 1;
+    case NSProcessInfoThermalStateSerious:
+      return 2;
+    case NSProcessInfoThermalStateCritical:
+      return 3;
+  }
+  return -1;
+}
 
 int32_t yt_exclude_from_backup(const char* path) {
   if (path == NULL) return -1;

@@ -18,6 +18,14 @@ void main() {
     expect(NativeAudio.micPermission, MicPermission.granted);
   }, skip: skip);
 
+  test('device facts are unknown off Apple platforms', () {
+    // The host library is built for Linux in CI.
+    expect(NativeAudio.availableMemory, isNull);
+    expect(NativeAudio.deviceModel, isNull);
+    expect(NativeAudio.physicalMemory, isNull);
+    expect(NativeAudio.thermalState, isNull);
+  }, skip: skip ?? (Platform.isLinux ? null : 'Linux host only'));
+
   test('offline engine renders tracks and tags capture', () {
     final e = PracticeEngine.create(mode: EngineMode.offline);
     addTearDown(e.dispose);

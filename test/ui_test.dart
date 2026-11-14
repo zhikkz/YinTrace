@@ -4,6 +4,7 @@
 // fed into the microphone input.
 //
 // Set SCREENSHOT_DIR to also write PNG screenshots.
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -24,6 +25,7 @@ import 'package:yintrace/src/models/model_manager.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
 import 'package:yintrace/src/ui/about_page.dart';
 import 'package:yintrace/src/ui/app.dart';
+import 'package:yintrace/src/ui/benchmark_page.dart';
 import 'package:yintrace/src/ui/import_page.dart';
 import 'package:yintrace/src/ui/library_page.dart';
 import 'package:yintrace/src/ui/settings_page.dart';
@@ -32,6 +34,7 @@ import 'package:yintrace/src/ui/score_trend.dart';
 import 'package:yintrace/src/ui/song_page.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
+import 'support/benchmark_sample.dart';
 import 'support/synth_voice.dart';
 
 const sr = 44100;
@@ -244,6 +247,25 @@ void main() {
     expect(find.textContaining('AGPL-3.0'), findsOneWidget);
     expect(find.textContaining('github.com/zhikkz/YinTrace'), findsOneWidget);
     await screenshot(tester, '8_about');
+  });
+
+  testWidgets('benchmark page (test builds) shows the last report', (tester) async {
+    phone(tester);
+    final file = File('${tmp.path}/benchmark/last-report.json')
+      ..createSync(recursive: true)
+      ..writeAsStringSync(jsonEncode(sampleReport()));
+    await tester.runAsync(() async {
+      await tester.pumpWidget(host(services, BenchmarkPage(storeFile: file)));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    });
+    await tester.pump();
+    expect(find.text('上次的测试已完成'), findsOneWidget);
+    expect(find.text('复制报告'), findsOneWidget);
+    await screenshot(tester, '9_benchmark');
+    // Further down: how to run it again.
+    await tester.scrollUntilVisible(find.text('重新测试'), 300, scrollable: find.byType(Scrollable).first);
+    expect(find.text('4 分钟'), findsOneWidget);
+    await screenshot(tester, '9b_benchmark_start');
   });
 
   final lib = Platform.environment['YINTRACE_AUDIO_LIB'];
