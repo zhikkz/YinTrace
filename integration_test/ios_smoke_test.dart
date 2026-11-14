@@ -60,8 +60,13 @@ void main() {
       expect(services.models.isReady, isTrue);
       // ignore: avoid_print
       print('iOS simulator: both models installed');
+      // ru_maxrss only grows: the 320-frame fallback window runs before the
+      // default 512, so each line shows the peak up to that configuration.
+      // ignore: avoid_print
+      print('iOS simulator: available memory ${NativeAudio.availableMemory ?? 'not reported'}');
       for (final pair in [
         (vocalModel, MdxConfig.vocFt.inputShape),
+        (karaokeModel, VrConfig.karaoke6Hp.withWindowSize(320).inputShape),
         (karaokeModel, VrConfig.karaoke6Hp.inputShape),
       ]) {
         final model = await OnnxTensorModel.load(services.models.pathFor(pair.$1)!);
@@ -78,7 +83,7 @@ void main() {
           }
           // ignore: avoid_print
           print(
-            'iOS simulator ${pair.$1.id}: 3 runs ${watch.elapsedMilliseconds} ms; '
+            'iOS simulator ${pair.$1.id} ${pair.$2}: 3 runs ${watch.elapsedMilliseconds} ms; '
             'process peak ${ProcessInfo.maxRss / 1e6} MB',
           );
         } finally {

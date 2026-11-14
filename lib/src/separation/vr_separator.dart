@@ -31,126 +31,222 @@ class _StereoSpec {
 /// Port of UVR's VR-architecture inference (`SeperateVR`), including the
 /// multi-band spectrogram helpers of `lib_v5/spec_utils.py`.
 ///
-/// Long inputs are processed in overlapping segments so the memory use
-/// stays bounded on phones; the magnitude normalisation uses the global
-/// maximum (as UVR does for the whole file).
+/// UVR computes one spectrogram of the whole song, normalises it by its
+/// maximum and runs the network on windows of `windowSize` frames that
+/// advance by `windowSize - 2 * offset` frames. A phone cannot hold a
+/// whole-song spectrogram, so this port computes it in segments, but on the
+/// same global window grid: every window is inferred exactly once and sees
+/// exactly the frames it sees in UVR. Segments start on frame boundaries,
+/// so every band's resampling and STFT line up with the whole-song ones;
+/// the few frames the STFT and its inverse disturb at a segment's edges are
+/// computed with extra context and dropped. The result equals whole-song
+/// processing up to float rounding, without any crossfade.
 class VrSeparator {
-  VrSeparator(
-    this.model,
-    this.config, {
-    this.segmentSeconds = 12,
-    this.marginSeconds = 3,
-    this.crossfadeSeconds = 1,
-  }) : _stfts = [for (final b in config.bands) Stft(nFft: b.nFft, hop: b.hl)];
+  VrSeparator(this.model, this.config, {this.segmentSeconds = 15})
+    : _stfts = [for (final b in config.bands) Stft(nFft: b.nFft, hop: b.hl)] {
+    final top = config.bands.last;
+    for (final b in config.bands) {
+      // Frame-aligned segments need every band to step by the same time.
+      if (b.hl * top.sr != top.hl * b.sr) {
+        throw ArgumentError('${config.name}: band hops are not aligned in time');
+      }
+    }
+  }
 
   final TensorModel model;
   final VrConfig config;
+
+  /// Audio whose mask one segment infers. Bounds the Dart working set (one
+  /// segment's spectrograms); it does not change the result.
   final double segmentSeconds;
-  final double marginSeconds;
-  final double crossfadeSeconds;
   final List<Stft> _stfts;
 
   int get _sr => config.bands.last.sr;
 
+  /// Samples (at the model rate) between two spectrogram frames.
+  int get _hop => config.bands.last.hl;
+
+  /// Frames of mask each network window contributes.
+  int get _roi {
+    final roi = config.windowSize - 2 * config.offset;
+    return roi == 0 ? config.windowSize : roi;
+  }
+
+  /// Frames next to a segment edge that the STFT padding, the resampling
+  /// filters or the inverse STFT can disturb (with a safety margin).
+  int get _edge {
+    var frames = 0;
+    for (final b in config.bands) {
+      frames = math.max(frames, (b.nFft / (2 * b.hl)).ceil());
+    }
+    return frames + 4;
+  }
+
+  /// Frames of the combined spectrogram of [samples] input samples
+  /// (UVR keeps the shortest band).
+  int spectrogramFrames(int samples) {
+    final bands = config.bands;
+    var len = samples;
+    var frames = -1;
+    for (var d = bands.length - 1; d >= 0; d--) {
+      if (d < bands.length - 1) {
+        len = PolyphaseResampler(bands[d + 1].sr, bands[d].sr).outputLength(len);
+      }
+      final f = 1 + len ~/ bands[d].hl;
+      frames = frames < 0 ? f : math.min(frames, f);
+    }
+    return frames;
+  }
+
+  /// Network runs needed for [samples] input samples: UVR's windows, minus a
+  /// trailing one that would only cover padding.
+  int inferenceCount(int samples) {
+    if (samples < _hop) return 0;
+    return (spectrogramFrames(samples) - 1) ~/ _roi + 1;
+  }
+
+  int _windowsPerSegment() => math.max(1, (segmentSeconds * _sr / _hop / _roi).round());
+
+  /// Segments of [samples] input samples (each needs one spectrogram pass
+  /// for the normalisation and one for the mask).
+  int segmentCount(int samples) {
+    final runs = inferenceCount(samples);
+    final per = _windowsPerSegment();
+    return (runs + per - 1) ~/ per;
+  }
+
   /// Separates interleaved stereo PCM at the model rate (44.1 kHz).
+  ///
+  /// [onStep] reports finished network runs out of [inferenceCount].
   Future<Float32List> separate(
     Float32List stereo, {
     VrStem stem = VrStem.secondary,
     ProgressCallback? onProgress,
+    void Function(int done, int total)? onStep,
   }) async {
-    final frames = stereo.length ~/ 2;
-    final segs = _segments(frames);
-
-    // Pass 1: global magnitude maximum.
-    var coef = 0.0;
-    for (final s in segs) {
-      final x = _combined(_bandSpectrograms(_slice(stereo, s.$1, s.$2)));
-      coef = math.max(coef, _maxMagnitude(x));
-      onProgress?.call(0.1 * (s.$1 + s.$2) / (2 * frames));
-    }
-    if (coef <= 0) return Float32List(stereo.length);
-
+    final n = stereo.length ~/ 2;
     final out = Float32List(stereo.length);
-    final weight = Float32List(frames);
-    var segIndex = 0;
-    for (final s in segs) {
-      final start = s.$1, end = s.$2;
-      final x = _combined(_bandSpectrograms(_slice(stereo, start, end)));
-      final mask = await _inferMask(x, coef, (f) {
-        onProgress?.call(0.1 + 0.9 * (segIndex + f) / segs.length);
-      });
-      _adjustAggressiveness(mask, x.frames);
-      final y = _applyMask(x, mask, stem);
-      final wave = _spectrogramToWave(y);
-      _accumulate(out, weight, wave, s, frames);
-      segIndex++;
-      onProgress?.call(0.1 + 0.9 * segIndex / segs.length);
+    final runs = inferenceCount(n);
+    if (runs == 0) return out;
+    final l = spectrogramFrames(n);
+    final roi = _roi;
+    final per = _windowsPerSegment();
+    final segments = (runs + per - 1) ~/ per;
+    final edge = _edge;
+    // A normalisation pass over a segment costs about as much as a third of
+    // a network run (measured on phones and desktops).
+    const pass1Units = 0.3;
+    final units = segments * pass1Units + runs;
+    void progress(double done) => onProgress?.call(done / units);
+
+    // Pass 1: UVR divides the magnitude by its maximum over the whole song.
+    var coef = 0.0;
+    for (var s = 0; s < segments; s++) {
+      final a = s * per * roi, b = math.min((s + 1) * per * roi, l);
+      final f0 = math.max(0, a - edge), f1 = math.min(l, b + edge);
+      final x = _segmentSpectrogram(stereo, n, l, f0, f1);
+      coef = math.max(coef, _maxMagnitude(x, a - f0, b - f0));
+      progress((s + 1) * pass1Units);
     }
-    for (var i = 0; i < frames; i++) {
-      final w = weight[i];
-      if (w > 1e-6) {
-        out[2 * i] /= w;
-        out[2 * i + 1] /= w;
+    if (coef <= 0) return out;
+
+    // Pass 2: masks on UVR's window grid, then synthesis of each segment.
+    final nBins = config.bins + 1;
+    final input = Float32List(2 * nBins * config.windowSize);
+    var cache = <int, List<Float32List>>{};
+    var done = 0;
+    onStep?.call(0, runs);
+    for (var s = 0; s < segments; s++) {
+      final a = s * per * roi, b = math.min((s + 1) * per * roi, l);
+      // Mask frames whose inverse STFT reaches the output samples [a, b).
+      final m0 = math.max(0, a - edge), m1 = math.min(l, b + edge);
+      final k0 = m0 ~/ roi, k1 = (m1 - 1) ~/ roi;
+      var first = k0; // first window not inferred by the previous segment
+      while (first <= k1 && cache.containsKey(first)) {
+        first++;
+      }
+      final f0 = math.max(0, math.min(m0, first * roi - config.offset) - edge);
+      final f1 = math.min(l, math.max(m1, (k1 + 1) * roi + config.offset) + edge);
+      final x = _segmentSpectrogram(stereo, n, l, f0, f1);
+
+      final frames = m1 - m0;
+      final mask = [Float32List(nBins * frames), Float32List(nBins * frames)];
+      final keep = <int, List<Float32List>>{};
+      for (var k = k0; k <= k1; k++) {
+        var patch = cache[k];
+        if (patch == null) {
+          patch = await _inferWindow(x, f0, l, k, coef, input);
+          done++;
+          onStep?.call(done, runs);
+          progress(segments * pass1Units + done);
+        }
+        // The window's mask covers frames [k*roi, (k+1)*roi).
+        final t0 = math.max(m0, k * roi), t1 = math.min(m1, (k + 1) * roi);
+        for (var ch = 0; ch < 2; ch++) {
+          for (var bin = 0; bin < nBins; bin++) {
+            mask[ch].setRange(
+              bin * frames + t0 - m0,
+              bin * frames + t1 - m0,
+              patch[ch],
+              bin * roi + t0 - k * roi,
+            );
+          }
+        }
+        if ((k + 1) * roi > b - edge) keep[k] = patch; // the next segment needs it
+      }
+      cache = keep;
+
+      _adjustAggressiveness(mask, frames);
+      final wave = _spectrogramToWave(_maskedFrames(x, m0 - f0, frames, mask, stem));
+      // wave[i] is the sample m0*hop + i.
+      final base = m0 * _hop;
+      final end = b == l ? n : b * _hop;
+      for (var i = a * _hop; i < end; i++) {
+        final j = i - base;
+        if (j >= wave[0].length) break;
+        out[2 * i] = wave[0][j];
+        out[2 * i + 1] = wave[1][j];
       }
     }
     return out;
   }
 
   // ---------------------------------------------------------------------
-  // Segmentation
+  // Segments
   // ---------------------------------------------------------------------
 
-  /// Segments as (start, end, coreStart, coreEnd) in frames.
-  List<(int, int, int, int)> _segments(int frames) {
-    final sr = _sr;
-    final core = (segmentSeconds * sr).round();
-    final margin = (marginSeconds * sr).round();
-    if (frames <= core + 2 * margin) return [(0, frames, 0, frames)];
-    final out = <(int, int, int, int)>[];
-    for (var c0 = 0; c0 < frames; c0 += core) {
-      final c1 = math.min(frames, c0 + core);
-      out.add((math.max(0, c0 - margin), math.min(frames, c1 + margin), c0, c1));
+  /// Combined spectrogram of frames [f0, f1) (more frames may follow).
+  /// Frame `t` of the result is frame `f0 + t` of the whole-song one.
+  _StereoSpec _segmentSpectrogram(Float32List stereo, int n, int l, int f0, int f1) {
+    final start = f0 * _hop;
+    // Up to the end of the song, the edge behaves exactly like UVR's.
+    final end = f1 >= l ? n : math.min(n, f1 * _hop);
+    final len = end - start;
+    final left = Float64List(len), right = Float64List(len);
+    for (var i = 0; i < len; i++) {
+      left[i] = stereo[2 * (start + i)];
+      right[i] = stereo[2 * (start + i) + 1];
     }
-    return out;
+    return _combined(_bandSpectrograms([left, right]));
   }
 
-  List<Float64List> _slice(Float32List stereo, int start, int end) {
-    final n = end - start;
-    final l = Float64List(n), r = Float64List(n);
-    for (var i = 0; i < n; i++) {
-      l[i] = stereo[2 * (start + i)];
-      r[i] = stereo[2 * (start + i) + 1];
-    }
-    return [l, r];
-  }
-
-  void _accumulate(
-    Float32List out,
-    Float32List weight,
-    List<Float64List> wave,
-    (int, int, int, int) seg,
-    int frames,
-  ) {
-    final (start, end, c0, c1) = seg;
-    final fade = math.max(1, (crossfadeSeconds * _sr).round());
-    final half = fade ~/ 2;
-    final n = math.min(wave[0].length, end - start);
-    for (var i = 0; i < n; i++) {
-      final g = start + i;
-      double w;
-      if (c0 > 0 && g < c0 + half) {
-        w = (g - (c0 - half)) / fade;
-      } else if (c1 < frames && g >= c1 - half) {
-        w = ((c1 + half) - g) / fade;
-      } else {
-        w = 1;
+  /// `X * mask` (primary) or `X * (1 - mask)` (secondary) for [frames]
+  /// frames of [x] starting at [from].
+  _StereoSpec _maskedFrames(_StereoSpec x, int from, int frames, List<Float32List> mask, VrStem stem) {
+    final y = _StereoSpec(x.bins, frames);
+    final secondary = stem == VrStem.secondary;
+    for (var ch = 0; ch < 2; ch++) {
+      final m = mask[ch], re = x.re[ch], im = x.im[ch], yr = y.re[ch], yi = y.im[ch];
+      for (var bin = 0; bin < x.bins; bin++) {
+        final src = bin * x.frames + from, dst = bin * frames;
+        for (var t = 0; t < frames; t++) {
+          final g = secondary ? 1 - m[dst + t] : m[dst + t];
+          yr[dst + t] = re[src + t] * g;
+          yi[dst + t] = im[src + t] * g;
+        }
       }
-      if (w <= 0) continue;
-      if (w > 1) w = 1;
-      out[2 * g] += wave[0][i] * w;
-      out[2 * g + 1] += wave[1][i] * w;
-      weight[g] += w;
     }
+    return y;
   }
 
   // ---------------------------------------------------------------------
@@ -278,13 +374,17 @@ class VrSeparator {
     return out;
   }
 
-  static double _maxMagnitude(_StereoSpec s) {
+  /// Largest magnitude over frames [from, to).
+  static double _maxMagnitude(_StereoSpec s, int from, int to) {
     var m = 0.0;
     for (var ch = 0; ch < 2; ch++) {
       final re = s.re[ch], im = s.im[ch];
-      for (var i = 0; i < re.length; i++) {
-        final v = re[i] * re[i] + im[i] * im[i];
-        if (v > m) m = v;
+      for (var bin = 0; bin < s.bins; bin++) {
+        final base = bin * s.frames;
+        for (var t = base + from; t < base + to; t++) {
+          final v = re[t] * re[t] + im[t] * im[t];
+          if (v > m) m = v;
+        }
       }
     }
     return math.sqrt(m);
@@ -294,62 +394,51 @@ class VrSeparator {
   // inference_vr
   // ---------------------------------------------------------------------
 
-  /// Returns the mask [2][bins+1][frames] (frequency-major per channel).
-  Future<List<Float32List>> _inferMask(_StereoSpec x, double coef, void Function(double) progress) async {
-    final c = config;
+  /// Runs the network on window [k] of UVR's grid and returns its mask
+  /// `[2][bins+1][roi]` for frames `[k*roi, (k+1)*roi)`.
+  ///
+  /// UVR pads the magnitude with `offset` zero frames in front (and zeros
+  /// after the end), so window k reads frames `[k*roi - offset, ...)`.
+  /// [x] holds the frames starting at [f0]; [l] is the song's frame count.
+  Future<List<Float32List>> _inferWindow(
+    _StereoSpec x,
+    int f0,
+    int l,
+    int k,
+    double coef,
+    Float32List input,
+  ) async {
+    final window = config.windowSize, offset = config.offset, roi = _roi;
     final nBins = x.bins;
-    final nFrame = x.frames;
-    final window = c.windowSize;
-    final offset = c.offset;
-    var roi = window - offset * 2;
-    if (roi == 0) roi = window;
-    final padL = offset;
-    final padR = roi - (nFrame % roi) + padL;
-    final width = padL + nFrame + padR;
-    final patches = (width - 2 * offset) ~/ roi;
-
-    // Normalised magnitude, padded in time.
-    final mag = [Float32List(nBins * width), Float32List(nBins * width)];
+    final start = k * roi - offset;
     final inv = 1.0 / coef;
     for (var ch = 0; ch < 2; ch++) {
-      final re = x.re[ch], im = x.im[ch], m = mag[ch];
-      for (var b = 0; b < nBins; b++) {
-        final src = b * nFrame, dst = b * width + padL;
-        for (var t = 0; t < nFrame; t++) {
-          final r = re[src + t], i = im[src + t];
-          m[dst + t] = math.sqrt(r * r + i * i) * inv;
-        }
-      }
-    }
-
-    final mask = [Float32List(nBins * nFrame), Float32List(nBins * nFrame)];
-    final input = Float32List(2 * nBins * window);
-    for (var p = 0; p < patches; p++) {
-      final start = p * roi;
-      for (var ch = 0; ch < 2; ch++) {
-        final m = mag[ch];
-        for (var b = 0; b < nBins; b++) {
-          final src = b * width + start;
-          input.setRange((ch * nBins + b) * window, (ch * nBins + b + 1) * window, m, src);
-        }
-      }
-      final out = await model.run(input, [1, 2, nBins, window]);
-      if (out.length != input.length) {
-        throw StateError('VR model returned ${out.length} values, expected ${input.length}');
-      }
-      // predict_mask crops `offset` frames on both sides.
-      for (var ch = 0; ch < 2; ch++) {
-        for (var b = 0; b < nBins; b++) {
-          final src = (ch * nBins + b) * window + offset;
-          final dstBase = b * nFrame;
-          for (var k = 0; k < roi; k++) {
-            final t = start + k;
-            if (t >= nFrame) break;
-            mask[ch][dstBase + t] = out[src + k];
+      final re = x.re[ch], im = x.im[ch];
+      for (var bin = 0; bin < nBins; bin++) {
+        final dst = (ch * nBins + bin) * window;
+        final src = bin * x.frames - f0;
+        for (var t = 0; t < window; t++) {
+          final f = start + t;
+          if (f < 0 || f >= l) {
+            input[dst + t] = 0;
+          } else {
+            final r = re[src + f], i = im[src + f];
+            input[dst + t] = math.sqrt(r * r + i * i) * inv;
           }
         }
       }
-      progress((p + 1) / patches);
+    }
+    final out = await model.run(input, [1, 2, nBins, window]);
+    if (out.length != input.length) {
+      throw StateError('VR model returned ${out.length} values, expected ${input.length}');
+    }
+    // predict_mask crops `offset` frames on both sides.
+    final mask = [Float32List(nBins * roi), Float32List(nBins * roi)];
+    for (var ch = 0; ch < 2; ch++) {
+      for (var bin = 0; bin < nBins; bin++) {
+        final src = (ch * nBins + bin) * window + offset;
+        mask[ch].setRange(bin * roi, (bin + 1) * roi, out, src);
+      }
     }
     return mask;
   }
@@ -379,21 +468,6 @@ class VrSeparator {
         }
       }
     }
-  }
-
-  _StereoSpec _applyMask(_StereoSpec x, List<Float32List> mask, VrStem stem) {
-    // The unmasked spectrogram is no longer needed after inference.
-    // Reuse it instead of holding a second complex stereo spectrogram.
-    final secondary = stem == VrStem.secondary;
-    for (var ch = 0; ch < 2; ch++) {
-      final m = mask[ch];
-      for (var i = 0; i < m.length; i++) {
-        final g = secondary ? 1 - m[i] : m[i];
-        x.re[ch][i] *= g;
-        x.im[ch][i] *= g;
-      }
-    }
-    return x;
   }
 
   // ---------------------------------------------------------------------

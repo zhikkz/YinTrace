@@ -8,14 +8,35 @@ import 'pitch_graph.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
+/// What the results sheet asks the practice page to do when it closes.
+sealed class ResultsAction {
+  const ResultsAction();
+}
+
+/// Practise this line in a loop.
+class LoopLineAction extends ResultsAction {
+  const LoopLineAction(this.line);
+  final int line;
+}
+
+/// Listen back to what was sung: one line, or the whole take.
+class ListenBackAction extends ResultsAction {
+  const ListenBackAction([this.line]);
+  final int? line;
+}
+
 /// Feedback after (or during) a run: the overall score, the characters that
-/// need work, and every sung line. Pops with a line index to loop that line.
+/// need work, and every sung line. Pops with a [ResultsAction].
 class ResultsSheet extends StatelessWidget {
-  const ResultsSheet({super.key, required this.scorer, this.record, this.contour});
+  const ResultsSheet({super.key, required this.scorer, this.record, this.contour, this.canListen});
 
   final PracticeScorer scorer;
   final PracticeRecord? record;
   final PitchTrack? contour;
+
+  /// Whether a take can be played back (for a line, or all of it); null
+  /// hides listening back.
+  final bool Function(int? line)? canListen;
 
   @override
   Widget build(BuildContext context) {
@@ -62,6 +83,15 @@ class ResultsSheet extends StatelessWidget {
               padding: const EdgeInsets.only(top: 8),
               child: Text('已记入这首歌的练习记录', style: context.type.labelSmall),
             ),
+          if (canListen?.call(null) ?? false)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).pop(const ListenBackAction()),
+                icon: const Icon(Icons.headphones_rounded),
+                label: const Text('回听这一遍'),
+              ),
+            ),
           if (problems.isNotEmpty) ...[
             const SizedBox(height: 28),
             Text('先练这几个字', style: context.type.titleLarge),
@@ -78,9 +108,18 @@ class ResultsSheet extends StatelessWidget {
             const SizedBox(height: 28),
             Text('每一句', style: context.type.titleLarge),
             const SizedBox(height: 4),
-            Text('点一句，回到练习里单独循环它。', style: context.type.bodySmall),
+            Text(
+              canListen == null ? '点一句，回到练习里单独循环它。' : '点一句，回到练习里单独循环它；点耳机听你唱的这一句。',
+              style: context.type.bodySmall,
+            ),
             const SizedBox(height: 8),
-            for (final r in attempted) _LineResultRow(result: r, reference: scorer.reference, contour: contour),
+            for (final r in attempted)
+              _LineResultRow(
+                result: r,
+                reference: scorer.reference,
+                contour: contour,
+                canListen: canListen?.call(r.line.index) ?? false,
+              ),
           ],
         ],
       ),
@@ -184,10 +223,11 @@ class _Legend extends StatelessWidget {
 }
 
 class _LineResultRow extends StatelessWidget {
-  const _LineResultRow({required this.result, required this.reference, this.contour});
+  const _LineResultRow({required this.result, required this.reference, this.contour, this.canListen = false});
   final LineResult result;
   final SongReference reference;
   final PitchTrack? contour;
+  final bool canListen;
 
   @override
   Widget build(BuildContext context) {
@@ -198,7 +238,7 @@ class _LineResultRow extends StatelessWidget {
     };
     final problems = result.problems.toList();
     return InkWell(
-      onTap: () => Navigator.of(context).pop(result.line.index),
+      onTap: () => Navigator.of(context).pop(LoopLineAction(result.line.index)),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 14),
         child: Column(
@@ -220,6 +260,13 @@ class _LineResultRow extends StatelessWidget {
                       ),
                   ])),
                 ),
+                if (canListen)
+                  IconButton(
+                    tooltip: '回听这一句',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.headphones_rounded),
+                    onPressed: () => Navigator.of(context).pop(ListenBackAction(result.line.index)),
+                  ),
                 ScoreNumeral(score: result.score, size: 22),
               ],
             ),

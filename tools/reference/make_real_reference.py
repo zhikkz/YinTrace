@@ -87,8 +87,8 @@ def main():
     ap.add_argument('--audio', help='44.1 kHz stereo WAV (default: a synthetic clip)')
     ap.add_argument('--out', required=True)
     ap.add_argument('--mdx-dim-t', type=int, default=128)
-    ap.add_argument('--mdx-overlap', type=float, default=0.5)
-    ap.add_argument('--vr-window', type=int, default=320)
+    ap.add_argument('--mdx-overlap', type=float, default=0.25)
+    ap.add_argument('--vr-window', type=int, default=512)
     args = ap.parse_args()
 
     import onnxruntime as ort

@@ -34,7 +34,16 @@ class MdxSeparator {
 
   /// Separates the model's primary stem (Vocals for Voc_FT), scaled by the
   /// model's `compensate` factor exactly like UVR.
-  Future<Float32List> separate(Float32List stereo, {ProgressCallback? onProgress}) async {
+  ///
+  /// While the model runs on one chunk, the next chunk's STFT and the
+  /// previous chunk's inverse STFT are computed, so the CPU work of this
+  /// isolate overlaps the inference instead of adding to it.
+  /// [onStep] reports finished model runs out of [chunkCount].
+  Future<Float32List> separate(
+    Float32List stereo, {
+    ProgressCallback? onProgress,
+    void Function(int done, int total)? onStep,
+  }) async {
     final c = config;
     final frames = stereo.length ~/ 2;
     final chunk = c.chunkSize;
@@ -57,14 +66,14 @@ class MdxSeparator {
     final nChunks = (total + step - 1) ~/ step;
     final useWindow = c.overlap != 0;
     final part = Float64List(chunk);
-    final input = Float32List(4 * c.dimF * c.dimT);
+    // Two inputs: one is with the model while the next one is filled.
+    final inputs = [Float32List(4 * c.dimF * c.dimT), Float32List(4 * c.dimF * c.dimT)];
     final planeSize = c.dimF * c.dimT;
-    var done = 0;
 
-    for (var start = 0; start < total; start += step) {
-      final end = math.min(start + chunk, total);
-      final actual = end - start;
-      // Build the [1, 4, dimF, dimT] spectrogram tensor: L.re, L.im, R.re, R.im
+    /// Builds the [1, 4, dimF, dimT] spectrogram tensor of the chunk at
+    /// [start]: L.re, L.im, R.re, R.im.
+    void prepare(int start, Float32List input) {
+      final actual = math.min(start + chunk, total) - start;
       for (var ch = 0; ch < 2; ch++) {
         for (var i = 0; i < chunk; i++) {
           final j = start + i - trim;
@@ -79,12 +88,30 @@ class MdxSeparator {
       for (var p = 0; p < 4; p++) {
         input.fillRange(p * planeSize, p * planeSize + 3 * c.dimT, 0);
       }
+    }
 
-      final out = await model.run(input, c.inputShape);
-      if (out.length != input.length) {
-        throw StateError('MDX model returned ${out.length} values, expected ${input.length}');
+    Future<Float32List> launch(int index) {
+      final run = model.run(inputs[index % 2], c.inputShape);
+      // Awaited later; keep an early failure from being reported unhandled.
+      run.ignore();
+      return run;
+    }
+
+    prepare(0, inputs[0]);
+    var pending = launch(0);
+    onStep?.call(0, nChunks);
+    for (var index = 0; index < nChunks; index++) {
+      final start = index * step;
+      final hasNext = index + 1 < nChunks;
+      if (hasNext) prepare(start + step, inputs[(index + 1) % 2]);
+      final out = await pending;
+      if (hasNext) pending = launch(index + 1);
+      if (out.length != inputs[0].length) {
+        throw StateError('MDX model returned ${out.length} values, expected ${inputs[0].length}');
       }
 
+      final end = math.min(start + chunk, total);
+      final actual = end - start;
       final window = useWindow ? _hanning(actual) : null;
       for (var ch = 0; ch < 2; ch++) {
         final re = Float32List.sublistView(out, 2 * ch * planeSize, (2 * ch + 1) * planeSize);
@@ -122,8 +149,8 @@ class MdxSeparator {
         result[2 * slot + 1] = 0;
         divider[slot] = 0;
       }
-      done++;
-      onProgress?.call(done / nChunks);
+      onStep?.call(index + 1, nChunks);
+      onProgress?.call((index + 1) / nChunks);
     }
 
     return output;

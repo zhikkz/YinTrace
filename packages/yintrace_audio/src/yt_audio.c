@@ -101,6 +101,7 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
   return 0;
 }
 double yt_session_latency(void) { return 0.0; }
+int64_t yt_available_memory(void) { return -1; }
 int32_t yt_exclude_from_backup(const char* path) {
   (void)path;
   return 0;

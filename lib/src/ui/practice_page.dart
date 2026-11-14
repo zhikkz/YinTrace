@@ -115,22 +115,33 @@ class _PracticePageState extends State<PracticePage>
       record = await _session.save(elapsedSeconds: _started.elapsed.inMilliseconds / 1000);
     }
     if (!mounted) return;
-    final line = await showModalBottomSheet<int>(
+    final action = await showModalBottomSheet<ResultsAction>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => ResultsSheet(scorer: _session.scorer, record: record, contour: widget.contour),
+      builder: (_) => ResultsSheet(
+        scorer: _session.scorer,
+        record: record,
+        contour: widget.contour,
+        canListen: (line) => _session.canListenBack(line: line),
+      ),
     );
     _shownResults = false;
     _session.finished = false;
-    if (line != null) {
-      _session.setLoopLine(line);
-      _session.seekToLine(line);
+    switch (action) {
+      case LoopLineAction(:final line):
+        _session.stopListening();
+        _session.setLoopLine(line);
+        _session.seekToLine(line);
+      case ListenBackAction(:final line):
+        _session.listenBack(line: line);
+      case null:
+        break;
     }
   }
 
   void _togglePlay() {
     _session.togglePlay();
-    if (_session.isPlaying) _started.start();
+    if (_session.isPlaying && !_session.reviewing) _started.start();
   }
 
   @override
@@ -179,6 +190,7 @@ class _PracticePageState extends State<PracticePage>
           }
           return Column(
             children: [
+              if (_session.reviewing) _ReviewBar(session: _session),
               if (_session.pauseReason != null)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
@@ -198,6 +210,28 @@ class _PracticePageState extends State<PracticePage>
   }
 }
 
+/// Shown while listening back to the take.
+class _ReviewBar extends StatelessWidget {
+  const _ReviewBar({required this.session});
+  final PracticeSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.yt;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 8, 4),
+      child: Row(
+        children: [
+          Icon(Icons.headphones_rounded, size: 18, color: p.ink),
+          const SizedBox(width: 8),
+          Expanded(child: Text('正在回听你唱的，原唱已静音', style: context.type.bodyMedium)),
+          TextButton(onPressed: session.stopListening, child: const Text('回到练习')),
+        ],
+      ),
+    );
+  }
+}
+
 /// Target note, sung note and a cents meter, readable at arm's length.
 class _LiveMeter extends StatelessWidget {
   const _LiveMeter({required this.session});
@@ -207,10 +241,16 @@ class _LiveMeter extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.yt;
     final s = session.lastVoiced;
-    final fresh = s != null && session.isPlaying && session.clockTime - s.pitch.clockTime < 0.5;
     final current = session.reference.noteAt(session.position);
     final target = current ?? session.reference.nextNoteAfter(session.position);
-    final cents = fresh ? s.deviationCents : null;
+    // Listening back: what was sung at this moment of the take.
+    final recorded = session.reviewPoint;
+    final reviewing = session.reviewing;
+    final fresh = reviewing
+        ? recorded != null && recorded.midi > 0
+        : s != null && session.isPlaying && session.clockTime - s.pitch.clockTime < 0.5;
+    final sungMidi = reviewing ? recorded?.midi : s?.pitch.midi;
+    final cents = !fresh ? null : (reviewing ? recorded!.cents : s!.deviationCents);
     String verdict = '';
     Color verdictColor = p.inkFaint;
     final tol = session.settings.toleranceCents.toDouble();
@@ -243,7 +283,7 @@ class _LiveMeter extends StatelessWidget {
               const Spacer(),
               _NoteReadout(
                 label: '你',
-                value: fresh ? noteLabel(s.pitch.midi) : '–',
+                value: fresh ? noteLabel(sungMidi) : '–',
                 style: big,
                 alignEnd: true,
               ),
@@ -315,7 +355,7 @@ class _Stage extends StatelessWidget {
         midiLo: a,
         midiHi: b + 1.5,
         style: PitchGraphStyle.of(context, tolerance: session.settings.toleranceCents.toDouble()),
-        user: session.points,
+        user: session.displayPoints,
         playhead: ph,
         tokenScores: session.tokenScores(),
         glyphSize: 16,
@@ -379,6 +419,8 @@ class _Transport extends StatelessWidget {
     final pos = session.position.clamp(0, dur > 0 ? dur : 1).toDouble();
     final li = session.currentLine;
     final looping = session.loopLine != null;
+    // Listening back plays one take; moving between lines is for practising.
+    final practising = !session.reviewing;
     return SafeArea(
       top: false,
       child: Padding(
@@ -406,12 +448,12 @@ class _Transport extends StatelessWidget {
                 IconButton(
                   tooltip: '上一句',
                   icon: const Icon(Icons.skip_previous_rounded, size: 30),
-                  onPressed: () => session.seekToLine(li - 1),
+                  onPressed: practising ? () => session.seekToLine(li - 1) : null,
                 ),
                 IconButton(
                   tooltip: '重唱这一句',
                   icon: const Icon(Icons.replay_rounded, size: 28),
-                  onPressed: () => session.seekToLine(li),
+                  onPressed: practising ? () => session.seekToLine(li) : null,
                 ),
                 SizedBox(
                   width: 72,
@@ -425,12 +467,16 @@ class _Transport extends StatelessWidget {
                 IconButton(
                   tooltip: '下一句',
                   icon: const Icon(Icons.skip_next_rounded, size: 30),
-                  onPressed: () => session.seekToLine(li + 1),
+                  onPressed: practising ? () => session.seekToLine(li + 1) : null,
                 ),
                 IconButton(
                   tooltip: looping ? '取消单句循环' : '单句循环',
-                  icon: Icon(Icons.repeat_one_rounded, size: 28, color: looping ? p.malachite : p.ink),
-                  onPressed: () => session.setLoopLine(looping ? null : li),
+                  icon: Icon(
+                    Icons.repeat_one_rounded,
+                    size: 28,
+                    color: !practising ? p.inkFaint : (looping ? p.malachite : p.ink),
+                  ),
+                  onPressed: practising ? () => session.setLoopLine(looping ? null : li) : null,
                 ),
               ],
             ),
