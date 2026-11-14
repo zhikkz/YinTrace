@@ -1,19 +1,74 @@
-# 推理内存与验证记录
+# 推理速度、内存与验证记录
 
-2026-11-14，Linux x86-64，Python ONNX Runtime 1.32.0，CPU provider，
+## 当前设置
+
+| 模型 | 设置 | 依据 |
+|---|---|---|
+| UVR-MDX-NET-Voc_FT | segment size 128（UVR 可选值，UVR 默认 256），重叠 0.25（UVR 默认） | 内存约为 256 的一半；每秒音频的计算量比 256 略少 |
+| 6_HP-Karaoke-UVR | 窗口 512（UVR 默认），按 UVR 整曲的窗口网格分段 | 推理次数是 320 窗口的四分之一 |
+| 6_HP-Karaoke-UVR（内存不足时） | 窗口 320 | 系统报告的剩余内存不够 512 时自动使用 |
+
+两个模型都在 CPU 上运行，4 个 intra-op 线程，ONNX Runtime 的 CPU arena 关闭，
+顺序加载、用完即关。
+
+### MDX：重叠 0.25
+
+交接时用一段 26 秒混音测过分离人声对真值的 SDR：T=256 为 23.03 dB，
+T=128 / 重叠 0.25 为 22.22 dB，T=128 / 重叠 0.5 为 22.36 dB（那份混音没有提供，未复测）。
+重叠 0.5 需要 1.5 倍的模型运行次数，只换来约 0.1 dB，所以回到 UVR 默认的 0.25。
+
+MDX 输入和输出的第 4 维（从 0 起为轴 3）原编码均为 `08 80 02`；
+`tools/build_mdx_recipe.py` 沿 protobuf 字段定位到字节偏移 66762437、66762483，
+换成等长的 `12 01 54`（动态维度 `T`）。不搜索或修改权重；输出 SHA-256：
+`86532df82bb423e62e542e3e3856cba54b4235724177b4d21d77260b59cbd322`。
+
+模型推理一块时，Dart 同时计算下一块的 STFT 和上一块的逆 STFT（两块输入缓冲交替使用），
+CPU 上的前后处理不再和推理排队。
+
+### VR：整曲窗口网格上的分段
+
+UVR 对整首歌算一个频谱，除以全曲最大幅度，再按 `窗口 - 2 × 128` 帧的步长切窗口推理。
+手机放不下整首歌的频谱，所以 App 约 15 秒一段计算，但窗口放在 UVR 整曲的同一网格上：
+
+- 分段从帧边界开始。三个频带的帧步长折算到 44.1 kHz 都是 432 个采样，
+  所以每个频带的重采样和 STFT 都与整曲计算对齐；
+- 每个窗口只推理一次，跨段的窗口留给下一段复用；
+- 段边界只多算几帧（STFT 填充和逆变换影响的范围再加余量），算完丢掉；
+- 第一遍按段求全曲最大幅度（只计各段自己的帧），和 UVR 的归一化相同。
+
+结果与整曲处理在浮点误差内相同，不再需要交叉淡化。测试用一个输出依赖整个窗口内容和
+窗口内位置的假模型，在 0.1 秒到 15 秒的段长下与整曲结果的差别都小于 1e-5，
+并检查推理次数等于 UVR 的窗口数。改动前每 12 秒一段、两侧各多算 3 秒，段内的网格与
+整曲不对齐，只能靠交叉淡化拼接；再加上 320 窗口，259.6 秒的音频要约 620 次推理，现在是 104 次。
+
+VR 导出动态时间轴，验证过 320 / 512 两个窗口。ONNX SHA-256：
+`6247a65bd0e23c18d8f98df3ad5b40c0f8d4acc0da6949bf61847c3dad50c26e`。
+
+### 按剩余内存选择 VR 窗口
+
+导入开始时读取 iOS 报告的剩余内存（`os_proc_available_memory`）。
+512 窗口需要约 1.05 GB 给 ONNX Runtime，加上分离结果（每分钟立体声约 21 MB）
+和 0.3 GB 余量；不够时用 320（模型运行次数是 4 倍，内存少约 240 MB）。
+模拟器和其它平台不报告剩余内存，按 512 处理。门限按桌面测量估计，需用真机校准，
+见 [ios-validation.md](ios-validation.md)。
+
+## 单个模型的内存
+
+2026-11-14，Linux x86-64，4 核，Python ONNX Runtime 1.32.0，CPU provider，
 `intra_op_num_threads=4`。每行独立进程，确定性 float32 输入，加载 session 后推理
-三次，读取 `resource.getrusage().ru_maxrss`。下表使用十进制 MB，包含该 Python
-进程的全部 RSS，**不包含 Flutter，也不是 iPhone 的 Physical Footprint**。
+三次，读取 `resource.getrusage().ru_maxrss`。十进制 MB，包含该 Python 进程的全部 RSS，
+**不包含 Flutter，也不是 iPhone 的 Physical Footprint**。
 
-| 模型 / 配置 | 峰值 RSS (MB) |
-|---|---:|
-| 原 MDX，固定 T=256，arena 开 | 2662 |
-| 动态 MDX，T=128，arena 开 | 610 |
-| 动态 MDX，T=128，arena 关（当前默认） | 488 |
-| 原 VR，固定 512，arena 开 | 1901 |
-| 动态 VR，512，arena 开 | 1697 |
-| 动态 VR，320，arena 开 | 1247 |
-| 动态 VR，320，arena 关（当前默认） | 816 |
+| 模型 / 配置 | 峰值 RSS (MB) | 每次推理 |
+|---|---:|---:|
+| 原 MDX，固定 T=256，arena 开 | 2662 | |
+| 动态 MDX，T=256，arena 关 | 837 | 1.85 秒 |
+| 动态 MDX，T=128，arena 关（当前） | 508 | 0.95 秒 |
+| 原 VR，固定 512，arena 开 | 1901 | |
+| 动态 VR，512，arena 关（当前） | 1072 | 1.1 秒 |
+| 动态 VR，320，arena 关（内存不足时） | 835 | 0.72 秒 |
+
+关闭 memory pattern、关闭权重预打包都只差十几 MB，不值得为此变慢。
 
 复现（先运行 fetch_models.sh 和两个配方工具；不要提交输出模型）：
 
@@ -24,104 +79,56 @@ python tools/build_mdx_recipe.py build/uvr-models/UVR-MDX-NET-Voc_FT.onnx \
 python tools/build_karaoke_graph.py verify build/uvr-models/6_HP-Karaoke-UVR.pth \
   --out build/uvr-models/6_HP-Karaoke-UVR-dynamic.onnx
 python tools/benchmark_inference.py build/uvr-models/UVR-MDX-NET-Voc_FT-dynamic.onnx --shape 1 4 3072 128 --no-arena
-python tools/benchmark_inference.py build/uvr-models/6_HP-Karaoke-UVR-dynamic.onnx --shape 1 2 641 320 --no-arena
+python tools/benchmark_inference.py build/uvr-models/6_HP-Karaoke-UVR-dynamic.onnx --shape 1 2 641 512 --no-arena
 ```
 
-ORT 1.29+ 的 API 禁用调用可能晚于初始化遥测，所以工具还在 import 前设置
-`ORT_DISABLE_TELEMETRY=1`，CI 同样设置。App 的 Apple ORT 保持插件原先固定的
-1.28.0；本地插件补丁仅让已有的 `useArena: false` 在 iOS/macOS 生效，未增加其他模型。
-固定版本内部头文件的来源和升级要求见 `packages/flutter_onnxruntime/YINTRACE_CHANGES.md`。
+## 与 UVR 对照
 
-## 参数、配方与代价
+14 秒合成混音，以 UVR 自身代码和相同参数作参考（CI 的 real-models 任务）：
 
-- MDX 输入和输出的第 4 维（从 0 起为轴 3）原编码均为 `08 80 02`；
-  工具沿 protobuf 字段定位到字节偏移 66762437、66762483，换成等长 `12 01 54`。
-  不搜索或修改权重；输出 SHA-256：
-  `86532df82bb423e62e542e3e3856cba54b4235724177b4d21d77260b59cbd322`。
-- 默认 MDX T=128、overlap=0.5。较短上下文会改变分离结果：交接时提供的 26 秒
-  混音评估中，T=256 为 23.03 dB SDR，T=128 / overlap=0.5 为 22.36 dB。
-  这些是交接测量，并未重新使用那份未提供的混音复测。选择 128 保留较多上下文，
-  不能宣称与 256 的结果相同。
-- VR 导出动态时间轴，只验证并使用 320 / 512 这两个可被 32 整除的窗口。
-  当前默认 320，保留 offset=128，因此有效步长由 256 降为 64，推理次数约四倍；
-  每次耗时和内存较小，但总耗时增加。网络权重、aggression 和前后处理不变。
-  新 ONNX SHA-256：`6247a65bd0e23c18d8f98df3ad5b40c0f8d4acc0da6949bf61847c3dad50c26e`。
-- 两个阶段依次加载和关闭 session。MDX 将两个声道累加及 divider 改为单块滚动缓冲，
-  不再按整曲分配三份单声道数组；5 分钟时原约 159 MB 变为约 1.6 MB。
-  VR 阶段不再保留原混音：关闭 VR session 后重新解码本地源文件，再原地减去主唱生成伴奏。
-  VR 音频分段由 30 秒缩为 12 秒（仍有两侧 3 秒上下文），并原地应用掩码，避免复制复数频谱。
-  这会多做一些上下文推理和一次解码，以换取较低内存；分析前丢弃不用的 stereo 引用。
-  音频解码、VR 输入/输出仍与曲长有关；这还不是全流程流式解码。
+| | 模型运行次数 | 与 UVR 的信号/差值比 |
+|---|---:|---|
+| MDX，T=128，重叠 0.25 | 8 | 120.0 dB |
+| VR，窗口 512 | 6 | 主唱 141.3 dB，被移除部分 118.2 dB |
 
-## 数值与耗时
+改动前（重叠 0.5、窗口 320、交叉淡化分段）同一片段为 12 次和 23 次，
+对照结果 117.7 dB 和 126.5 / 110.2 dB。这验证移植与参数一致，不能用来证明对所有歌曲的主观音质。
 
-在同一份 14 秒合成混音上，以 UVR 自身代码和相同参数作参考：
-Dart MDX 与 UVR 的信号/差值比为 117.7 dB；VR 主唱 126.5 dB、被移除部分 110.2 dB。
-这验证移植与参数一致，不能用来证明对所有歌曲的主观音质。
+## 整曲耗时
 
-这次桌面测试 MDX 共 12 次推理，17.2 秒（含前后处理）；VR 每遍 23 次，24.5 秒。
-短片有额外 padding，测试也有并发负载，不能直接换算为整首歌或手机耗时。
-导入页只显示阶段、进度与实际已用时间，移除了基于固定阶段权重推算的总剩余时间。
+同一台 4 核 x86 Linux，同一段 259.6 秒的输入（合成片段拼接），用 `tools/benchmark_import.py`
+跑完整 ImportPipeline（MDX → VR → 音高 → 对齐 → 保存）。Dart 是 `flutter test` 的调试模式，
+模型在一个 Python 子进程里运行，张量经管道传递；所以这不是手机上的速度，只用来比较前后。
 
-整进程 1.5 GB 目标仍需 iPhone release + Instruments 验收，步骤见
-[ios-validation.md](ios-validation.md)。模拟器冒烟测试另设 1.5 GB 峰值回归门限，
-但不替代长歌曲、真实设备和连续导入测试。
+| | 交接时（494297e） | 现在 |
+|---|---:|---:|
+| MDX 运行次数 | 178 | 118 |
+| VR 运行次数 | 约 620 | 104 |
+| 完整流水线 | 722 秒 | 273 秒 |
+| App 与 ORT 子进程同时采样的峰值 RSS | 1457 MB（599 + 859） | 1539 MB（474 + 1065） |
 
+同一输入快 2.6 倍。VR 的 512 窗口让 ORT 多用约 200 MB，Dart 侧少用约 120 MB
+（不再需要交叉淡化的权重缓冲，分段更紧凑）。峰值是两个进程 RSS 之和；Linux 上 Python 进程
+关闭 session 后 RSS 不会回落，所以两者在流水线末尾相加，比实际同一时刻的占用偏高；
+iPhone 上 ORT 在 App 进程内，关闭 session 即释放。真机仍须用 release + Instruments 测量。
 
-长音频宿主机采样工具（只在 Linux 上使用）：
-
-```bash
-MODELS_DIR=$PWD/build/uvr-models REAL_IMPORT_AUDIO=/path/to/audio.wav \
-REAL_IMPORT_LYRICS=/path/to/lyrics.lrc PYTHON=python \
-YINTRACE_AUDIO_LIB=$PWD/build/host/libyintrace_audio.so \
-python tools/benchmark_import.py --out build/import-memory.json
-```
-
-工具以 10 Hz 同时采样 flutter_tester 与它的 ORT 子进程，排除 Flutter CLI / 编译器。
-它补充独立进程的峰值测量，不能把两个不同时间的峰值相加当作实际同一时刻的峰值，
-也不能将宿主机 RSS 直接等同 iPhone 的 Physical Footprint。
-
-
-## 整曲压力测试
-
-相同的 259.6 秒本地纯人声，经 MDX → VR → YIN → 对齐 → 保存完整链路运行；
-此处用纯人声作为压力输入，不据此评价混音分离质量。音频、歌词和生成曲库未提交。
-当前 12 秒 VR 分段、释放混音与频谱复用的结果：
-
-| 项目 | 结果 |
-|---|---:|
-| 完整流水线耗时（不含测试启动） | 895 秒（14 分 55 秒） |
-| 歌词单位 / 结构验证 | 315 / 通过 |
-| Dart App 独立峰值 RSS | 562.6 MB |
-| App 与 ORT 子进程同时采样峰值 RSS | 1380.2 MB |
-| 该峰值时的 App / ORT RSS | 554.4 / 825.8 MB |
-| 采样间隔 / 样本数 | 0.1 秒 / 8838 |
-
-这包含调试模式 Dart VM 与 Python ORT 运行时，排除 Flutter CLI 和编译器；
-进程间共享页可能重复计入，短于采样间隔的瞬态也可能遗漏。独立 max RSS 不等同于
-同一时刻的总峰值。优化前同一长输入的 Dart 独立峰值为 780.5 MB，进一步缩小分段
-并释放混音后降为 562.6 MB；该轮耗时从 758 秒增加到 895 秒。
-
-宿主压力测试低于 1.5 GB，但 iPhone 的释放行为、ORT 版本、CPU 内核和系统预算不同，
-仍须使用真机 release + Instruments 测量，不能据此保证所有 iPhone 不会被 jetsam 终止。
-
-
-## iOS 模拟器实跑
+## iOS 模拟器
 
 [CI 运行 43554773740](https://github.com/zhikkz/YinTrace/actions/runs/43554773740)
-验证代码提交 `4174195`。GitHub Actions macOS 15 ARM64 runner 上的 iPhone 16 Pro
-模拟器，ONNX Runtime 1.28.0，CPU provider，4 个 intra-op 线程，CPU arena 关闭：
+（改动前）：GitHub Actions macOS 15 ARM64 runner 上的 iPhone 16 Pro 模拟器，
+ONNX Runtime 1.28.0，CPU provider，4 个 intra-op 线程，CPU arena 关闭：
 
 | 同一 App 进程中的阶段 | 3 次推理耗时 | 截至该阶段的进程峰值 RSS |
 |---|---:|---:|
 | MDX `[1,4,3072,128]` | 10.624 秒 | 786.2 MB |
 | VR `[1,2,641,320]` | 12.215 秒 | 879.5 MB |
 
-这里直接使用实际的 Flutter Apple 插件和 ORT 原生桥接，同一进程包含 Flutter 与 ORT，
-不是把两个进程的独立峰值相加。AAC 编码/解码、官方模型下载/校验/组装、运行时读取
-包含 AGPL v3 的 NOTICES.Z 也均通过；release 归档和全部 FFI 导出符号检查通过。
-测试绑定有意禁用了 Flutter 自动许可登记，所以许可检查读取的是实际打包的资产，
-并另查应用自行登记的 UVR 致谢；正常 App 的 ServicesBinding 从同一资产登记许可。
+冒烟测试现在依次运行 MDX、VR 320 和 VR 512，并打印系统报告的剩余内存；
+结果见之后的 CI 记录。这是调试模式、短窗口推理的模拟器结果，不是整曲 iPhone release
+的 Physical Footprint。真实麦克风授权、耳机/电话中断、延迟、Files 和长曲连续导入
+仍需按设备清单验收。
 
-这是调试模式、短窗口推理的模拟器结果，不是整曲 iPhone release 的 Physical Footprint。
-真实麦克风授权、耳机/电话中断、延迟、Files 和长曲连续导入仍需按设备清单验收。
+ORT 1.29+ 的 API 禁用调用可能晚于初始化遥测，所以工具还在 import 前设置
+`ORT_DISABLE_TELEMETRY=1`，CI 同样设置。App 的 Apple ORT 保持插件原先固定的
+1.28.0；本地插件补丁仅让已有的 `useArena: false` 在 iOS/macOS 生效。
+固定版本内部头文件的来源和升级要求见 `packages/flutter_onnxruntime/YINTRACE_CHANGES.md`。
