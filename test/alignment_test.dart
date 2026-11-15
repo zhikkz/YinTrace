@@ -48,11 +48,15 @@ List<double> _starts(PitchTrack track, String lyrics) =>
 /// [mode]: `clear` (10 dB dips between the characters and a new pitch for
 /// the last one), `weak` (the last one on the same pitch, no dip before
 /// it), `faint` (a 2 dB dip there); `turn` adds a 4 semitone step at 3.4 s,
-/// inside the held note.
-PitchTrack _issueExample(String mode, {double hop = _hop, double tail = 0.8, bool turn = false}) {
+/// inside the held note. With [soundChanges] the track also measures how
+/// the sound changes: much at the start of every character (a new vowel),
+/// a little elsewhere.
+PitchTrack _issueExample(String mode,
+    {double hop = _hop, double tail = 0.8, bool turn = false, bool soundChanges = false}) {
   const truth = [1.0, 1.4, 1.8, 2.2, 2.6, 3.0, 6.0, 6.4];
   final n = (9 / hop).ceil();
   final midi = Float32List(n), db = Float32List(n)..fillRange(0, n, -100);
+  final change = Float32List(n);
   final pitches = <double>[60, 62, 64, 65, 67, mode == 'clear' ? 69 : 67, 64, 65];
   for (var f = 0; f < n; f++) {
     final t = f * hop;
@@ -68,8 +72,10 @@ PitchTrack _issueExample(String mode, {double hop = _hop, double tail = 0.8, boo
       final depth = c != 3.0 || mode == 'clear' ? 10.0 : (mode == 'faint' ? 2.0 : 0.0);
       if (midi[f] > 0 && (t - c).abs() <= 0.05) db[f] -= math.max(0, depth - (t - c).abs() * depth / 0.05);
     }
+    if (midi[f] > 0) change[f] = truth.any((c) => (t - c).abs() < 0.03) ? 40 : 8;
   }
-  return PitchTrack(hopSeconds: hop, midi: midi, rmsDb: db, aperiodicity: Float32List(n));
+  return PitchTrack(
+      hopSeconds: hop, midi: midi, rmsDb: db, aperiodicity: Float32List(n), spectralChange: soundChanges ? change : null);
 }
 
 const _issueLyrics = '[00:01.00]妈妈慢慢来了\n[00:06.00]妈妈';
@@ -128,6 +134,16 @@ void main() {
         expect(got[5], closeTo(3.0, within), reason: 'held $tail s');
         final clear = _starts(_issueExample('clear', tail: tail), _issueLyrics);
         expect(clear[5], closeTo(3.0, 0.03), reason: 'clear, held $tail s');
+      }
+    });
+
+    test('where the track measures how the sound changes, that marks a start sung legato', () {
+      // Tracks analysed from now on carry it; with it the weak boundary is
+      // where the vowel changes, however long the last note is held.
+      for (final tail in [0.8, 1.6]) {
+        final got = _starts(_issueExample('weak', tail: tail, soundChanges: true), _issueLyrics);
+        expectOthersOnTime(got);
+        expect(got[5], closeTo(3.0, 0.04), reason: 'held $tail s');
       }
     });
   });

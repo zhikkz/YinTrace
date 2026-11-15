@@ -235,20 +235,22 @@ class SongRepository {
 
 const _magic = 0x54505459; // "YTPT"
 
-/// Binary pitch track: magic, version, hop (f64), frames, midi[f32], level[f32].
+/// Binary pitch track: magic, version, hop (f64), frames, midi[f32],
+/// level[f32], and from version 2 on spectral change[f32]. Older versions
+/// of the app read a version 2 file as version 1.
 Uint8List encodePitchTrack(PitchTrack t) {
   final n = t.length;
-  final b = ByteData(4 + 4 + 8 + 4 + n * 8);
+  final change = t.spectralChange;
+  final b = ByteData(4 + 4 + 8 + 4 + n * (change == null ? 8 : 12));
   b.setUint32(0, _magic, Endian.little);
-  b.setUint32(4, 1, Endian.little);
+  b.setUint32(4, change == null ? 1 : 2, Endian.little);
   b.setFloat64(8, t.hopSeconds, Endian.little);
   b.setUint32(16, n, Endian.little);
   var o = 20;
-  for (var i = 0; i < n; i++, o += 4) {
-    b.setFloat32(o, t.midi[i], Endian.little);
-  }
-  for (var i = 0; i < n; i++, o += 4) {
-    b.setFloat32(o, t.rmsDb[i], Endian.little);
+  for (final values in [t.midi, t.rmsDb, ?change]) {
+    for (var i = 0; i < n; i++, o += 4) {
+      b.setFloat32(o, values[i], Endian.little);
+    }
   }
   return b.buffer.asUint8List();
 }
@@ -258,15 +260,23 @@ PitchTrack decodePitchTrack(Uint8List bytes) {
   if (b.getUint32(0, Endian.little) != _magic) {
     throw const FormatException('not a YinTrace pitch file');
   }
+  final version = b.getUint32(4, Endian.little);
   final hop = b.getFloat64(8, Endian.little);
   final n = b.getUint32(16, Endian.little);
-  final midi = Float32List(n), db = Float32List(n);
-  var o = 20;
-  for (var i = 0; i < n; i++, o += 4) {
-    midi[i] = b.getFloat32(o, Endian.little);
+  Float32List read(int at) {
+    final out = Float32List(n);
+    for (var i = 0, o = at; i < n; i++, o += 4) {
+      out[i] = b.getFloat32(o, Endian.little);
+    }
+    return out;
   }
-  for (var i = 0; i < n; i++, o += 4) {
-    db[i] = b.getFloat32(o, Endian.little);
-  }
-  return PitchTrack(hopSeconds: hop, midi: midi, rmsDb: db, aperiodicity: Float32List(n));
+
+  final withChange = version >= 2 && bytes.length >= 20 + n * 12;
+  return PitchTrack(
+    hopSeconds: hop,
+    midi: read(20),
+    rmsDb: read(20 + n * 4),
+    aperiodicity: Float32List(n),
+    spectralChange: withChange ? read(20 + n * 8) : null,
+  );
 }

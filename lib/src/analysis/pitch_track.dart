@@ -3,12 +3,20 @@ import 'dart:typed_data';
 
 import '../dsp/pitch.dart';
 import '../dsp/resampler.dart';
+import '../dsp/timbre.dart';
 import '../dsp/yin.dart';
 
 /// A frame-by-frame pitch contour.
 class PitchTrack {
-  PitchTrack({required this.hopSeconds, required this.midi, required this.rmsDb, required this.aperiodicity})
-      : assert(midi.length == rmsDb.length && midi.length == aperiodicity.length);
+  PitchTrack({
+    required this.hopSeconds,
+    required this.midi,
+    required this.rmsDb,
+    required this.aperiodicity,
+    this.spectralChange,
+  }) : assert(midi.length == rmsDb.length &&
+            midi.length == aperiodicity.length &&
+            (spectralChange == null || spectralChange.length == midi.length));
 
   /// Time between frames; frame `i` is centred at `i * hopSeconds`.
   final double hopSeconds;
@@ -21,6 +29,11 @@ class PitchTrack {
 
   /// YIN aperiodicity per frame (lower = more periodic).
   final Float32List aperiodicity;
+
+  /// How fast the sound of the voice changes at each frame (the function
+  /// of the same name in `dsp/timbre.dart`); null for tracks stored before
+  /// it was measured.
+  final Float32List? spectralChange;
 
   int get length => midi.length;
   double get duration => length * hopSeconds;
@@ -127,8 +140,10 @@ PitchTrack analyzePitch(Float32List mono, int sampleRate,
   _medianSmooth(midi, 2);
   _removeShortRuns(midi, minFrames: math.max(3, (0.03 * o.analysisRate / o.hop).round()));
   _bridgeShortGaps(midi, maxFrames: math.max(1, (0.02 * o.analysisRate / o.hop).round()));
+  final change = spectralChange(x, o.analysisRate, frames, hop: o.hop, size: o.frameSize);
   onProgress?.call(1);
-  return PitchTrack(hopSeconds: o.hop / o.analysisRate, midi: midi, rmsDb: db, aperiodicity: ap);
+  return PitchTrack(
+      hopSeconds: o.hop / o.analysisRate, midi: midi, rmsDb: db, aperiodicity: ap, spectralChange: change);
 }
 
 /// Folds isolated octave errors back towards the local median.
