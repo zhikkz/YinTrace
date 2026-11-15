@@ -198,6 +198,10 @@ class ModelManager extends ChangeNotifier {
             _notifyThrottled();
           },
         );
+      } on ModelStorageException {
+        // The device, not the route: the next one would fail the same way,
+        // and "check your network" would be the wrong advice.
+        rethrow;
       } on ModelDownloadException catch (e) {
         // Keep the partial file: the next route continues it.
         failures.add('$_route：${e.message}');

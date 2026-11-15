@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
+import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../audio/audio_backend.dart';
 import '../export/mixdown.dart';
@@ -83,6 +84,13 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   String? _exported;
   bool _loaded = false;
 
+  /// Held while the preview plays or an export runs: nobody touches the
+  /// screen while listening to four minutes of song, and a locked phone
+  /// stops the preview.
+  final _awake = ScreenAwake();
+
+  void _syncAwake() => _awake.held = (_engine?.isPlaying ?? false) || _progress != null;
+
   static const _acc = 0, _dry = 1, _wet = 2;
   static const _sr = 44100;
 
@@ -109,6 +117,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _clock?.cancel();
+    _awake.release();
     final e = _engine;
     _engine = null;
     if (e != null) {
@@ -197,8 +206,11 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
       }
     }
     _clock ??= Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      _syncAwake(); // the preview reached its end
+      setState(() {});
     });
+    _syncAwake();
     setState(() {});
   }
 
@@ -212,6 +224,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
       } catch (_) {}
       _deviceOn = false;
     }
+    _syncAwake();
     if (mounted) setState(() {});
   }
 
@@ -224,6 +237,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
     if (meta == null || rec == null || _progress != null) return;
     _engine?.pause();
     setState(() => _progress = 0);
+    _syncAwake();
     try {
       final dir = widget.outputDir ?? await getApplicationDocumentsDirectory();
       dir.createSync(recursive: true);
@@ -260,6 +274,8 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() => _progress = null);
       _snack('导出失败：$e');
+    } finally {
+      if (mounted) _syncAwake();
     }
   }
 

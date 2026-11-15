@@ -36,7 +36,7 @@ class ImportRequest {
     this.accompanimentPath,
     this.mdxModelPath,
     this.vrModelPath,
-    this.keepOriginal = true,
+    this.keepOriginal = false,
     this.mdxCoreML,
     this.coreMLMarker,
     this.verifyCoreML = false,
@@ -60,6 +60,10 @@ class ImportRequest {
 
   /// Null skips the harmony removal: the MDX vocals are used directly.
   final String? vrModelPath;
+
+  /// Also copy the imported file into the song's directory. Off: nothing
+  /// reads that copy (practice plays the separated accompaniment), a FLAC
+  /// or WAV of a song is 30-50 MB, and the directory is backed up.
   final bool keepOriginal;
 
   /// Core ML options for the vocal model, or null for the CPU. Whatever goes
@@ -104,7 +108,7 @@ class ImportRequest {
     accompanimentPath: m['accompanimentPath'] as String?,
     mdxModelPath: m['mdxModelPath'] as String?,
     vrModelPath: m['vrModelPath'] as String?,
-    keepOriginal: m['keepOriginal'] as bool? ?? true,
+    keepOriginal: m['keepOriginal'] as bool? ?? false,
     mdxCoreML: (m['mdxCoreML'] as Map?)?.cast<String, String>(),
     coreMLMarker: m['coreMLMarker'] as String?,
     verifyCoreML: m['verifyCoreML'] as bool? ?? false,

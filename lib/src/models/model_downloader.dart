@@ -8,6 +8,12 @@ class ModelDownloadException implements Exception {
   String toString() => message;
 }
 
+/// The download could not be written to the device (no space left, most
+/// likely). Another route would end the same way.
+class ModelStorageException extends ModelDownloadException {
+  ModelStorageException(super.message);
+}
+
 class DownloadCancelled implements Exception {
   const DownloadCancelled();
 }
@@ -94,7 +100,14 @@ class ResumableDownload {
       await response.drain<void>().catchError((_) {});
       throw ModelDownloadException('下载服务器返回了错误（${response.statusCode}）');
     }
-    final sink = partFile.openSync(mode: have == 0 ? FileMode.write : FileMode.append);
+    final RandomAccessFile sink;
+    try {
+      sink = partFile.openSync(mode: have == 0 ? FileMode.write : FileMode.append);
+    } on FileSystemException catch (e) {
+      // Nobody will read the body: let go of the connection.
+      unawaited(response.listen(null).cancel().catchError((_) {}));
+      throw ModelStorageException(_describe(e));
+    }
     final done = Completer<void>();
     _done = done;
     var received = have;
@@ -133,7 +146,15 @@ class ResumableDownload {
     }
     _body = response.listen(
       (chunk) {
-        sink.writeFromSync(chunk);
+        if (done.isCompleted) return; // already failed or cancelled
+        try {
+          sink.writeFromSync(chunk);
+        } on FileSystemException catch (e) {
+          // Thrown here it would escape the stream and the download would
+          // end as "interrupted", sending the user to check their network.
+          fail(ModelStorageException(_describe(e)));
+          return;
+        }
         received += chunk.length;
         onProgress?.call(received);
         arm();
@@ -144,6 +165,7 @@ class ResumableDownload {
       },
       cancelOnError: true,
     );
+    FileSystemException? closeError;
     try {
       await done.future;
     } finally {
@@ -152,8 +174,13 @@ class ResumableDownload {
       await _body?.cancel();
       _body = null;
       _done = null;
-      sink.closeSync();
+      try {
+        sink.closeSync();
+      } on FileSystemException catch (e) {
+        closeError = e;
+      }
     }
+    if (closeError != null) throw ModelStorageException(_describe(closeError));
     if (received != expectedBytes) {
       if (received > expectedBytes) partFile.deleteSync();
       throw ModelDownloadException('下载中断了（收到 $received / $expectedBytes 字节）');
@@ -191,7 +218,10 @@ class ResumableDownload {
       return '连不上下载服务器，请检查网络';
     }
     if (e is TimeoutException) return '连接下载服务器超时';
-    if (e is FileSystemException) return '写入文件失败，可能是存储空间不足';
+    if (e is FileSystemException) {
+      // ENOSPC is 28 on iOS, macOS, Android and Linux.
+      return e.osError?.errorCode == 28 ? '存储空间不足，模型存不下。请腾出一些空间后重试' : '写入文件失败，可能是存储空间不足';
+    }
     return '下载失败：$e';
   }
 }

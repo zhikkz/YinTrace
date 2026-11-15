@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
+import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../dsp/pitch.dart';
 import '../practice/live_pitch.dart';
@@ -31,6 +32,10 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
   bool _paused = false;
   bool _starting = false;
 
+  /// Held while the microphone is listening: a long note is sung without
+  /// touching the screen, and a locked phone stops the capture.
+  final _awake = ScreenAwake();
+
   @override
   void initState() {
     super.initState();
@@ -57,7 +62,10 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
         sampleRate: e.sampleRate,
         options: LivePitchOptions(gateDb: settings.micGateDb),
       );
-      if (!_paused) e.start();
+      if (!_paused) {
+        e.start();
+        _awake.hold();
+      }
       _ticker.start();
     } catch (err) {
       if (mounted) setState(() => _error = '麦克风打不开：$err');
@@ -67,6 +75,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
   }
 
   void _pause() {
+    _awake.release();
     _engine?.stop();
     _engine?.flushCapture();
     _tracker?.reset();
@@ -93,6 +102,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
       _engine!.flushCapture();
       _tracker?.reset();
       _engine!.start();
+      _awake.hold();
     } catch (_) {
       _pause();
     }
@@ -137,6 +147,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
+    _awake.release();
     final e = _engine;
     if (e != null) {
       e.stop();

@@ -38,6 +38,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
   bool _stopping = false;
   bool _starting = false;
   final _clock = Stopwatch();
+  final _awake = ScreenAwake();
   Timer? _ticker;
 
   @override
@@ -52,10 +53,8 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
     _bench?.removeListener(_changed);
-    if (_bench?.running ?? false) {
-      _bench?.cancel();
-      keepScreenOn(false);
-    }
+    if (_bench?.running ?? false) _bench?.cancel();
+    _awake.release();
     super.dispose();
   }
 
@@ -143,7 +142,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
       _bench = bench;
       _stopping = false;
     });
-    await keepScreenOn(true);
+    _awake.hold();
     _clock
       ..reset()
       ..start();
@@ -157,7 +156,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
       _clock.stop();
       _ticker?.cancel();
       _ticker = null;
-      await keepScreenOn(false);
+      _awake.release();
       _save(bench.report);
       if (mounted) setState(() => _last = Map.of(bench.report));
     }

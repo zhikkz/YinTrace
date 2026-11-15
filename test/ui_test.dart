@@ -15,6 +15,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yintrace/src/analysis/reference.dart';
+import 'package:yintrace/src/app/screen_awake.dart';
 import 'package:yintrace/src/app/services.dart';
 import 'package:yintrace/src/app/settings.dart';
 import 'package:yintrace/src/audio/audio_backend.dart';
@@ -279,6 +280,10 @@ void main() {
     final out = Directory('${tmp.path}/exports');
     String? shared;
     late PracticeEngine engine;
+    final awake = <bool>[];
+    final platform = ScreenAwake.platform;
+    ScreenAwake.platform = (on) async => awake.add(on);
+    addTearDown(() => ScreenAwake.platform = platform);
     await tester.pumpWidget(
       host(
         services,
@@ -300,9 +305,11 @@ void main() {
     expect(find.textContaining('80 分'), findsOneWidget);
     await screenshot(tester, '4d_export');
     // The preview plays the voice where it was sung.
+    expect(awake, isEmpty);
     await tester.tap(find.byIcon(Icons.play_arrow_rounded));
     await tester.pump();
     expect(engine.isPlaying, isTrue);
+    expect(awake, [true], reason: 'the screen stays on while the preview plays');
     engine.seek(const Duration(milliseconds: 1500));
     final heard = engine.render(4096);
     expect(heard.fold<double>(0, (m, v) => math.max(m, v.abs())), greaterThan(0.05));
@@ -311,6 +318,15 @@ void main() {
     expect(before.fold<double>(0, (m, v) => math.max(m, v.abs())), lessThan(1e-3), reason: 'nothing sung yet');
     await tester.tap(find.byIcon(Icons.pause_rounded));
     await tester.pump();
+    expect(awake, [true, false]);
+    // Played to its end, the preview lets the screen go dark again.
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    engine.seek(Duration(milliseconds: (engine.lengthSeconds * 1000).round() - 50));
+    engine.render(sr);
+    expect(engine.isPlaying, isFalse);
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(awake, [true, false, true, false]);
     // Move the voice 100 ms earlier and export.
     final align = find.byType(Slider).at(4);
     await tester.drag(align, const Offset(-60, 0));

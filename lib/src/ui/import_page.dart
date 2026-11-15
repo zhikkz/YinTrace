@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../analysis/lrc.dart';
 import '../analysis/lyrics_language.dart';
+import '../app/picked_files.dart';
 import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../import/import_job.dart';
@@ -51,6 +52,7 @@ class _ImportPageState extends State<ImportPage> {
   ImportProgress? _progress;
   String? _error;
   final _stopwatch = Stopwatch();
+  final _awake = ScreenAwake();
   // Ticks the elapsed time every second, so the page visibly keeps going
   // even while one model run takes a few seconds.
   Timer? _ticker;
@@ -66,7 +68,8 @@ class _ImportPageState extends State<ImportPage> {
     _ticker?.cancel();
     _sub?.cancel();
     _job?.cancel();
-    keepScreenOn(false);
+    _awake.release();
+    _discardPicked(); // leaving after a failure or a cancel, or without importing
     _title.dispose();
     _artist.dispose();
     _lyrics.dispose();
@@ -77,6 +80,9 @@ class _ImportPageState extends State<ImportPage> {
     final f = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: audioExtensions);
     final path = f?.path;
     if (f == null || path == null) return;
+    // The file picked before is not needed any more.
+    final replaced = accompaniment ? _accPath : _audioPath;
+    if (replaced != path) discardPickedCopy(replaced);
     setState(() {
       if (accompaniment) {
         _accPath = path;
@@ -93,6 +99,13 @@ class _ImportPageState extends State<ImportPage> {
   }
 
   LrcParseResult get _parsed => parseLrc(_lyrics.text);
+
+  /// Deletes the picker's copies of the chosen files: the song is in the
+  /// library (or will not be imported from this page).
+  void _discardPicked() {
+    discardPickedCopy(_audioPath);
+    discardPickedCopy(_accPath);
+  }
 
   Future<void> _start() async {
     final services = AppScope.of(context);
@@ -125,7 +138,7 @@ class _ImportPageState extends State<ImportPage> {
       _error = null;
       _progress = const ImportProgress(ImportStage.decoding, 0, 0);
     });
-    await keepScreenOn(true);
+    _awake.hold();
     _stopwatch
       ..reset()
       ..start();
@@ -141,6 +154,7 @@ class _ImportPageState extends State<ImportPage> {
           if (mounted) setState(() => _progress = progress);
         case ImportDoneEvent(:final song):
           _finish();
+          _discardPicked();
           await services.acceleration.afterImport(song.modelInfo);
           if (!mounted) return;
           await Navigator.of(context)
@@ -161,7 +175,7 @@ class _ImportPageState extends State<ImportPage> {
     _stopwatch.stop();
     _ticker?.cancel();
     _ticker = null;
-    keepScreenOn(false);
+    _awake.release();
     _job = null;
   }
 

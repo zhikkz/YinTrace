@@ -105,7 +105,13 @@ void main() {
       expect(meta.duration, closeTo(8, 0.01));
       expect(meta.vocalsFile, 'vocals.wav');
       expect(meta.accompanimentFile, 'accompaniment.wav');
-      expect(meta.originalFile, 'original.wav');
+      // The imported file itself is not copied into the library: nothing
+      // would read it.
+      expect(meta.originalFile, isNull);
+      expect(
+        repo.dirFor(meta.id).listSync().map((f) => f.path.split('/').last).toSet(),
+        {'song.json', 'reference.json', 'pitch.bin', 'vocals.wav', 'accompaniment.wav'},
+      );
 
       final songs = await repo.list();
       expect(songs.map((s) => s.id), [meta.id]);
