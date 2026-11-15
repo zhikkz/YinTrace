@@ -5,12 +5,12 @@ import 'package:flutter/material.dart';
 import '../library/song.dart';
 import 'theme.dart';
 
-/// Scores of the whole-song runs of [history] (line loops left out), oldest
-/// first, at most [last] of them.
+/// Scores of the runs through the whole song in [history] (line loops and
+/// runs that stopped early left out), oldest first, at most [last] of them.
 List<double> wholeSongScores(List<PracticeRecord> history, {int last = 20}) {
   final scores = [
     for (final r in history)
-      if (r.loopLine == null && !r.score.isNaN) r.score,
+      if (r.wholeSong && !r.score.isNaN) r.score,
   ];
   return scores.length > last ? scores.sublist(scores.length - last) : scores;
 }
@@ -36,6 +36,8 @@ class ScoreTrend extends StatelessWidget {
     final scores = wholeSongScores(history);
     if (scores.length < 2) return const SizedBox.shrink();
     final loops = history.where((r) => r.loopLine != null).length;
+    final partial = history.where((r) => r.loopLine == null && !r.wholeSong).length;
+    final others = [if (loops > 0) '$loops 次单句循环', if (partial > 0) '$partial 次没唱完'];
     final change = scores.last - scores.first;
     final summary =
         '最近 ${scores.last.round()} 分，比第一次'
@@ -61,7 +63,7 @@ class ScoreTrend extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '最近 ${scores.length} 次整首练习${loops > 0 ? '（另有 $loops 次单句循环，算在每一句里）' : ''}',
+            '最近 ${scores.length} 次整首练习${others.isEmpty ? '' : '（另有 ${others.join('、')}，算在每一句里）'}',
             style: context.type.labelSmall,
           ),
         ],

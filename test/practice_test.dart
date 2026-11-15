@@ -281,5 +281,77 @@ void main() {
       expect(s.lineResult(0).attempted, isFalse);
       expect(s.overallScore(), greaterThan(85));
     });
+
+    /// One pass of a loop over line 2, sung [shift] seconds after the music.
+    List<LivePitch> loopPass(double shift) => sing(3.8, 7.6, (t) => refMidi(t - shift));
+
+    test('a late first character is reported on every pass of a loop', () {
+      final s = PracticeScorer(ref);
+      loopPass(0.25).forEach(s.add);
+      expect(s.tokenResult(1, 0).issues, contains(TokenIssue.late));
+      loopPass(0.25).forEach(s.add); // the loop wraps; sung exactly as late
+      expect(s.tokenResult(1, 0).timingOffset, closeTo(0.25, 0.05));
+      expect(s.tokenResult(1, 0).issues, contains(TokenIssue.late));
+    });
+
+    test('coming in early on a later pass is not reported as late', () {
+      final s = PracticeScorer(ref);
+      loopPass(0).forEach(s.add);
+      loopPass(-0.25).forEach(s.add); // second pass: 250 ms early
+      final line = s.lineResult(1);
+      expect(
+        line.tokens.where((t) => t.issues.contains(TokenIssue.late)),
+        isEmpty,
+        reason: '${line.tokens.map((t) => '${t.token.text} ${t.timingOffset?.toStringAsFixed(2)}').toList()}',
+      );
+      expect(line.tokens.first.issues, contains(TokenIssue.early));
+    });
+
+    test('a new pass replaces a line only when it gets there', () {
+      final s = PracticeScorer(ref);
+      sing(0.8, 7.5, refMidi).forEach(s.add);
+      final before = [for (final r in s.results()) r.score];
+      // Back to the first line, silent: it is replaced, line 2 is not
+      // reached and keeps its score.
+      sing(0.8, 2.0, (_) => 0).forEach(s.add);
+      expect(s.lineResult(0).tokens.first.issues, contains(TokenIssue.missed));
+      expect(s.lineResult(1).score, before[1]);
+      // A jump to sing line 2: the end of line 1 plays in the lead-in and
+      // keeps what it had; so does line 2 until the pass gets to it.
+      final line1 = s.lineResult(0).score;
+      s.startPass(2.8, fromLine: 1);
+      sing(2.8, 4.6, (_) => 0).forEach(s.add);
+      expect(s.lineResult(0).score, line1);
+      expect(s.lineResult(1).score, before[1]);
+      sing(4.6, 7.5, refMidi).forEach(s.add);
+      expect(s.lineResult(1).score, closeTo(before[1], 2));
+      expect(s.lineResult(1).tokens.first.timingOffset, closeTo(0, 0.05));
+    });
+
+    test('while one line loops, the other lines are not scored', () {
+      final s = PracticeScorer(ref)..onlyLine = 1;
+      sing(0.8, 7.5, (_) => 0).forEach(s.add); // nobody sings line 1 either
+      expect(s.lineResult(0).attempted, isFalse);
+      expect(s.lineResult(1).attempted, isTrue);
+      expect(s.sungLines, {1});
+      // The live comparison still shows the other line's notes as targets.
+      final shown = s.add(LivePitch(songTime: 1.3, clockTime: 9, midi: 60, levelDb: -20, playing: true, aperiodicity: 0.05));
+      expect(shown.referenceMidi, closeTo(60, 0.6));
+      expect(shown.verdict, PitchVerdict.great);
+    });
+
+    test('the overall score weighs what was sung, not whole lines', () {
+      final s = PracticeScorer(ref);
+      // Line 1 sung well; only the first character of line 2, silent.
+      sing(0.8, 4.8, refMidi).forEach(s.add);
+      sing(4.8, 5.56, (_) => 0).forEach(s.add);
+      final r = s.results();
+      expect(r[1].attempted, isTrue);
+      expect(r[1].score, lessThan(5));
+      expect(r[1].sungSeconds, lessThan(0.5));
+      expect(r[0].sungSeconds, greaterThan(1.8));
+      // One missed character out of seven sung ones, not half of the song.
+      expect(s.overallScore(r), greaterThan(75));
+    });
   });
 }

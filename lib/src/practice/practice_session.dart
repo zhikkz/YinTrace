@@ -43,7 +43,7 @@ class PracticeSession extends ChangeNotifier {
     PracticeEngine Function()? engineFactory,
     this.decodeInBackground = true,
   }) : _engineFactory = engineFactory ?? (() => PracticeEngine.create(mode: EngineMode.duplex)) {
-    scorer = PracticeScorer(reference, options: _scoringOptions());
+    scorer = PracticeScorer(reference, options: _scoringOptions())..onlyLine = loopLine;
   }
 
   final SongMeta meta;
@@ -84,11 +84,27 @@ class PracticeSession extends ChangeNotifier {
   /// What the singer sang in this session (null until the audio started).
   TakeRecorder? take;
 
+  /// Where recording starts after jumping to a line: the music before it
+  /// only leads in, and what was sung there before stays in the take.
+  double _recordFrom = 0;
+
+  /// The run being sung (a pass through the song, or a spell of looping one
+  /// line) is one record in the song's history, identified by this time.
+  DateTime? _runAt;
+  double _runSeconds = 0;
+
+  /// Earlier runs of this session that are not stored yet.
+  final _endedRuns = <PracticeRecord>[];
+  PracticeRecord? _stored;
+  Future<void> _saving = Future.value();
+  static DateTime _lastRunAt = DateTime.fromMicrosecondsSinceEpoch(0);
+
   /// The song time span being played back, while listening back.
   (double, double)? _review;
   ListenKind? _listenKind;
   int? _originalLine; // the line played with the original singer
   double _resumeAt = 0; // where practice continues after listening back
+  int? _resumeLine; // ...to sing this line, when it continues before one
   int _loadedTake = -1; // version of the take in the engine's take slot
 
   PracticeEngine? get engine => _engine;
@@ -260,6 +276,8 @@ class PracticeSession extends ChangeNotifier {
       if (position >= review.$2 - 0.05) _seekEngine(review.$1);
     } else if (finished || e.positionSeconds >= e.lengthSeconds - 0.05) {
       finished = false;
+      // From the top again: another run through the song.
+      if (loopLine == null) _endRun();
       seek(loopLine != null ? _loopRange(loopLine!).$1 : 0);
     }
     e.play();
@@ -281,9 +299,10 @@ class PracticeSession extends ChangeNotifier {
     if (listening == ListenKind.original) {
       // Straight from the original singer: practice would have gone on at
       // the start of that line.
-      _resumeAt = math.max(0, reference.lines[_originalLine!].start - 1.0);
+      _resumeLine = _originalLine;
     } else if (_review == null) {
       _resumeAt = e.positionSeconds;
+      _resumeLine = null;
     }
     _review = range;
     _listenKind = ListenKind.take;
@@ -331,12 +350,16 @@ class PracticeSession extends ChangeNotifier {
       if (kind == ListenKind.original && _originalLine != null) {
         // Ready to sing the line just heard (and loop it, when looping).
         _tracker?.reset();
-        if (loopLine != null) loopLine = _originalLine;
-        setLoopLine(loopLine);
-        seek(math.max(0, reference.lines[_originalLine!].start - 1.0));
+        setLoopLine(loopLine == null ? null : _originalLine);
+        _seekBeforeLine(_originalLine!);
         return;
       }
-      _seekEngine(_resumeAt);
+      final line = _resumeLine;
+      if (line != null) {
+        _seekBeforeLine(line);
+      } else {
+        _seekEngine(_resumeAt);
+      }
     }
     _tracker?.reset();
     setLoopLine(loopLine);
@@ -383,7 +406,14 @@ class PracticeSession extends ChangeNotifier {
 
   void togglePlay() => isPlaying ? pause() : play();
 
-  void seek(double seconds) {
+  /// Moves playback to [seconds]. What was sung stays until it is sung
+  /// again from there.
+  void seek(double seconds) => _seek(seconds);
+
+  /// With [toLine], the jump is there to sing that line: the music before
+  /// it only leads in, so the lines it belongs to are not scored and
+  /// nothing is recorded until the line's own part begins.
+  void _seek(double seconds, {int? toLine}) {
     final e = _engine;
     if (e == null) return;
     if (reviewing) {
@@ -391,22 +421,61 @@ class PracticeSession extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    e.seek(Duration(microseconds: (math.max(0, seconds) * 1e6).round()));
+    final to = math.max(0.0, seconds);
+    e.seek(Duration(microseconds: (to * 1e6).round()));
     e.flushCapture();
     _tracker?.reset();
-    scorer.resetFrom(math.max(0, seconds));
+    scorer.startPass(to, fromLine: toLine ?? 0);
+    _recordFrom = toLine == null ? 0 : lineSpan(toLine).$1;
     points.removeWhere((p) => p.time >= seconds - 0.05);
     notifyListeners();
   }
+
+  /// To one second before [line], to sing it.
+  void _seekBeforeLine(int line) => _seek(reference.lines[line].start - 1.0, toLine: line);
 
   (double, double) _loopRange(int line) {
     final l = reference.lines[line];
     return (math.max(0, l.start - 1.2), l.end + 0.6);
   }
 
+  /// The part of the song that is [line]'s own: from shortly before its
+  /// first character (an early entry, its consonant) to shortly after its
+  /// last one, and never past the middle of the gap to the singing before
+  /// and after it. The rest of what plays around a looped line belongs to
+  /// the lines next to it.
+  (double, double) lineSpan(int line) {
+    final lines = reference.lines;
+    final l = lines[line];
+    var a = l.start - 0.3, b = l.end + 0.3;
+    for (var i = line - 1; i >= 0; i--) {
+      final notes = lines[i].notes;
+      if (notes.isEmpty) continue; // a line without singing has no end to protect
+      a = math.max(a, (notes.last.end + l.start) / 2);
+      break;
+    }
+    for (var i = line + 1; i < lines.length; i++) {
+      final notes = lines[i].notes;
+      if (notes.isEmpty) continue;
+      b = math.min(b, (l.end + notes.first.start) / 2);
+      break;
+    }
+    return (math.max(0, math.min(a, l.start)), math.max(b, l.end));
+  }
+
+  /// What is recorded right now: one line's own part while it loops,
+  /// otherwise everything from where the line jumped to begins.
+  (double, double) get _recordSpan {
+    final loop = loopLine;
+    return loop != null ? lineSpan(loop) : (_recordFrom, double.infinity);
+  }
+
   /// Loops one line (null = play the whole song).
   void setLoopLine(int? line) {
+    // Looping a line, another line, or the whole song again: a new run.
+    if (line != loopLine) _endRun();
     loopLine = line;
+    scorer.onlyLine = line;
     final e = _engine;
     if (e == null || reviewing) return;
     if (line == null) {
@@ -422,7 +491,7 @@ class PracticeSession extends ChangeNotifier {
   void seekToLine(int line) {
     if (line < 0 || line >= reference.lines.length) return;
     if (loopLine != null) setLoopLine(line);
-    seek(math.max(0, reference.lines[line].start - 1.0));
+    _seekBeforeLine(line);
   }
 
   int get currentLine => reference.lineIndexAt(position);
@@ -463,8 +532,17 @@ class PracticeSession extends ChangeNotifier {
     var changed = false;
     final t = take;
     final latencyFrames = (_latency * e.sampleRate).round();
+    // Outside this span the singer is waiting for their line (the lead-in
+    // after jumping to it, the music around a looped line): what the
+    // microphone hears there must not replace what was sung there before.
+    final (from, to) = _recordSpan;
+    final fromFrame = (from * e.sampleRate).round();
+    final toFrame = to.isFinite ? (to * e.sampleRate).round() : null;
     for (final block in e.readCapture()) {
-      if (block.playing) t?.addAudio(block.samples, block.songFrame, latencyFrames);
+      if (block.playing) {
+        t?.addAudio(block.samples, block.songFrame, latencyFrames, fromFrame: fromFrame, toFrame: toFrame);
+        _runSeconds += block.samples.length / e.sampleRate;
+      }
       for (final p in tr.addBlock(block.samples, block.songFrame, block.clockFrame, block.playing)) {
         final s = scorer.add(p);
         lastSample = s;
@@ -473,7 +551,7 @@ class PracticeSession extends ChangeNotifier {
         if (p.playing) {
           final point = UserPoint(p.songTime, p.midi, s.verdict, s.deviationCents);
           points.add(point);
-          t?.addPoint(point);
+          if (p.songTime >= from && p.songTime < to) t?.addPoint(point);
         }
         changed = true;
       }
@@ -507,24 +585,60 @@ class PracticeSession extends ChangeNotifier {
     return out;
   }
 
-  /// Stores the run in the song's history. Returns null when nothing was
-  /// sung.
-  Future<PracticeRecord?> save({double? elapsedSeconds}) async {
+  /// The current run as a record: the lines sung in it and their scores, or
+  /// null when nothing was sung in it yet.
+  PracticeRecord? _runRecord() {
     final results = scorer.results();
-    final lines = <int, double>{
-      for (var i = 0; i < results.length; i++)
-        if (results[i].attempted) i: results[i].score,
-    };
+    final lines = [
+      for (final i in scorer.sungLines.toList()..sort())
+        if (results[i].attempted) i,
+    ];
     if (lines.isEmpty) return null;
-    final record = PracticeRecord(
-      at: DateTime.now(),
-      score: scorer.overallScore(results),
-      lineScores: lines,
+    final sung = [for (final i in lines) results[i]];
+    var at = _runAt;
+    if (at == null) {
+      // The time identifies the record: no two runs share one.
+      at = DateTime.now();
+      if (!at.isAfter(_lastRunAt)) at = _lastRunAt.add(const Duration(microseconds: 1));
+      _runAt = _lastRunAt = at;
+    }
+    final total = scorer.scoredSeconds;
+    final seconds = sung.fold<double>(0, (a, r) => a + r.sungSeconds);
+    return PracticeRecord(
+      at: at,
+      score: scorer.overallScore(sung),
+      lineScores: {for (final i in lines) i: results[i].score},
       loopLine: loopLine,
-      durationSeconds: elapsedSeconds ?? 0,
+      durationSeconds: _runSeconds,
+      coverage: total > 0 ? (seconds / total).clamp(0.0, 1.0).toDouble() : 0,
     );
-    await repository.addPractice(meta.id, record);
-    return record;
+  }
+
+  /// Ends the current run; what is sung from now on is a new one. The run
+  /// is kept as it is now and stored with the next [save].
+  void _endRun() {
+    final record = _runRecord();
+    if (record != null) _endedRuns.add(record);
+    _runAt = null;
+    _runSeconds = 0;
+    scorer.sungLines.clear();
+  }
+
+  /// Stores this session's runs in the song's history: one record per run,
+  /// however often this is called. A run that was stored before and went on
+  /// is updated; lines sung in an earlier run are not stored again with a
+  /// later one. Returns the newest record, or null when nothing was sung.
+  Future<PracticeRecord?> save() {
+    final done = _saving.then((_) async {
+      final current = _runRecord();
+      final records = [..._endedRuns, ?current];
+      if (records.isEmpty) return _stored;
+      await repository.savePractice(meta.id, records);
+      _endedRuns.removeWhere(records.contains);
+      return _stored = records.last;
+    });
+    _saving = done.then((_) {}, onError: (_) {});
+    return done;
   }
 
   @override

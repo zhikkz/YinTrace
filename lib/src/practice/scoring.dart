@@ -118,16 +118,27 @@ class TokenResult {
 }
 
 class LineResult {
-  LineResult(this.line, this.score, this.tokens, this.attempted);
+  LineResult(this.line, this.score, this.tokens, this.attempted, {this.sungSeconds = 0});
   final RefLine line;
   final double score;
   final List<TokenResult> tokens;
   final bool attempted;
 
+  /// Reference time of the scored characters that were sung: what the line
+  /// weighs in the overall score, and how much of the song it covers.
+  final double sungSeconds;
+
   Iterable<TokenResult> get problems => tokens.where((t) => t.attempted && t.issues.isNotEmpty);
 }
 
 /// Compares live pitch against the per-character reference.
+///
+/// The scores follow the take: what was sung stays until it is sung again.
+/// Whenever playback jumps (a seek, a loop wrapping around) a new pass
+/// starts, and a line's earlier result is replaced once that pass reaches
+/// the line. Lines the pass does not reach, and lines that only play while
+/// the singer waits for their own line ([onlyLine], [startPass]'s
+/// `fromLine`), keep what they had.
 class PracticeScorer {
   PracticeScorer(this.reference, {this.options = const ScoringOptions(), this.sampleInterval = 0.01}) {
     for (var l = 0; l < reference.lines.length; l++) {
@@ -141,6 +152,11 @@ class PracticeScorer {
     }
     _notes.sort((a, b) => a.$1.start.compareTo(b.$1.start));
     _acc = List.generate(_notes.length, (_) => _Acc());
+    _lineNotes = List.generate(reference.lines.length, (_) => <int>[]);
+    for (var i = 0; i < _notes.length; i++) {
+      _lineNotes[_notes[i].$2].add(i);
+    }
+    _linePass = List.filled(reference.lines.length, -1);
     _onsets = {
       for (var l = 0; l < reference.lines.length; l++)
         for (var k = 0; k < reference.lines[l].tokens.length; k++) (l, k): null
@@ -154,14 +170,46 @@ class PracticeScorer {
   final double sampleInterval;
   final _notes = <(RefNote, int, int)>[];
   late final List<_Acc> _acc;
+
+  /// Indices into [_notes] of every line's notes.
+  late final List<List<int>> _lineNotes;
   late final Map<(int, int), double?> _onsets;
   double _lastTime = -1e9;
   double _unvoicedSince = -1e9;
   bool _wasVoiced = false;
 
+  /// The pass being sung, and the pass in which each line was last begun.
+  int _pass = 0;
+  late final List<int> _linePass;
+
+  /// The first line this pass has not looked at yet.
+  int _nextLine = 0;
+  int _fromLine = 0;
+  int? _onlyLine;
+
+  /// A line begins to count this long before its first character, so that
+  /// coming in early is noticed (see [_trackOnsets]).
+  static const _lineLead = 0.35;
+
   /// Completed passes per line (line index -> scores in order).
   final Map<int, List<double>> linePasses = {};
   final Set<int> _lineOpen = {};
+
+  /// The lines sung since this set was last cleared. Whoever stores practice
+  /// records clears it when a new run begins.
+  final Set<int> sungLines = {};
+
+  /// When set, only this line is scored: it is being looped, and the ends
+  /// of the lines next to it only play while the singer waits.
+  int? get onlyLine => _onlyLine;
+  set onlyLine(int? line) {
+    if (line == _onlyLine) return;
+    _onlyLine = line;
+    _nextLine = 0; // lines playing right now may have come into scope
+  }
+
+  /// Reference time of all scored notes of the song.
+  double get scoredSeconds => _notes.fold<double>(0, (a, n) => a + n.$1.duration);
 
   /// Signed cents between a sung MIDI value and a reference MIDI value.
   double deviation(double sung, double ref) {
@@ -187,48 +235,87 @@ class PracticeScorer {
     return -1;
   }
 
-  /// Forgets everything sung after [t] (used when seeking or looping back).
-  void resetFrom(double t) {
-    for (var i = 0; i < _notes.length; i++) {
+  /// Starts a new pass over the song at [t]: playback jumped there (a seek,
+  /// a loop wrapping around). Nothing is forgotten yet; each line's earlier
+  /// result is replaced when this pass reaches the line.
+  ///
+  /// With [fromLine] the pass is there to sing that line (and what follows
+  /// it): the lines before it, whose last characters play during the
+  /// lead-in, are not scored.
+  void startPass(double t, {int fromLine = 0}) {
+    _pass++;
+    _fromLine = fromLine;
+    _nextLine = 0;
+    _lineOpen.clear();
+    // The first sample of the new pass is not a jump back, and the voice
+    // starts over: its first onset is one, whatever was heard before.
+    _lastTime = -1e9;
+    _wasVoiced = false;
+    _unvoicedSince = -1e9;
+  }
+
+  bool _inScope(int l) => l >= _fromLine && (_onlyLine == null || _onlyLine == l);
+
+  /// Begins line [l] in the current pass, at [t]: forgets what was sung of
+  /// it from [t] on.
+  void _beginLine(int l, double t) {
+    _linePass[l] = _pass;
+    for (final i in _lineNotes[l]) {
       if (_notes[i].$1.end > t) _acc[i].clear();
     }
-    for (final key in _onsets.keys) {
-      final tok = reference.lines[key.$1].tokens[key.$2];
-      if (tok.start >= t - 0.35) _onsets[key] = null;
+    final tokens = reference.lines[l].tokens;
+    for (var k = 0; k < tokens.length; k++) {
+      if (tokens[k].start >= t - 0.35) _onsets[(l, k)] = null;
     }
-    _lineOpen.clear();
+  }
+
+  /// Begins the lines that [t] has reached (shortly before their first
+  /// character), unless they are out of scope or already over.
+  void _beginLines(double t) {
+    final lines = reference.lines;
+    while (_nextLine < lines.length && t >= lines[_nextLine].start - _lineLead) {
+      final l = _nextLine++;
+      if (_linePass[l] != _pass && _inScope(l) && t < lines[l].end) _beginLine(l, t);
+    }
   }
 
   ScoredSample add(LivePitch p) {
     if (!p.playing) return ScoredSample(p, PitchVerdict.noReference, null, null);
     final t = p.songTime;
-    if (t < _lastTime - 0.25) resetFrom(t);
+    if (t < _lastTime - 0.25) startPass(t);
     _closeFinishedLines(t);
     _lastTime = t;
+    _beginLines(t);
     _trackOnsets(p);
 
     final idx = _find(t);
     if (idx < 0) return ScoredSample(p, PitchVerdict.noReference, null, null);
     final (note, l, _) = _notes[idx];
-    _lineOpen.add(l);
-    final acc = _acc[idx];
-    acc.frames++;
+    // A note of a line that is out of scope is still shown as the target,
+    // but what is sung (or not) there does not change that line's result.
+    _Acc? acc;
+    if (_inScope(l)) {
+      if (_linePass[l] != _pass) _beginLine(l, t);
+      _lineOpen.add(l);
+      sungLines.add(l);
+      acc = _acc[idx];
+      acc.frames++;
+    }
     if (!p.voiced) return ScoredSample(p, PitchVerdict.off, null, note.midi + options.transpose);
     final dev = deviation(p.midi, note.midi);
-    acc.voiced++;
-    acc.sum += dev;
-    acc.sum2 += dev * dev;
-    acc.devs.add(dev);
     final a = dev.abs();
-    PitchVerdict v;
-    if (a <= options.greatCents) {
-      acc.great++;
-      v = PitchVerdict.great;
-    } else if (a <= options.okCents) {
-      acc.ok++;
-      v = PitchVerdict.ok;
-    } else {
-      v = PitchVerdict.off;
+    final v = a <= options.greatCents
+        ? PitchVerdict.great
+        : a <= options.okCents
+            ? PitchVerdict.ok
+            : PitchVerdict.off;
+    if (acc != null) {
+      acc.voiced++;
+      acc.sum += dev;
+      acc.sum2 += dev * dev;
+      acc.devs.add(dev);
+      if (v == PitchVerdict.great) acc.great++;
+      if (v == PitchVerdict.ok) acc.ok++;
     }
     return ScoredSample(p, v, dev, note.midi + options.transpose);
   }
@@ -243,6 +330,9 @@ class PracticeScorer {
       (int, int)? current, upcoming;
       var currentStart = -1e9, upcomingStart = 1e9;
       for (var l = math.max(0, li - 1); l < math.min(reference.lines.length, li + 2); l++) {
+        // Only lines being sung in this pass: not the end of the line
+        // before the one the singer is waiting for.
+        if (_linePass[l] != _pass) continue;
         final toks = reference.lines[l].tokens;
         for (var k = 0; k < toks.length; k++) {
           if (_onsets[(l, k)] != null) continue;
@@ -290,9 +380,9 @@ class PracticeScorer {
     var frames = 0, voiced = 0;
     var scoreSum = 0.0, durSum = 0.0, expected = 0.0;
     final devs = <double>[];
-    for (var i = 0; i < _notes.length; i++) {
-      final (n, nl, nk) = _notes[i];
-      if (nl != l || nk != k) continue;
+    for (final i in _lineNotes[l]) {
+      final (n, _, nk) = _notes[i];
+      if (nk != k) continue;
       final a = _acc[i];
       expected += n.duration;
       if (a.frames == 0) continue;
@@ -350,20 +440,21 @@ class PracticeScorer {
       w += d;
     }
     final attempted = w > 0;
-    return LineResult(line, attempted ? s / w : double.nan, tokens, attempted);
+    return LineResult(line, attempted ? s / w : double.nan, tokens, attempted, sungSeconds: w);
   }
 
   List<LineResult> results() => [for (var l = 0; l < reference.lines.length; l++) lineResult(l)];
 
-  /// Duration weighted score of all attempted lines (NaN when none).
+  /// Score of everything that was sung in [lines] (by default all lines),
+  /// each line weighted by the time of its characters that were sung (NaN
+  /// when nothing was).
   double overallScore([List<LineResult>? lines]) {
     final rs = lines ?? results();
     var s = 0.0, w = 0.0;
     for (final r in rs) {
       if (!r.attempted) continue;
-      final d = r.line.scoredNotes.fold<double>(0, (a, n) => a + n.duration);
-      s += r.score * d;
-      w += d;
+      s += r.score * r.sungSeconds;
+      w += r.sungSeconds;
     }
     return w > 0 ? s / w : double.nan;
   }

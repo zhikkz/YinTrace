@@ -50,7 +50,6 @@ class PracticePage extends StatefulWidget {
 class _PracticePageState extends State<PracticePage> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final PracticeSession _session;
   late final Ticker _ticker;
-  final _started = Stopwatch();
   bool _shownResults = false;
   bool _init = false;
 
@@ -97,13 +96,11 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     if (state == AppLifecycleState.resumed) {
       _session.resume();
     } else {
-      _started.stop();
       _session.suspend();
     }
   }
 
   void _onSession() {
-    if (!_session.isPlaying) _started.stop();
     if (_session.finished && !_shownResults) {
       _shownResults = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _showResults(saveRecord: true));
@@ -122,10 +119,14 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
 
   Future<void> _showResults({bool saveRecord = false}) async {
     _session.pause();
-    _started.stop();
     PracticeRecord? record;
     if (saveRecord) {
-      record = await _session.save(elapsedSeconds: _started.elapsed.inMilliseconds / 1000);
+      try {
+        record = await _session.save();
+      } catch (e) {
+        // The scores are still worth seeing.
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('没能保存练习记录：$e')));
+      }
     }
     if (!mounted) return;
     final action = await showModalBottomSheet<ResultsAction>(
@@ -212,11 +213,6 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     if (mounted) _session.resume();
   }
 
-  void _togglePlay() {
-    _session.togglePlay();
-    if (_session.isPlaying && !_session.reviewing) _started.start();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -274,7 +270,7 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
                 child: _Stage(session: _session, contour: widget.contour),
               ),
               _Lyrics(session: _session),
-              _Transport(session: _session, onPlay: _togglePlay),
+              _Transport(session: _session),
             ],
           );
         },
@@ -490,9 +486,8 @@ class _Lyrics extends StatelessWidget {
 }
 
 class _Transport extends StatelessWidget {
-  const _Transport({required this.session, required this.onPlay});
+  const _Transport({required this.session});
   final PracticeSession session;
-  final VoidCallback onPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -541,7 +536,7 @@ class _Transport extends StatelessWidget {
                   width: 72,
                   height: 72,
                   child: FilledButton(
-                    onPressed: onPlay,
+                    onPressed: session.togglePlay,
                     style: FilledButton.styleFrom(shape: const CircleBorder(), padding: EdgeInsets.zero),
                     child: Icon(session.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 38),
                   ),
