@@ -204,7 +204,14 @@ class _SongPageState extends State<SongPage> {
                       ],
                     ),
                   ),
-                  ScoreNumeral(score: meta.bestScore, size: 34, label: meta.practiceCount > 0 ? '最高分' : '还没练过'),
+                  ScoreNumeral(
+                    score: meta.bestScore,
+                    size: 34,
+                    // The best score is of runs through the whole song.
+                    label: meta.bestScore != null
+                        ? '最高分'
+                        : (meta.practiceCount > 0 ? '还没唱完过整首' : '还没练过'),
+                  ),
                 ],
               ),
             ),

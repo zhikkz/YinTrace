@@ -84,7 +84,9 @@ class SongMeta {
       );
 }
 
-/// One finished practice run.
+/// One practice run: a pass through the song, or a spell of looping one
+/// line. A run is one record however often its scores are looked at: it is
+/// identified by [at], and storing it again replaces the earlier version.
 class PracticeRecord {
   PracticeRecord({
     required this.at,
@@ -92,8 +94,10 @@ class PracticeRecord {
     required this.lineScores,
     this.loopLine,
     this.durationSeconds = 0,
+    this.coverage,
   });
 
+  /// When the run was first recorded.
   final DateTime at;
   final double score;
 
@@ -104,12 +108,29 @@ class PracticeRecord {
   final int? loopLine;
   final double durationSeconds;
 
+  /// How much of the song was sung, 0..1 (by the time of its scored notes).
+  /// Null in records from before this was stored, until the repository
+  /// estimates it from the lines they list.
+  double? coverage;
+
+  /// A run counts as the whole song when at least this much of it was sung.
+  static const wholeSongCoverage = 0.8;
+
+  /// A run through (most of) the song. Only these set the best score and
+  /// appear in the score trend; a line loop, or a run that stopped early,
+  /// only counts for its lines.
+  bool get wholeSong => loopLine == null && (coverage == null || coverage! >= wholeSongCoverage);
+
+  /// What identifies the run in the stored history.
+  String get key => at.toIso8601String();
+
   Map<String, dynamic> toJson() => {
         'at': at.toIso8601String(),
         'score': score,
         'lines': lineScores.map((k, v) => MapEntry('$k', (v * 10).round() / 10)),
         if (loopLine != null) 'loop': loopLine,
         'dur': durationSeconds,
+        if (coverage != null) 'cov': (coverage! * 1000).round() / 1000,
       };
 
   factory PracticeRecord.fromJson(Map<String, dynamic> j) => PracticeRecord(
@@ -118,5 +139,6 @@ class PracticeRecord {
         lineScores: (j['lines'] as Map).map((k, v) => MapEntry(int.parse('$k'), (v as num).toDouble())),
         loopLine: (j['loop'] as num?)?.toInt(),
         durationSeconds: (j['dur'] as num?)?.toDouble() ?? 0,
+        coverage: (j['cov'] as num?)?.toDouble(),
       );
 }

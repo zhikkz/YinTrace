@@ -91,10 +91,15 @@ class ResultsSheet extends StatelessWidget {
               padding: const EdgeInsets.only(top: 6),
               child: _ScoreBar(score: overall),
             ),
-          if (record != null)
+          if (record case final record?)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text('已记入这首歌的练习记录', style: context.type.labelSmall),
+              child: Text(
+                record.loopLine != null || record.wholeSong
+                    ? '已记入这首歌的练习记录'
+                    : '已记下每一句的分数。唱完大部分（八成以上）才算一次整首练习，计入最高分和得分趋势',
+                style: context.type.labelSmall,
+              ),
             ),
           if (canListen?.call(null) ?? false)
             Padding(

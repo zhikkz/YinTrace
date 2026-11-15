@@ -273,6 +273,19 @@ class SongReference {
     return best;
   }
 
+  /// How much of the song the lines with these indices make up, 0..1, by
+  /// the time of their scored notes (0 for a song without any).
+  double coverageOf(Iterable<int> lineIndices) {
+    double seconds(RefLine l) => l.scoredNotes.fold<double>(0, (a, n) => a + n.duration);
+    final total = lines.fold<double>(0, (a, l) => a + seconds(l));
+    if (total <= 0) return 0;
+    var part = 0.0;
+    for (final i in lineIndices.toSet()) {
+      if (i >= 0 && i < lines.length) part += seconds(lines[i]);
+    }
+    return (part / total).clamp(0.0, 1.0).toDouble();
+  }
+
   /// Whether any token was corrected by the user.
   bool get corrected => tokens.any((t) => t.corrected);
 

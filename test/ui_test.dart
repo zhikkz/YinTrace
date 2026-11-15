@@ -658,17 +658,17 @@ void main() {
     expect(session.reviewing, isFalse);
     expect(session.isPlaying, isFalse);
     expect(engine.positionSeconds, closeTo(math.max(0, heardLine.start - 1.0), 0.02));
-    // Nothing was scored while the original played; the line heard is
-    // ready to be sung again, the lines before it keep their scores.
+    // Nothing was scored while the original played: every line keeps its
+    // score, the line heard too, until it is sung again.
     final after = session.scorer.results();
-    for (var i = 0; i < heardLine.index; i++) {
-      expect(after[i].score, linesBefore[i]);
-    }
-    expect(after[heardLine.index].attempted, isFalse);
+    expect([for (final r in after) r.score], linesBefore);
 
-    // Keep the take and make a finished track of it.
+    // Keep the take and make a finished track of it. Looking at the scores
+    // again does not store the same run a second time.
     await tester.tap(find.byTooltip('查看评分'));
     await settleIo(tester, rounds: 20);
+    expect((await tester.runAsync(() => services.songs.loadHistory(song.id)))!.length, 3);
+    expect((await tester.runAsync(() => services.songs.load(song.id)))!.practiceCount, 3);
     await tester.tap(find.text('制作成品'));
     await settleIo(tester, rounds: 20);
     final kept = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!;

@@ -46,10 +46,13 @@ class TakeRecorder {
       !isEmpty && _first < (to * sampleRate).round() && _end > (from * sampleRate).round();
 
   /// Adds a captured block whose first sample was captured while song frame
-  /// [songFrame] was playing.
-  void addAudio(Float32List block, int songFrame, int latencyFrames) {
+  /// [songFrame] was playing. Only the part heard between song frames
+  /// [fromFrame] and [toFrame] is kept: outside them the singer was waiting
+  /// for their line, and what was recorded there before stays.
+  void addAudio(Float32List block, int songFrame, int latencyFrames, {int fromFrame = 0, int? toFrame}) {
     final start = songFrame - latencyFrames;
-    final a = math.max(0, start), b = math.min(lengthFrames, start + block.length);
+    final a = math.max(math.max(0, fromFrame), start);
+    final b = math.min(math.min(lengthFrames, toFrame ?? lengthFrames), start + block.length);
     if (a >= b) return;
     final buf = _samples ??= Float32List(lengthFrames);
     buf.setRange(a, b, block, a - start);

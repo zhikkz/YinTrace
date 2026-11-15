@@ -104,22 +104,72 @@ class SongRepository {
     final f = File(pathFor(id, historyFile));
     if (!f.existsSync()) return [];
     final list = jsonDecode(await f.readAsString()) as List;
-    return [for (final e in list) PracticeRecord.fromJson(e as Map<String, dynamic>)];
+    final history = [for (final e in list) PracticeRecord.fromJson(e as Map<String, dynamic>)];
+    await _estimateCoverage(id, history);
+    return history;
   }
 
-  /// Appends a practice result and updates the song's statistics.
-  Future<SongMeta> addPractice(String id, PracticeRecord record, {int keep = 200}) async {
-    final history = await loadHistory(id);
-    history.add(record);
-    if (history.length > keep) history.removeRange(0, history.length - keep);
-    await _writeAtomic(pathFor(id, historyFile), jsonEncode([for (final r in history) r.toJson()]));
-    final meta = await load(id);
-    meta.practiceCount++;
-    meta.lastPracticedAt = record.at;
-    if (record.loopLine == null) {
-      meta.lastScore = record.score;
-      if (meta.bestScore == null || record.score > meta.bestScore!) meta.bestScore = record.score;
+  /// Records from before runs stored how much of the song they cover (and
+  /// records stored without it) get an estimate from the lines they list,
+  /// so that a run of one line no longer counts as the whole song.
+  Future<void> _estimateCoverage(String id, List<PracticeRecord> history) async {
+    if (history.every((r) => r.coverage != null)) return;
+    final SongReference ref;
+    try {
+      ref = await loadReference(id);
+    } catch (_) {
+      return; // no reference to measure against: they stay as they are
     }
+    for (final r in history) {
+      r.coverage ??= ref.coverageOf(r.lineScores.keys);
+    }
+  }
+
+  Future<void> _writeHistory(String id, List<PracticeRecord> history) =>
+      writeFileAtomic(pathFor(id, historyFile), jsonEncode([for (final r in history) r.toJson()]));
+
+  /// Stores a practice run and updates the song's statistics.
+  Future<SongMeta> addPractice(String id, PracticeRecord record, {int keep = 200}) =>
+      savePractice(id, [record], keep: keep);
+
+  /// Stores practice runs, oldest first, and updates the song's statistics.
+  /// A run that is already in the history (same [PracticeRecord.at]: its
+  /// scores were looked at before, and it went on) is replaced; a new one is
+  /// added and counts as one more practice.
+  ///
+  /// The best score is the best run through the whole song
+  /// ([PracticeRecord.wholeSong]) in the history.
+  Future<SongMeta> savePractice(String id, List<PracticeRecord> records, {int keep = 200}) async {
+    final history = await loadHistory(id);
+    var added = 0;
+    for (final record in records) {
+      final i = history.indexWhere((r) => r.key == record.key);
+      if (i >= 0) {
+        history[i] = record;
+      } else {
+        history.add(record);
+        added++;
+      }
+    }
+    await _estimateCoverage(id, history);
+    // Once the history was cut, an older and better run may be gone from it.
+    final complete = history.length < keep;
+    if (history.length > keep) history.removeRange(0, history.length - keep);
+    await _writeHistory(id, history);
+    final meta = await load(id);
+    meta.practiceCount += added;
+    for (final record in records) {
+      final last = meta.lastPracticedAt;
+      if (last == null || record.at.isAfter(last)) meta.lastPracticedAt = record.at;
+    }
+    final whole = [
+      for (final r in history)
+        if (r.wholeSong && !r.score.isNaN) r.score,
+    ];
+    if (whole.isNotEmpty) meta.lastScore = whole.last;
+    final best = whole.isEmpty ? null : whole.reduce(math.max);
+    final before = meta.bestScore;
+    meta.bestScore = complete || before == null || (best != null && best > before) ? best : before;
     await save(meta);
     return meta;
   }
@@ -161,12 +211,6 @@ class SongRepository {
     _melodyCache.remove(id);
     final d = dirFor(id);
     if (d.existsSync()) await d.delete(recursive: true);
-  }
-
-  Future<void> _writeAtomic(String path, String content) async {
-    final tmp = File('$path.tmp');
-    await tmp.writeAsString(content, flush: true);
-    await tmp.rename(path);
   }
 }
 
