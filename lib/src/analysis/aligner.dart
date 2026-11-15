@@ -276,12 +276,12 @@ class _ChainAligner {
     final change = _change;
     if (change != null && gap == 0 && _voicedAt[c]) {
       // Sung legato, a new character still changes the sound (the vowel, a
-      // consonant, often the note); the middle of a held note does not.
-      // In sung Mandarin three in four such starts change it by more than
-      // 1.8 times the usual amount, and one in eight places inside a
-      // character do. A start where nothing changes counts against it. (A
-      // big pitch step inside a character changes it too, so this does not
-      // tell a turn from a new character.)
+      // consonant, often the note); the middle of a held note does not. In
+      // sung Mandarin most such starts change it by well over the usual
+      // amount, few places inside a character do, and a start where
+      // nothing changes counts against it. (A big pitch step inside a
+      // character changes it too, so this does not tell a turn from a new
+      // character.)
       s += ((change[c] - 1.8 * _usualChange) / (0.8 * _usualChange)).clamp(-1.0, 1.0);
     }
     if (pause) s = gap > 0 ? s * 1.5 + 1 : s - 1;

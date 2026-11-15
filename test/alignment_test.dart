@@ -109,7 +109,7 @@ void main() {
         expect(got[5], closeTo(3.0, 0.1));
       });
 
-      test('a turn inside the held note is not taken for sure as its start (hop ${(hop * 1000).toStringAsFixed(1)} ms)',
+      test('a turn inside the held note may be taken for its start; the rest stays put (hop ${(hop * 1000).toStringAsFixed(1)} ms)',
           () {
         // With nothing (or a 2 dB dip) at 3.0 s and a 4 semitone step at
         // 3.4 s, pitch and level cannot tell the start of the last
