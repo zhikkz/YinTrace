@@ -290,11 +290,13 @@ class SongReference {
   bool get corrected => tokens.any((t) => t.corrected);
 
   /// Copies the user's corrections from [old] (an earlier alignment of the
-  /// same song) onto lines whose text did not change.
-  void applyCorrectionsFrom(SongReference old) {
-    for (var i = 0; i < lines.length && i < old.lines.length; i++) {
-      final a = lines[i], b = old.lines[i];
-      if (a.text != b.text || a.tokens.length != b.tokens.length) continue;
+  /// same song) onto the lines whose words did not change, wherever they
+  /// are now: [lineMap] is [matchLines] of the two (computed when omitted).
+  void applyCorrectionsFrom(SongReference old, [Map<int, int>? lineMap]) {
+    final map = lineMap ?? matchLines(old.lines, lines);
+    for (final MapEntry(key: from, value: to) in map.entries) {
+      final a = lines[to], b = old.lines[from];
+      if (a.tokens.length != b.tokens.length) continue;
       for (var k = 0; k < a.tokens.length; k++) {
         final o = b.tokens[k];
         if (o.corrected && o.text == a.tokens[k].text) a.tokens[k].applyCorrections(o);
@@ -314,6 +316,44 @@ class SongReference {
         language: LyricsLanguage.fromCode(j['lang'] as String?),
         lines: [for (final l in j['lines'] as List) RefLine.fromJson(l as Map<String, dynamic>)],
       );
+}
+
+/// Pairs the lines of an earlier alignment ([old]) with the lines of a new
+/// one ([fresh]) that have the same words: old index -> new index.
+///
+/// Both lists are in song order, so this is their longest common
+/// subsequence: adding, removing or rewriting a line leaves the lines around
+/// it paired, wherever they moved to. Where the same words occur several
+/// times (a chorus) and not all of them can be paired, the ones closest in
+/// time are.
+Map<int, int> matchLines(List<RefLine> old, List<RefLine> fresh) {
+  String words(RefLine l) => l.tokens.map((t) => t.text).join('\u0001');
+  final a = [for (final l in old) words(l)], b = [for (final l in fresh) words(l)];
+  final n = a.length, m = b.length;
+  // best[i][j]: pairs among old[i..] and fresh[j..], each worth far more
+  // than any time difference, minus the seconds the paired lines moved.
+  const pair = 1e9;
+  final best = List.generate(n + 1, (_) => List<double>.filled(m + 1, 0));
+  double paired(int i, int j) => pair - (old[i].lrcStart - fresh[j].lrcStart).abs() + best[i + 1][j + 1];
+  for (var i = n - 1; i >= 0; i--) {
+    for (var j = m - 1; j >= 0; j--) {
+      var v = math.max(best[i + 1][j], best[i][j + 1]);
+      if (a[i] == b[j]) v = math.max(v, paired(i, j));
+      best[i][j] = v;
+    }
+  }
+  final map = <int, int>{};
+  var i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] == b[j] && best[i][j] == paired(i, j)) {
+      map[i++] = j++;
+    } else if (best[i + 1][j] >= best[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return map;
 }
 
 double _r(double v, [int scale = 1000]) => (v * scale).roundToDouble() / scale;

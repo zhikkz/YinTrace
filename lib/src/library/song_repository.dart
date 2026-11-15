@@ -207,6 +207,25 @@ class SongRepository {
     }
   }
 
+  /// After the lyrics were re-aligned: moves the line scores of the
+  /// practice history to where their lines are now (see
+  /// [PracticeRecord.remapped]). [old] is the reference the history was
+  /// recorded against, [lineMap] where each of its lines went.
+  Future<void> remapHistory(String id, SongReference old, Map<int, int> lineMap) async {
+    final f = File(pathFor(id, historyFile));
+    if (!f.existsSync()) return;
+    final list = jsonDecode(await f.readAsString()) as List;
+    final history = [for (final e in list) PracticeRecord.fromJson(e as Map<String, dynamic>)];
+    bool stays(int line) => lineMap[line] == line;
+    if (history.every((r) => r.lineScores.keys.every(stays) && (r.loopLine == null || stays(r.loopLine!)))) return;
+    // How much of the song an old run covered is measured against the
+    // lyrics it was sung to, before lines of it are dropped.
+    for (final r in history) {
+      r.coverage ??= old.coverageOf(r.lineScores.keys);
+    }
+    await _writeHistory(id, [for (final r in history) ?r.remapped(lineMap)]);
+  }
+
   Future<void> delete(String id) async {
     _melodyCache.remove(id);
     final d = dirFor(id);

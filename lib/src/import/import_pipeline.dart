@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import '../analysis/aligner.dart';
 import '../analysis/lrc.dart';
 import '../analysis/pitch_track.dart';
+import '../analysis/reference.dart';
 import '../audio/audio_backend.dart';
 import '../library/song.dart';
 import '../library/song_repository.dart';
@@ -671,18 +672,25 @@ class _ImportClock {
 }
 
 /// Re-aligns an existing song after its lyrics changed (no re-separation).
-/// Pitch corrections are kept on the lines whose text did not change.
+///
+/// Lines whose words did not change keep the user's pitch corrections and
+/// their practice scores, also when lines were added or removed before them
+/// and they moved; the scores of removed and rewritten lines are dropped.
 Future<void> realignSong(SongRepository repo, String id, String lyrics) async {
   final lrc = parseLrc(lyrics);
   if (lrc.lines.isEmpty) throw ImportException('没有解析到带时间的歌词');
   final track = await repo.loadPitchTrack(id);
   final reference = buildReference(track, lrc.lines);
+  SongReference? old;
   try {
-    reference.applyCorrectionsFrom(await repo.loadReference(id));
+    old = await repo.loadReference(id);
   } catch (_) {
     // No earlier reference to take corrections from.
   }
+  final moved = old == null ? null : matchLines(old.lines, reference.lines);
+  if (old != null) reference.applyCorrectionsFrom(old, moved);
   await repo.saveReference(id, reference);
+  if (old != null) await repo.remapHistory(id, old, moved!);
   final meta = await repo.load(id);
   meta.lyrics = lyrics;
   await repo.save(meta);
