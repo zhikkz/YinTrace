@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../app/atomic_file.dart';
 import '../app/licenses.dart';
 import 'import_pipeline.dart';
 
@@ -74,6 +75,10 @@ class VocalAcceleration extends ChangeNotifier {
   static String get checkKey => '$appVersion · ${Platform.operatingSystemVersion}';
 
   File? get _file => dir == null ? null : File('${dir!.path}/acceleration.json');
+  late final LatestStateWriter? _writer = switch (_file) {
+    final file? => LatestStateWriter(file, () => jsonEncode(toJson())),
+    null => null,
+  };
   File? get _marker => dir == null ? null : File('${dir!.path}/coreml-trial');
 
   static Future<VocalAcceleration> load(Directory dir, {bool? supported}) async {
@@ -111,11 +116,8 @@ class VocalAcceleration extends ChangeNotifier {
 
   Future<void> _save() async {
     notifyListeners();
-    final f = _file;
-    if (f == null) return;
     try {
-      await f.parent.create(recursive: true);
-      await f.writeAsString(jsonEncode(toJson()));
+      await _writer?.save();
     } catch (_) {}
   }
 

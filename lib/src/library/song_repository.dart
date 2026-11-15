@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
+import '../app/atomic_file.dart';
 import 'recording.dart';
 import 'song.dart';
 
@@ -64,7 +65,7 @@ class SongRepository {
 
   Future<void> save(SongMeta meta) async {
     dirFor(meta.id).createSync(recursive: true);
-    await _writeAtomic(pathFor(meta.id, songFile), jsonEncode(meta.toJson()));
+    await writeFileAtomic(pathFor(meta.id, songFile), jsonEncode(meta.toJson()));
   }
 
   Future<SongReference> loadReference(String id) async => SongReference.fromJson(
@@ -72,7 +73,7 @@ class SongRepository {
 
   Future<void> saveReference(String id, SongReference ref) {
     _melodyCache.remove(id);
-    return _writeAtomic(pathFor(id, referenceFile), jsonEncode(ref.toJson()));
+    return writeFileAtomic(pathFor(id, referenceFile), jsonEncode(ref.toJson()));
   }
 
   final _melodyCache = <String, List<(double, double, double)>>{};
@@ -146,7 +147,7 @@ class SongRepository {
 
   Future<void> saveRecording(String songId, Recording r) async {
     takesDir(songId).createSync(recursive: true);
-    await _writeAtomic('${takesDir(songId).path}/${r.id}.json', jsonEncode(r.toJson()));
+    await writeFileAtomic('${takesDir(songId).path}/${r.id}.json', jsonEncode(r.toJson()));
   }
 
   Future<void> deleteRecording(String songId, Recording r) async {
