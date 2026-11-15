@@ -667,6 +667,13 @@ class _MixSheet extends StatefulWidget {
 
 class _MixSheetState extends State<_MixSheet> {
   @override
+  void dispose() {
+    // A slider that was still being dragged when the sheet closed.
+    widget.session.settings.save();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final s = widget.session.settings;
     Future<void> set(void Function() change) async {
@@ -674,6 +681,16 @@ class _MixSheetState extends State<_MixSheet> {
       widget.session.applyMix();
       setState(() {});
     }
+
+    // A slider is heard and seen while it is dragged, and saved when it is
+    // let go.
+    void drag(void Function() change) {
+      s.change((_) => change());
+      widget.session.applyMix();
+      setState(() {});
+    }
+
+    void dragEnd(double _) => s.save();
 
     Widget slider(String title, String value, Widget slider) => Padding(
       padding: const EdgeInsets.only(top: 10),
@@ -702,12 +719,20 @@ class _MixSheetState extends State<_MixSheet> {
             slider(
               '伴奏',
               '${(s.accompanimentVolume * 100).round()}%',
-              Slider(value: s.accompanimentVolume, onChanged: (v) => set(() => s.accompanimentVolume = v)),
+              Slider(
+                value: s.accompanimentVolume,
+                onChanged: (v) => drag(() => s.accompanimentVolume = v),
+                onChangeEnd: dragEnd,
+              ),
             ),
             slider(
               '原唱导唱',
               '${(s.guideVocalVolume * 100).round()}%',
-              Slider(value: s.guideVocalVolume, onChanged: (v) => set(() => s.guideVocalVolume = v)),
+              Slider(
+                value: s.guideVocalVolume,
+                onChanged: (v) => drag(() => s.guideVocalVolume = v),
+                onChangeEnd: dragEnd,
+              ),
             ),
             slider(
               '音准容差',
@@ -717,7 +742,8 @@ class _MixSheetState extends State<_MixSheet> {
                 min: 20,
                 max: 100,
                 divisions: 16,
-                onChanged: (v) => set(() => s.toleranceCents = v.round()),
+                onChanged: (v) => drag(() => s.toleranceCents = v.round()),
+                onChangeEnd: dragEnd,
               ),
             ),
             slider(
@@ -728,7 +754,8 @@ class _MixSheetState extends State<_MixSheet> {
                 min: -300,
                 max: 300,
                 divisions: 60,
-                onChanged: (v) => set(() => s.latencyOffsetMs = v.round()),
+                onChanged: (v) => drag(() => s.latencyOffsetMs = v.round()),
+                onChangeEnd: dragEnd,
               ),
             ),
             Text(

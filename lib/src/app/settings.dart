@@ -3,11 +3,21 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'atomic_file.dart';
+
 /// User preferences, persisted as JSON.
 class AppSettings extends ChangeNotifier {
   AppSettings(this._file);
 
   final File? _file;
+
+  /// Writes the file: one write at a time, each replacing the file in one
+  /// step, so that changes in quick succession (a slider) cannot leave it
+  /// half written.
+  late final LatestStateWriter? _writer = switch (_file) {
+    final file? => LatestStateWriter(file, () => jsonEncode(toJson())),
+    null => null,
+  };
 
   /// Extra latency compensation in milliseconds, added to the value the OS
   /// reports (positive = your voice is shown earlier).
@@ -63,13 +73,18 @@ class AppSettings extends ChangeNotifier {
   };
 
   /// Applies [change], notifies listeners and saves.
-  Future<void> update(void Function(AppSettings s) change) async {
+  Future<void> update(void Function(AppSettings s) change) {
+    this.change(change);
+    return save();
+  }
+
+  /// Applies [change] and notifies listeners without saving yet: for a value
+  /// that is still being dragged. Call [save] when it has settled.
+  void change(void Function(AppSettings s) change) {
     change(this);
     notifyListeners();
-    final f = _file;
-    if (f != null) {
-      await f.parent.create(recursive: true);
-      await f.writeAsString(jsonEncode(toJson()));
-    }
   }
+
+  /// Completes when the settings as they are now are in the file.
+  Future<void> save() => _writer?.save() ?? Future.value();
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/services.dart';
+import '../app/settings.dart';
 import '../app/test_build.dart';
 import '../models/model_catalog.dart';
 import '../models/model_manager.dart';
@@ -17,15 +18,33 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  AppSettings? _settings;
+
+  @override
+  void dispose() {
+    // A slider that was still being dragged when the page closed.
+    _settings?.save();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final services = AppScope.of(context);
-    final s = services.settings;
+    final s = _settings = services.settings;
     final p = context.yt;
     Future<void> set(void Function() change) async {
       await s.update((_) => change());
       setState(() {});
     }
+
+    // A slider changes the value while it is dragged and saves it when it
+    // is let go (also after a tap, a key press or an accessibility action).
+    void drag(void Function() change) {
+      s.change((_) => change());
+      setState(() {});
+    }
+
+    void dragEnd(double _) => s.save();
 
     return Scaffold(
       body: CustomScrollView(
@@ -67,7 +86,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       min: 20,
                       max: 100,
                       divisions: 16,
-                      onChanged: (v) => set(() => s.toleranceCents = v.round()),
+                      onChanged: (v) => drag(() => s.toleranceCents = v.round()),
+                      onChangeEnd: dragEnd,
                     ),
                   ),
                   SwitchListTile(
@@ -84,7 +104,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       min: 3,
                       max: 12,
                       divisions: 9,
-                      onChanged: (v) => set(() => s.practiceWindowSeconds = v),
+                      onChanged: (v) => drag(() => s.practiceWindowSeconds = v),
+                      onChangeEnd: dragEnd,
                     ),
                   ),
                 ],
@@ -100,7 +121,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       min: -300,
                       max: 300,
                       divisions: 60,
-                      onChanged: (v) => set(() => s.latencyOffsetMs = v.round()),
+                      onChanged: (v) => drag(() => s.latencyOffsetMs = v.round()),
+                      onChangeEnd: dragEnd,
                     ),
                   ),
                   _SliderRow(
@@ -110,7 +132,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       value: s.micGateDb,
                       min: -70,
                       max: -25,
-                      onChanged: (v) => set(() => s.micGateDb = v),
+                      onChanged: (v) => drag(() => s.micGateDb = v),
+                      onChangeEnd: dragEnd,
                     ),
                   ),
                   SwitchListTile(
