@@ -67,6 +67,45 @@ bogus line
       expect(r.errors.length, 1);
       expect(formatLrcTime(83.09), '01:23.09');
     });
+
+    test('lines that share a time stamp: the first is sung, the rest is its translation', () {
+      // Written for this test, the way players export bilingual lyrics.
+      final r = parseLrc('''
+[00:01.00]夜里的风慢慢吹过窗台
+[00:01.00]The night wind slowly blows past the window
+[00:05.00]远处的灯一盏一盏亮开
+[00:05.000]Far away the lamps light up one by one
+[00:05.00]（第三种语言）
+[00:09.00][00:20.00]下雨了记得带伞
+[00:09.00][00:20.00]Take an umbrella when it rains
+''');
+      expect(r.errors, isEmpty);
+      expect(r.lines.map((l) => l.text), ['夜里的风慢慢吹过窗台', '远处的灯一盏一盏亮开', '下雨了记得带伞', '下雨了记得带伞']);
+      expect(r.translations, 5);
+      expect(r.lines[0].translation, 'The night wind slowly blows past the window');
+      expect(r.lines[1].translation, 'Far away the lamps light up one by one / （第三种语言）');
+      expect(r.lines[3].translation, 'Take an umbrella when it rains');
+      // The first line ends where the next line to sing starts.
+      expect(r.lines[0].end, closeTo(5, 1e-9));
+      // Lyrics without translations are untouched.
+      final plain = parseLrc(exampleLyrics);
+      expect(plain.translations, 0);
+      expect(plain.lines.every((l) => l.translation == null), isTrue);
+    });
+
+    test('lines with the same time keep the order they were written in', () {
+      // Enough of them that an unstable sort would shuffle some pair.
+      final text = StringBuffer();
+      for (var i = 0; i < 40; i++) {
+        final stamp = '[00:${(59 - i).toString().padLeft(2, '0')}.00]';
+        text
+          ..writeln('$stamp原文第${String.fromCharCode(0x4E00 + i)}句')
+          ..writeln('${stamp}translation $i');
+      }
+      final r = parseLrc(text.toString());
+      expect(r.lines, hasLength(40));
+      expect(r.lines.every((l) => l.text.startsWith('原文') && l.translation!.startsWith('translation')), isTrue);
+    });
   });
 
   group('pitch analysis + per character alignment', () {
@@ -126,6 +165,29 @@ bogus line
       final range = copy.pitchRange;
       expect(range.$1, closeTo(60, 0.7));
       expect(range.$2, closeTo(72, 0.7));
+    });
+
+    test('a translation under each line does not take the melody away from it', () {
+      final plain = buildReference(track, lrc.lines);
+      final bilingual = parseLrc(
+        '[00:01.00]夜里的风慢慢吹过窗台\n[00:01.00]The night wind slowly blows past the window\n'
+        '[00:07.00]下雨了 记得带伞\n[00:07.00]Take an umbrella when it rains\n',
+      );
+      final r = buildReference(track, bilingual.lines);
+      expect(r.language.code, 'zh', reason: 'the language is that of the lines to sing');
+      expect(r.lines, hasLength(2));
+      for (var i = 0; i < 2; i++) {
+        expect(r.lines[i].tokens.where((t) => t.hasPitch).length, plain.lines[i].tokens.length);
+        expect(
+          [for (final t in r.lines[i].tokens) t.start],
+          [for (final t in plain.lines[i].tokens) t.start],
+          reason: 'aligned exactly as without the translation',
+        );
+      }
+      expect(r.lines[0].translation, 'The night wind slowly blows past the window');
+      final copy = SongReference.fromJson(jsonDecode(jsonEncode(r.toJson())) as Map<String, dynamic>);
+      expect(copy.lines[1].translation, 'Take an umbrella when it rains');
+      expect(copy.lines[1].text, '下雨了 记得带伞');
     });
 
     test('a line without singing gets evenly spaced, pitchless tokens', () {

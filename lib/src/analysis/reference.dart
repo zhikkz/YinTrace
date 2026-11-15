@@ -167,10 +167,21 @@ String tokenGap(RefToken? previous, RefToken token) {
 }
 
 class RefLine {
-  RefLine({required this.index, required this.text, required this.lrcStart, this.lrcEnd, required this.tokens});
+  RefLine({
+    required this.index,
+    required this.text,
+    required this.lrcStart,
+    this.lrcEnd,
+    required this.tokens,
+    this.translation,
+  });
 
   final int index;
   final String text;
+
+  /// The line's translation, when the lyrics came with one: shown under
+  /// the line, never sung or scored.
+  final String? translation;
 
   /// Time stamp typed by the user.
   final double lrcStart;
@@ -203,6 +214,7 @@ class RefLine {
         'text': text,
         'ls': _r(lrcStart),
         if (lrcEnd != null) 'le': _r(lrcEnd!),
+        if (translation != null) 'tr': translation,
         'tokens': [for (final t in tokens) t.toJson()],
       };
 
@@ -211,6 +223,7 @@ class RefLine {
         text: j['text'] as String,
         lrcStart: (j['ls'] as num).toDouble(),
         lrcEnd: (j['le'] as num?)?.toDouble(),
+        translation: j['tr'] as String?,
         tokens: [for (final t in j['tokens'] as List) RefToken.fromJson(t as Map<String, dynamic>)],
       );
 }

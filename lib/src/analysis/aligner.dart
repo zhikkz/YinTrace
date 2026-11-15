@@ -466,6 +466,7 @@ class _ChainAligner {
         text: line.text,
         lrcStart: line.start,
         lrcEnd: k + 1 < lines.length ? lines[k + 1].start : null,
+        translation: line.translation,
         tokens: refTokens,
       ));
     }
@@ -484,6 +485,7 @@ class _ChainAligner {
       text: line.text,
       lrcStart: line.start,
       lrcEnd: k + 1 < lines.length ? lines[k + 1].start : null,
+      translation: line.translation,
       tokens: [
         for (var i = 0; i < n; i++)
           RefToken(

@@ -380,7 +380,10 @@ void main() {
   testWidgets('a Japanese song keeps its kana together and Japanese glyphs', (tester) async {
     phone(tester);
     // Written for this test.
-    const japanese = '[00:01.00]きょうも空(そら)はあおい\n[00:05.00]まっすぐ歩(ある)いてゆこう\n';
+    // ...with a Chinese translation under each line, the way players
+    // export bilingual lyrics.
+    const japanese = '[00:01.00]きょうも空(そら)はあおい\n[00:01.00]今天的天空也很蓝\n'
+        '[00:05.00]まっすぐ歩(ある)いてゆこう\n[00:05.00]一直往前走吧\n';
     final syllables = <Syl>[];
     var t = 1.1;
     for (final m in const <double>[64, 66, 68, 70, 67, 66, 63, 61, 65]) {
@@ -405,10 +408,17 @@ void main() {
     expect(ref.language.code, 'ja');
     expect(ref.lines[0].tokens.map((t) => t.text), ['きょ', 'う', 'も', '空', 'は', 'あ', 'お', 'い']);
     expect(ref.lines[1].tokens.first.text, 'まっ');
+    // The translations are not lines of their own, and the lines they
+    // belong to have their melody.
+    expect(ref.lines, hasLength(2));
+    expect(ref.lines[0].tokens.every((t) => t.hasPitch), isTrue);
     await tester.pumpWidget(host(services, SongPage(songId: meta.id)));
     await settleIo(tester, rounds: 30);
     final line = tester.widget<Text>(find.text('きょうも空(そら)はあおい'));
     expect(line.style?.locale, const Locale('ja', 'JP'));
+    expect(find.text('今天的天空也很蓝'), findsOneWidget);
+    expect(find.text('一直往前走吧'), findsOneWidget);
+    await screenshot(tester, '2d_japanese_song');
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -422,6 +432,16 @@ void main() {
     await tester.pump();
     await tester.scrollUntilVisible(find.text('2 句，17 个字（中文）'), 200, scrollable: find.byType(Scrollable).first);
     expect(find.text('2 句，17 个字（中文）'), findsOneWidget);
+    // Bilingual lyrics: the page says what it did with the translation lines.
+    await tester.enterText(
+      find.byType(TextField).last,
+      '[00:01.00]夜里的风慢慢吹过窗台\n[00:01.00]The night wind blows past the window\n'
+      '[00:06.50]下雨了 记得带伞\n[00:06.50]Take an umbrella when it rains\n',
+    );
+    await tester.pump();
+    expect(find.text('2 句，17 个字（中文）。另有 2 行和上一行时间相同，当作翻译，不计入要唱的句子'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, lyrics);
+    await tester.pump();
     // Back to the top, then switch to "already separated vocals".
     await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
     await tester.pump(const Duration(milliseconds: 500));

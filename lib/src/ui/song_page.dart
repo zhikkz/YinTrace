@@ -293,7 +293,19 @@ class _SongPageState extends State<SongPage> {
                                   style: context.type.labelSmall?.copyWith(fontFeatures: tabular)),
                             ),
                           ),
-                          Expanded(child: Text(line.text, style: lyricsStyle(context.type.titleMedium, ref.language))),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(line.text, style: lyricsStyle(context.type.titleMedium, ref.language)),
+                                if (line.translation case final translation?)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(translation, style: context.type.bodySmall),
+                                  ),
+                              ],
+                            ),
+                          ),
                           if (trend.length >= 2)
                             Padding(
                               padding: const EdgeInsets.only(right: 10, top: 2),

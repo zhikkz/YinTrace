@@ -7,7 +7,9 @@
 ///
 /// Also accepts several timestamps per line (`[00:12.00][01:30.00]text`),
 /// `[offset:+120]` tags, metadata tags (`[ti:...]`) and enhanced LRC word
-/// times (`<00:12.30>字`).
+/// times (`<00:12.30>字`). Lines that share a time stamp with the line
+/// before them are its translation (bilingual lyrics from a player), not
+/// lines to sing.
 library;
 
 import 'lyrics_language.dart';
@@ -47,7 +49,7 @@ class LyricToken {
 }
 
 class LyricLine {
-  LyricLine({required this.start, required this.text, required this.tokens, this.end});
+  LyricLine({required this.start, required this.text, required this.tokens, this.end, this.translation});
 
   /// Start time in seconds.
   final double start;
@@ -57,17 +59,25 @@ class LyricLine {
   final String text;
   final List<LyricToken> tokens;
 
+  /// What the other lines with this line's time stamp say: shown under the
+  /// line, not sung.
+  String? translation;
+
   @override
   String toString() => '[${formatLrcTime(start)}]$text';
 }
 
 class LrcParseResult {
-  LrcParseResult(this.lines, this.metadata, this.errors);
+  LrcParseResult(this.lines, this.metadata, this.errors, {this.translations = 0});
   final List<LyricLine> lines;
   final Map<String, String> metadata;
 
   /// Human readable problems (line number, message).
   final List<String> errors;
+
+  /// Lines taken as the translation of the line they share a time stamp
+  /// with (see [LyricLine.translation]): not among [lines].
+  final int translations;
 }
 
 final _timeTag = RegExp(r'\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]');
@@ -219,6 +229,12 @@ List<LyricToken> tokenize(String text) {
 
 /// Parses LRC text. Lines are sorted by time; empty lyric lines (used in
 /// LRC files to mark the end of a phrase) close the previous line.
+///
+/// Of several lines with the same time stamp, the first one in the text is
+/// the line to sing and the others are its translation: players export
+/// bilingual lyrics this way, the original first. Two lines cannot be sung
+/// at the same moment, and aligned as two lines the first would get no
+/// pitch at all and the melody would go to the translation.
 LrcParseResult parseLrc(String source) {
   final metadata = <String, String>{};
   final errors = <String>[];
@@ -261,19 +277,35 @@ LrcParseResult parseLrc(String source) {
       }
     }
   }
-  // LRC offset: positive values make lyrics appear earlier.
-  entries.sort((a, b) => a.$1.compareTo(b.$1));
+  // By time; lines with the same time stay in the order they were written
+  // (List.sort alone does not promise that).
+  final order = List.generate(entries.length, (i) => i)
+    ..sort((a, b) {
+      final byTime = entries[a].$1.compareTo(entries[b].$1);
+      return byTime != 0 ? byTime : a.compareTo(b);
+    });
   stops.sort();
   final lines = <LyricLine>[];
-  for (final e in entries) {
-    final tokens = tokenize(e.$2);
+  var translations = 0;
+  double? lastTime;
+  for (final i in order) {
+    final (time, text) = entries[i];
+    final tokens = tokenize(text);
     if (tokens.isEmpty) {
-      errors.add('歌词“${e.$2}”中没有可识别的字');
+      errors.add('歌词“$text”中没有可识别的字');
       continue;
     }
-    final start = (e.$1 - offset).clamp(0.0, double.infinity).toDouble();
+    if (lastTime != null && (time - lastTime).abs() < 0.0005) {
+      final line = lines.last;
+      line.translation = line.translation == null ? text : '${line.translation} / $text';
+      translations++;
+      continue;
+    }
+    lastTime = time;
+    // LRC offset: positive values make lyrics appear earlier.
+    final start = (time - offset).clamp(0.0, double.infinity).toDouble();
     final shifted = [for (final t in tokens) t.shifted(offset)];
-    lines.add(LyricLine(start: start, text: e.$2, tokens: shifted));
+    lines.add(LyricLine(start: start, text: text, tokens: shifted));
   }
   for (var i = 0; i < lines.length; i++) {
     final nextStart = i + 1 < lines.length ? lines[i + 1].start : null;
@@ -287,5 +319,5 @@ LrcParseResult parseLrc(String source) {
     }
     lines[i].end = end;
   }
-  return LrcParseResult(lines, metadata, errors);
+  return LrcParseResult(lines, metadata, errors, translations: translations);
 }
