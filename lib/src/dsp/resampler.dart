@@ -100,6 +100,37 @@ class PolyphaseResampler {
     }
     return out;
   }
+
+  /// Resamples one channel of interleaved audio: channel [channel] of [x]
+  /// ([channels] samples per frame) into the same channel of [out], which
+  /// holds [outputLength] frames. Reads and writes the interleaved buffers
+  /// directly, so a whole song needs no copy per channel.
+  void processChannel(Float32List x, int channels, int channel, Float32List out) {
+    final len = x.length ~/ channels;
+    final outLen = outputLength(len);
+    if (up == 1 && down == 1) {
+      for (var i = 0; i < len; i++) {
+        out[i * channels + channel] = x[i * channels + channel];
+      }
+      return;
+    }
+    final h = taps;
+    final nTaps = h.length;
+    for (var j = 0; j < outLen; j++) {
+      // As in [process].
+      final t = j * down + halfLen;
+      var k = t % up;
+      final minK = t - (len - 1) * up;
+      if (k < minK) k += ((minK - k + up - 1) ~/ up) * up;
+      var acc = 0.0;
+      for (; k < nTaps; k += up) {
+        final idx = (t - k) ~/ up;
+        if (idx < 0) break;
+        acc += h[k] * x[idx * channels + channel];
+      }
+      out[j * channels + channel] = acc;
+    }
+  }
 }
 
 /// Resamples a mono signal between integer sample rates.
