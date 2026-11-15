@@ -143,6 +143,21 @@ class _ChainAligner {
         if (t.voiced(j)) _voicedAt[c] = true;
       }
     }
+    // How much the sound changes at each cell, against how much it
+    // usually does in this song's singing (reverb and the voice itself
+    // move the whole scale).
+    final change = t.spectralChange;
+    final usual = change == null ? <double>[] : [for (var i = 0; i < n; i++) if (t.voiced(i)) change[i]];
+    if (change != null && usual.length >= 10) {
+      _usualChange = median(usual);
+      final cells = Float64List(_cells);
+      for (var c = 0; c < _cells; c++) {
+        for (var j = math.max(0, c * g - 2); j <= math.min(n - 1, c * g + 2); j++) {
+          cells[c] = math.max(cells[c], change[j]);
+        }
+      }
+      if (_usualChange > 0) _change = cells;
+    }
   }
 
   final PitchTrack t;
@@ -160,6 +175,8 @@ class _ChainAligner {
   late final Float64List _dip; // dB depth of a level dip
   late final Float64List _jump; // semitones of pitch change
   late final List<bool> _voicedAt;
+  Float64List? _change; // spectral change, when the track has it
+  double _usualChange = 0;
 
   static Float32List _smooth(Float32List x, int r) {
     final out = Float32List(x.length);
@@ -256,6 +273,17 @@ class _ChainAligner {
         s += 0.6 * (jump >= 0.7 ? jump : 0);
     }
     if (!_voicedAt[c] && gap == 0) s -= 2; // starts must be on the voice
+    final change = _change;
+    if (change != null && gap == 0 && _voicedAt[c]) {
+      // Sung legato, a new character still changes the sound (the vowel, a
+      // consonant, often the note); the middle of a held note does not.
+      // In sung Mandarin three in four such starts change it by more than
+      // 1.8 times the usual amount, and one in eight places inside a
+      // character do. A start where nothing changes counts against it. (A
+      // big pitch step inside a character changes it too, so this does not
+      // tell a turn from a new character.)
+      s += ((change[c] - 1.8 * _usualChange) / (0.8 * _usualChange)).clamp(-1.0, 1.0);
+    }
     if (pause) s = gap > 0 ? s * 1.5 + 1 : s - 1;
     if (!tok.first) {
       // Long silences rarely happen inside a line (a little longer at a

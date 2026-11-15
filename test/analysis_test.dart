@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yintrace/src/analysis/aligner.dart';
 import 'package:yintrace/src/analysis/lrc.dart';
 import 'package:yintrace/src/analysis/pitch_track.dart';
 import 'package:yintrace/src/analysis/reference.dart';
+import 'package:yintrace/src/dsp/pitch.dart';
+import 'package:yintrace/src/library/song_repository.dart' show decodePitchTrack, encodePitchTrack;
 
 import 'support/synth_voice.dart';
 
@@ -202,6 +205,63 @@ bogus line
       expect(tokens.every((t) => t.confidence == 0), isTrue);
       expect(r.lines[0].tokens.last.start, closeTo(syl1.last.start, 0.06));
       expect(r.lines[2].tokens.first.start, closeTo(syl2.first.start, 0.06));
+    });
+  });
+
+  group('spectral change', () {
+    test('rises where the vowel changes, stays low inside a held vowel', () {
+      // “a” (formants 800 / 1200 Hz) for a second, then “i” (300 / 2300 Hz),
+      // on one note with vibrato: only the sound of the voice changes.
+      const sr = 22050;
+      final x = Float32List(sr * 3);
+      double gain(List<double> formants, double hz) =>
+          formants.fold(0.02, (g, f) => g + 1 / (1 + math.pow((hz - f) / (80 + 0.06 * f), 2)));
+      var phase = 0.0;
+      for (var i = sr ~/ 2; i < sr * 5 ~/ 2; i++) {
+        final t = i / sr;
+        final f0 = midiToHz(62 + (t > 0.7 ? 0.3 * math.sin(2 * math.pi * 5.5 * t) : 0));
+        phase += f0 / sr;
+        final formants = t < 1.5 ? const [800.0, 1200.0, 2500.0] : const [300.0, 2300.0, 3000.0];
+        var v = 0.0;
+        for (var h = 1; h * f0 < 8000; h++) {
+          v += gain(formants, h * f0) * math.sin(2 * math.pi * phase * h) / math.sqrt(h);
+        }
+        x[i] = 0.05 * v * math.min(1.0, math.min(t - 0.5, 2.5 - t) / 0.02);
+      }
+      final track = analyzePitch(x, sr);
+      final change = track.spectralChange!;
+      expect(change.length, track.length);
+      final voiced = [for (var i = 0; i < track.length; i++) if (track.voiced(i)) change[i]];
+      final usual = median(voiced);
+      double most(double from, double to) =>
+          [for (var f = track.frameAt(from); f <= track.frameAt(to); f++) change[f]].reduce(math.max);
+      expect(most(1.47, 1.53), greaterThan(5 * usual), reason: 'where “a” turns into “i”');
+      expect(most(0.8, 1.3), lessThan(2 * usual), reason: 'inside “a”');
+      expect(most(1.7, 2.3), lessThan(2 * usual), reason: 'inside “i”');
+    });
+
+    test('is kept in the pitch file; files written before it have none', () {
+      final n = 50;
+      final track = PitchTrack(
+        hopSeconds: 0.01,
+        midi: Float32List.fromList([for (var i = 0; i < n; i++) i < 10 ? 0.0 : 60 + i / 10]),
+        rmsDb: Float32List.fromList([for (var i = 0; i < n; i++) -30.0 + i % 7]),
+        aperiodicity: Float32List(n),
+        spectralChange: Float32List.fromList([for (var i = 0; i < n; i++) (i * 37 % 11).toDouble()]),
+      );
+      final copy = decodePitchTrack(encodePitchTrack(track));
+      expect(copy.midi, track.midi);
+      expect(copy.rmsDb, track.rmsDb);
+      expect(copy.spectralChange, track.spectralChange);
+      // A track without it is written as before (version 1), and the new
+      // file starts with exactly those bytes, so older versions of the app
+      // still read the pitch and level from it.
+      final plain = PitchTrack(hopSeconds: 0.01, midi: track.midi, rmsDb: track.rmsDb, aperiodicity: Float32List(n));
+      final v1 = encodePitchTrack(plain), v2 = encodePitchTrack(track);
+      expect(decodePitchTrack(v1).spectralChange, isNull);
+      expect(decodePitchTrack(v1).midi, track.midi);
+      expect(v2.sublist(8, v1.length), v1.sublist(8));
+      expect(v2.length, v1.length + n * 4);
     });
   });
 }
