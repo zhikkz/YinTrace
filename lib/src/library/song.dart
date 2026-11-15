@@ -141,4 +141,21 @@ class PracticeRecord {
         durationSeconds: (j['dur'] as num?)?.toDouble() ?? 0,
         coverage: (j['cov'] as num?)?.toDouble(),
       );
+
+  /// The record after the lyrics were re-aligned: [lineMap] gives the new
+  /// index of every line that is still there with the same words. Scores of
+  /// the other lines are dropped. Null when nothing of the run is left to
+  /// keep (a loop of a line that is gone).
+  PracticeRecord? remapped(Map<int, int> lineMap) {
+    final loop = loopLine;
+    if (loop != null && !lineMap.containsKey(loop)) return null;
+    return PracticeRecord(
+      at: at,
+      score: score,
+      lineScores: {for (final e in lineScores.entries) ?lineMap[e.key]: e.value},
+      loopLine: loop == null ? null : lineMap[loop],
+      durationSeconds: durationSeconds,
+      coverage: coverage,
+    );
+  }
 }
