@@ -109,7 +109,7 @@ void main() {
         expect(got[5], closeTo(3.0, 0.1));
       });
 
-      test('a turn inside the held note is not taken for sure as its start (hop ${(hop * 1000).toStringAsFixed(1)} ms)',
+      test('a turn inside the held note may be taken for its start; the rest stays put (hop ${(hop * 1000).toStringAsFixed(1)} ms)',
           () {
         // With nothing (or a 2 dB dip) at 3.0 s and a 4 semitone step at
         // 3.4 s, pitch and level cannot tell the start of the last
@@ -149,29 +149,29 @@ void main() {
   });
 
   test('characters sung legato do not push the voiceless ones after them late', () {
-    // “何为人” on one pitch with nothing between the characters, then
-    // “称道的” each after its voiceless consonant. The legato characters
+    // “草与鸟” on one pitch with nothing between the characters, then
+    // “声都是” each after its voiceless consonant. The legato characters
     // used to slide onto the consonant gaps after them, and every
     // character up to the end of the line moved one place late.
     const chars = [
-      _Char(1.00, 1.30, 62, gap: 0.08), // 他
-      _Char(1.38, 1.62, 62, gap: 0.08), // 说
-      _Char(1.62, 1.82, 62), // 你
-      _Char(1.82, 2.20, 62, midi2: 64, split: 2.0), // 任
-      _Char(2.30, 2.70, 64, gap: 0.1), // 何
-      _Char(2.70, 2.90, 64), // 为
-      _Char(2.90, 3.05, 64), // 人
-      _Char(3.15, 3.30, 63, gap: 0.1), // 称
-      _Char(3.38, 3.52, 59, gap: 0.08), // 道
-      _Char(3.60, 3.78, 64, gap: 0.08), // 的
-      _Char(3.78, 4.25, 69, midi2: 71, split: 4.0), // 美
-      _Char(4.25, 4.75, 69), // 丽
+      _Char(1.00, 1.25, 57, gap: 0.09), // 春
+      _Char(1.33, 1.60, 59, gap: 0.08), // 天
+      _Char(1.60, 1.85, 59), // 里
+      _Char(1.85, 2.25, 59, midi2: 61, split: 2.05), // 绿
+      _Char(2.34, 2.75, 61, gap: 0.09), // 草
+      _Char(2.75, 2.97, 61), // 与
+      _Char(2.97, 3.12, 61), // 鸟
+      _Char(3.22, 3.40, 60, gap: 0.1), // 声
+      _Char(3.47, 3.62, 57, gap: 0.07), // 都
+      _Char(3.70, 3.88, 61, gap: 0.08), // 是
+      _Char(3.88, 4.36, 66, midi2: 68, split: 4.10), // 明
+      _Char(4.36, 4.85, 66), // 亮
     ];
-    final got = _starts(_render(chars, 6), '[00:00.90]他说你任何为人称道的美丽');
+    final got = _starts(_render(chars, 6), '[00:00.90]春天里绿草与鸟声都是明亮');
     for (final k in [0, 1, 4, 7, 8, 9, 10]) {
       expect(got[k], closeTo(chars[k].start, 0.03), reason: 'character $k');
     }
-    // Nothing marks where 为 and 人 start: they stay inside the held note.
+    // Nothing marks where 与 and 鸟 start: they stay inside the held note.
     for (final k in [5, 6]) {
       expect(got[k], inInclusiveRange(chars[4].start, chars[7].start), reason: 'character $k');
     }

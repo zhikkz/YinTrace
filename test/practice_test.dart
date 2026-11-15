@@ -124,6 +124,9 @@ void main() {
       }
       final track = await repo.loadPitchTrack(meta.id);
       expect(track.duration, closeTo(8, 0.05));
+      // Stored with it, how fast the sound changes, for re-aligning later.
+      expect(track.spectralChange, isNotNull);
+      expect(track.spectralChange!.length, track.length);
       // MDX pass-through + VR mask 0 => vocals ~ mix * compensate, so the
       // accompaniment (mix - vocals) is tiny compared to the mix.
       final acc = readWavFile(repo.pathFor(meta.id, meta.accompanimentFile!));
