@@ -339,6 +339,7 @@ class _ImportPageState extends State<ImportPage> {
                   parsed.lines.isEmpty
                       ? '没有找到带时间的歌词'
                       : '${parsed.lines.length} 句，$chars 个${language.unit}（${language.label}）'
+                            '${parsed.translations == 0 ? '' : '。另有 ${parsed.translations} 行和上一行时间相同，当作翻译，不计入要唱的句子'}'
                             '${parsed.errors.isEmpty ? '' : '。有 ${parsed.errors.length} 行认不出：${parsed.errors.first}'}',
                   style: context.type.bodyMedium?.copyWith(color: parsed.lines.isEmpty ? p.cinnabar : p.ink),
                 ),

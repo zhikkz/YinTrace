@@ -463,6 +463,11 @@ class _Lyrics extends StatelessWidget {
               ],
             ),
           ),
+          if (line.translation case final translation?)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(translation, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.type.bodySmall),
+            ),
           const SizedBox(height: 6),
           Text(next?.text ?? ' ', style: lyricsStyle(context.type.bodyMedium?.copyWith(color: p.inkFaint), language)),
           const SizedBox(height: 4),
