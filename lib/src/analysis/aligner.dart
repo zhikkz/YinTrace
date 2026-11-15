@@ -48,8 +48,12 @@ class AlignOptions {
 /// predicted from how the unit starts (the Mandarin initial, the kana, or
 /// the English word's first letters: voiceless consonant gap,
 /// voiced-consonant level dip, vowel pitch change), and each unit's voiced
-/// duration is kept plausible for its syllables (morae in Japanese).
-/// Finally the pitch inside every unit is split into stable notes.
+/// duration is kept plausible for its syllables (morae in Japanese); the
+/// last one of a line may be held as long as the singer likes. Finally the
+/// pitch inside every unit is split into stable notes.
+///
+/// The weights were checked against sung Mandarin with marked syllable
+/// times (GTSinger, two singers, about 5000 characters).
 ///
 /// [language] defaults to the one detected from the lyrics.
 SongReference buildReference(PitchTrack track, List<LyricLine> lines,
@@ -62,7 +66,8 @@ SongReference buildReference(PitchTrack track, List<LyricLine> lines,
 /// One syllable placed by the dynamic programme. A token is one or more
 /// consecutive units (an English word: one per syllable).
 class _Tok {
-  _Tok(this.line, this.index, this.token, this.cls, this.weight, this.first, this.last, {required this.lead});
+  _Tok(this.line, this.index, this.token, this.cls, this.weight, this.first, this.last,
+      {required this.lead, this.lineStop});
   final int line;
 
   /// Index of the token in its line.
@@ -79,6 +84,10 @@ class _Tok {
 
   /// First unit of its token (where a pause or a word time applies).
   final bool lead;
+
+  /// When the next line starts, or this one is marked to end; null for the
+  /// last line without an end mark.
+  final double? lineStop;
   int lo = 0; // grid range [lo, hi)
   int hi = 0;
   late Float64List dp;
@@ -221,30 +230,46 @@ class _ChainAligner {
     final jump = math.min(_jump[c], 4.0);
     double s;
     final gapScore = gap > 0 ? 2.0 + math.min(gap, 0.25) / 0.05 : 0.0;
+    final pause = tok.lead && tok.token.pauseBefore;
+    // Inside a line, a short voiceless gap marks a voiceless consonant. In
+    // sung Mandarin one comes before nearly every character that starts
+    // with one, but before few that start with m/n/l/r or a vowel. Those
+    // get less for a gap, or they slide onto the gap of a voiceless
+    // character after them and shift the rest of the line. A longer gap is
+    // a breath, after which any character may start.
+    final consonantGap = !tok.first && !pause && gap > 0 && gap < 0.2;
+    final legatoGap = consonantGap ? gapScore * 0.7 : gapScore;
     switch (tok.cls) {
       case OnsetClass.unvoiced:
         // A gap is expected, but unaspirated b/d/g/j/zh/z and h are often
         // voiced when sung: then a dip or a pitch change marks the onset.
-        s = gapScore > 0 ? gapScore * 1.2 : (dip >= 2 ? dip / 3 : 0);
+        s = gapScore > 0 ? gapScore * 1.2 : (dip >= 1 ? dip / 3 : 0);
         s += 0.6 * (jump >= 0.7 ? jump : 0);
       case OnsetClass.voiced:
-        s = math.max(gapScore, dip >= 2 ? dip / 3 * 1.4 : 0);
+        s = math.max(legatoGap, dip >= 1 ? dip / 3 * 1.4 : 0);
         s += 0.6 * (jump >= 0.7 ? jump : 0);
       case OnsetClass.vowel:
-        s = math.max(gapScore, dip >= 2 ? dip / 3 : 0);
+        s = math.max(legatoGap, dip >= 1 ? dip / 3 : 0);
         s += 0.7 * (jump >= 0.7 ? jump : 0);
       case OnsetClass.unknown:
-        s = math.max(gapScore, dip >= 2 ? dip / 3 : 0);
+        s = math.max(gapScore, dip >= 1 ? dip / 3 : 0);
         s += 0.6 * (jump >= 0.7 ? jump : 0);
     }
     if (!_voicedAt[c] && gap == 0) s -= 2; // starts must be on the voice
-    final pause = tok.lead && tok.token.pauseBefore;
     if (pause) s = gap > 0 ? s * 1.5 + 1 : s - 1;
     if (!tok.first) {
       // Long silences rarely happen inside a line (a little longer at a
       // pause): a character after one most likely starts the next line.
       final allowed = pause ? 1.2 : (tok.lead ? 0.6 : 0.4);
       if (gap > allowed) s -= math.min(8.0, (gap - allowed) * 10);
+    }
+    // A character rarely starts once the next line is due. Without this a
+    // line can slide a character late, its last character taking the first
+    // onset of the next line.
+    final stop = tok.lineStop;
+    if (stop != null) {
+      final over = secOfCell(c) - (stop - 0.1);
+      if (over > 0) s -= 10 * over;
     }
     final time = tok.lead ? tok.token.time : null;
     if (time != null && (secOfCell(c) - time).abs() < 0.08) s += 10;
@@ -284,16 +309,19 @@ class _ChainAligner {
       final cap = line.start + 1.5 + units * 1.0;
       final hi = math.max(lo + 1, cellOf(math.min(end, math.min(stop + o.lateSlack, cap))));
       final firstHi = math.max(lo + 1, math.min(hi, cellOf(line.start + o.lateSlack) + 1));
-      // Expected voiced seconds per syllable in this line.
+      // Expected voiced seconds per syllable in this line. Its last syllable
+      // is usually held, about as long as two: counted so, it does not make
+      // every other character of the line expected longer.
       final v0 = frameOf(math.max(0, line.start - 0.2)), v1 = frameOf(math.min(end, stop + 0.3));
       final voiced = (_voicedPrefix[v1] - _voicedPrefix[v0]) * hop;
-      lineAvg.add((voiced / units).clamp(0.12, 1.5).toDouble());
+      lineAvg.add((voiced / (units + 1)).clamp(0.12, 1.5).toDouble());
       if (!sung[k]) continue;
+      final lineStop = k + 1 < lines.length || line.end != null ? stop : null;
       for (var i = 0; i < n; i++) {
         final syl = syllables[i];
         for (var j = 0; j < syl.length; j++) {
           final tok = _Tok(k, i, line.tokens[i], syl[j].$1, syl[j].$2, i == 0 && j == 0,
-              i == n - 1 && j == syl.length - 1, lead: j == 0)
+              i == n - 1 && j == syl.length - 1, lead: j == 0, lineStop: lineStop)
             ..lo = lo
             ..hi = i == 0 && j == 0 ? firstHi : hi;
           toks.add(tok);
@@ -324,27 +352,35 @@ class _ChainAligner {
     }
     double maxSeconds(double weight) => o.maxTokenSeconds * math.max(1.0, weight / 2);
     final maxRaw = ((maxSeconds(maxWeight) * 1.25) / hop / g).ceil();
-    double penalty(double dv, double avg, double weight) {
+    // A slot with almost no voice is very unlikely; a short one (a quick or
+    // breathy syllable) only a little: rather that than moving every
+    // following character onto its neighbour's voice.
+    double penalty(double dv, double avg, double weight, bool last) {
       var p = 0.0;
       if (dv < 0.04) {
         p += 25;
       } else if (dv < 0.08) {
-        p += 4;
+        p += 1;
       }
       final max = maxSeconds(weight);
       if (dv > max) p += 10 + (dv - max) * 5;
       final l = math.log(math.max(dv, 0.02) / (avg * weight));
+      // The last syllable of a line may be held as long as the singer
+      // likes: only being too short counts against it. Otherwise a weak
+      // boundary before a long final note moves to where both halves are
+      // the usual length, and the character before takes the start of it.
+      if (last && l > 0) return p;
       return p + 0.35 * l * l;
     }
 
     final penTables = <int, Float64List>{};
-    Float64List penTable(int line, double weight) {
-      final key = line * 64 + (weight * 4).round().clamp(0, 63);
+    Float64List penTable(_Tok tok) {
+      final key = (tok.line * 64 + (tok.weight * 4).round().clamp(0, 63)) * 2 + (tok.last ? 1 : 0);
       return penTables.putIfAbsent(key, () {
         final size = maxRaw * g + 1;
         final tab = Float64List(size);
         for (var v = 0; v < size; v++) {
-          tab[v] = penalty(v * hop, lineAvg[line], weight);
+          tab[v] = penalty(v * hop, lineAvg[tok.line], tok.weight, tok.last);
         }
         return tab;
       });
@@ -355,9 +391,9 @@ class _ChainAligner {
     double voicedPen(_Tok tok, int fromCell, int toCell) {
       final a = math.min(fromCell * g, t.length), b = math.min(toCell * g, t.length);
       final v = connectedVoiced(a, b);
-      final tab = penTable(tok.line, tok.weight);
+      final tab = penTable(tok);
       if (v < tab.length) return tab[v];
-      return penalty(v * hop, lineAvg[tok.line], tok.weight);
+      return penalty(v * hop, lineAvg[tok.line], tok.weight, tok.last);
     }
 
     const neg = -1e18;
@@ -374,7 +410,7 @@ class _ChainAligner {
       final prev = toks[m - 1], cur = toks[m];
       final crossLine = cur.first;
       final stamp = lines[cur.line].start;
-      final tab = penTable(prev.line, prev.weight);
+      final tab = penTable(prev);
       for (var c = cur.lo; c < cur.hi; c++) {
         final iHi = math.min(prev.hi, c);
         final iLo = crossLine ? prev.lo : math.max(prev.lo, c - maxRaw);
