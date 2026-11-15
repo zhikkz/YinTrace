@@ -56,6 +56,9 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
   /// The take kept as a recording: (take version, recording id).
   (int, String)? _kept;
 
+  /// The screen stays on for as long as the practice page is open.
+  final _awake = ScreenAwake();
+
   @override
   void initState() {
     super.initState();
@@ -80,7 +83,7 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
           loopLine: widget.loopLine,
         );
     _session.addListener(_onSession);
-    keepScreenOn(true);
+    _awake.hold();
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     if (lifecycle != null && lifecycle != AppLifecycleState.resumed) {
       _session.suspend();
@@ -113,7 +116,7 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     _ticker.dispose();
     _session.removeListener(_onSession);
     _session.dispose();
-    keepScreenOn(false);
+    _awake.release();
     super.dispose();
   }
 

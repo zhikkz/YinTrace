@@ -339,6 +339,16 @@ void main() {
       expect(part.readAsBytesSync(), payload);
     });
 
+    test('a full disk is reported as that, not as a broken download', () async {
+      // Every write to /dev/full fails with "no space left on device".
+      final d = ResumableDownload();
+      await expectLater(
+        d.fetch(Uri.parse(host.url('a.bin')), File('/dev/full'), expectedBytes: payload.length),
+        throwsA(isA<ModelStorageException>().having((e) => e.message, 'message', contains('存储空间不足'))),
+      );
+      d.close();
+    }, skip: !File('/dev/full').existsSync());
+
     test('a missing file and an unreachable host give readable errors', () async {
       final d = ResumableDownload();
       await expectLater(
@@ -596,6 +606,17 @@ void main() {
         expect(routes, {'127.0.0.1'});
         expect(m.backupOnly, isFalse);
       });
+
+      test('a full disk does not send the user to the backup route or to their network', () async {
+        final m = manager();
+        await m.dir.create(recursive: true);
+        Link('${m.dir.path}/voc.onnx.part').createSync('/dev/full');
+        await m.install();
+        expect(m.phase, ModelPhase.failed);
+        expect(m.error, contains('存储空间不足'));
+        expect(m.error, isNot(contains('网络')));
+        expect(mirror.requests, isEmpty, reason: 'the other route would fail the same way');
+      }, skip: !File('/dev/full').existsSync());
 
       test('failing on both routes names both', () async {
         host.failWith = HttpStatus.serviceUnavailable;

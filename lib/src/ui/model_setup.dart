@@ -1,6 +1,7 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../app/picked_files.dart';
 import '../app/screen_awake.dart';
 import '../app/test_build.dart';
 import '../app/services.dart';
@@ -55,11 +56,13 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
 
   Future<void> _download() async {
     final models = _models!;
-    await keepScreenOn(true);
+    // The download's own hold: it goes on after this sheet is closed, and
+    // its end must not switch off what the page then open keeps on.
+    final awake = ScreenAwake()..hold();
     try {
       await models.install();
     } finally {
-      await keepScreenOn(false);
+      awake.release();
     }
   }
 
@@ -71,7 +74,15 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
         if (f.path != null) f.path!
     ];
     if (paths.isEmpty) return;
-    await models.importFiles(paths);
+    try {
+      await models.importFiles(paths);
+    } finally {
+      // The models are installed from the picker's copies (194 MB); only
+      // these, not the song that may be waiting on the import page.
+      for (final path in paths) {
+        discardPickedCopy(path);
+      }
+    }
   }
 
   @override
