@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yintrace/src/audio/audio_backend.dart';
+import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace/src/dsp/pitch.dart';
 import 'package:yintrace/src/dsp/real_fft.dart';
 import 'package:yintrace/src/dsp/resampler.dart';
@@ -106,6 +108,66 @@ void main() {
         }
       });
     }
+  });
+
+  group('WAV import at another sample rate', () {
+    late Directory tmp;
+    setUp(() => tmp = Directory.systemTemp.createTempSync('yt_wav'));
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    /// Level in dBFS of the tone at [hz] in one second of [x] (44.1 kHz,
+    /// one channel of [channels]), and of the strongest other component.
+    (double, double, int) levels(Float32List x, int channels, int channel, int hz) {
+      const n = 44100; // 1 Hz per bin: whole frequencies fall on a bin
+      final frame = Float64List(n);
+      for (var i = 0; i < n; i++) {
+        final hann = 0.5 - 0.5 * math.cos(2 * math.pi * i / n);
+        frame[i] = x[(n ~/ 2 + i) * channels + channel] * hann;
+      }
+      final re = Float64List(n ~/ 2 + 1), im = Float64List(n ~/ 2 + 1);
+      RealFft(n).forward(frame, re, im);
+      double db(int k) => 20 * math.log(math.max(1e-12, math.sqrt(re[k] * re[k] + im[k] * im[k]) * 4 / n)) / math.ln10;
+      var spur = -300.0, at = 0;
+      for (var k = 20; k <= n ~/ 2; k++) {
+        if ((k - hz).abs() <= 4) continue; // the tone's own main lobe
+        if (db(k) > spur) {
+          spur = db(k);
+          at = k;
+        }
+      }
+      return (db(hz), spur, at);
+    }
+
+    for (final (rate, hz) in [(48000, 5000), (48000, 10000), (48000, 15000), (22050, 3000), (32000, 10000), (96000, 15000)]) {
+      test('a $rate Hz file keeps a $hz Hz tone at its level, with nothing added', () {
+        // -6.0 dBFS, 3 s.
+        final tone = Float32List.fromList(_sine(hz.toDouble(), 3 * rate, rate, amp: 0.5012));
+        writeWavFile('${tmp.path}/tone.wav', tone, 1, rate);
+        final out = const NativeAudioBackend().decode('${tmp.path}/tone.wav', sampleRate: 44100, channels: 2);
+        expect(out.sampleRate, 44100);
+        expect(out.samples.length, 2 * (3 * 44100));
+        final (main, spur, at) = levels(out.samples, 2, 0, hz);
+        expect(main, closeTo(-6.0, 0.1), reason: 'the tone is not attenuated');
+        expect(spur, lessThan(-65), reason: 'strongest other component, at $at Hz');
+        expect(levels(out.samples, 2, 1, hz).$1, closeTo(main, 1e-6), reason: 'mono goes to both channels');
+      });
+    }
+
+    test('the channels of a stereo file stay apart', () {
+      const rate = 48000;
+      final left = _sine(2000, 3 * rate, rate, amp: 0.5), right = _sine(7000, 3 * rate, rate, amp: 0.25);
+      final stereo = Float32List(6 * rate);
+      for (var i = 0; i < 3 * rate; i++) {
+        stereo[2 * i] = left[i];
+        stereo[2 * i + 1] = right[i];
+      }
+      writeWavFile('${tmp.path}/stereo.wav', stereo, 2, rate);
+      final out = const WavAudioBackend().decode('${tmp.path}/stereo.wav', sampleRate: 44100, channels: 2).samples;
+      expect(levels(out, 2, 0, 2000).$1, closeTo(-6.02, 0.1));
+      expect(levels(out, 2, 0, 2000).$2, lessThan(-65));
+      expect(levels(out, 2, 1, 7000).$1, closeTo(-12.04, 0.1));
+      expect(levels(out, 2, 1, 7000).$2, lessThan(-65));
+    });
   });
 
   group('Yin', () {

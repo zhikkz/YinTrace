@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:yintrace_audio/yintrace_audio.dart';
 
+import '../dsp/resampler.dart';
 import 'wav.dart';
 
 /// File decoding / encoding used by the import pipeline. The default
@@ -92,20 +93,16 @@ class WavAudioBackend implements AudioBackend {
     return DecodedAudio(data, channels, sampleRate);
   }
 
+  /// Every imported .wav whose rate is not the target rate comes through
+  /// here (also on the iPhone), and what comes out is separated, practised
+  /// with and exported: a band-limited polyphase filter, the same one the
+  /// separation uses, not an interpolation that dulls the highs and folds
+  /// them back as tones that were not in the song.
   static Float32List _resampleInterleaved(Float32List x, int ch, int from, int to) {
-    final frames = x.length ~/ ch;
-    final outFrames = (frames * to / from).floor();
-    final out = Float32List(outFrames * ch);
-    // Linear interpolation is enough for the test/fallback path.
-    for (var i = 0; i < outFrames; i++) {
-      final pos = i * from / to;
-      final j = pos.floor();
-      final f = pos - j;
-      for (var c = 0; c < ch; c++) {
-        final a = x[(j.clamp(0, frames - 1)) * ch + c];
-        final b = x[((j + 1).clamp(0, frames - 1)) * ch + c];
-        out[i * ch + c] = a + (b - a) * f;
-      }
+    final resampler = PolyphaseResampler(from, to);
+    final out = Float32List(resampler.outputLength(x.length ~/ ch) * ch);
+    for (var c = 0; c < ch; c++) {
+      resampler.processChannel(x, ch, c, out);
     }
     return out;
   }
