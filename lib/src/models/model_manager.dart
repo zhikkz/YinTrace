@@ -66,6 +66,10 @@ class ModelManager extends ChangeNotifier {
   ModelSpec? _current;
   ResumableDownload? _download;
   Future<void>? _running;
+  List<ModelSpec>? _requestedModels;
+
+  /// Models in the current (or most recent) install operation.
+  List<ModelSpec> get requestedModels => _requestedModels ?? specs;
   String? _route;
   int _routeIndex = 0;
   int _preferredRoute = 0;
@@ -88,20 +92,24 @@ class ModelManager extends ChangeNotifier {
   String? get route => _route;
   bool get onBackupRoute => _route != null && _routeIndex > 0;
 
-  /// Bytes to download in total / already on disk (finished + partial).
-  int get totalBytes => specs.fold(0, (s, m) => s + m.bytes);
+  /// Total catalog size, and byte counts for a requested subset.
+  int get totalBytes => bytesFor(specs);
+  int bytesFor(Iterable<ModelSpec> models) => models.fold(0, (s, m) => s + m.bytes);
+  int get downloadTotalBytes => bytesFor(requestedModels);
+  /// Bytes on disk (finished + partial) for the current install operation.
   int get receivedBytes => _received;
 
   /// Download speed in bytes per second (smoothed).
   double get bytesPerSecond => _speed;
-  double get progress => totalBytes == 0 ? 0 : (_received / totalBytes).clamp(0.0, 1.0);
+  double get progress => downloadTotalBytes == 0 ? 0 : (_received / downloadTotalBytes).clamp(0.0, 1.0);
 
   bool isInstalled(ModelSpec spec) {
     final f = File(_installedPath(spec));
     return f.existsSync() && f.lengthSync() == spec.installedBytes;
   }
 
-  bool get isReady => specs.every(isInstalled);
+  bool get isReady => isReadyFor(specs);
+  bool isReadyFor(Iterable<ModelSpec> models) => models.every(isInstalled);
 
   /// Path of the installed ONNX model, or null.
   String? pathFor(ModelSpec spec) => isInstalled(spec) ? _installedPath(spec) : null;
@@ -111,9 +119,11 @@ class ModelManager extends ChangeNotifier {
   String _installedPath(ModelSpec spec) => '${dir.path}/${spec.installedName}';
   File _partFile(ModelSpec spec) => File('${dir.path}/${spec.fileName}.part');
 
-  int _onDisk() {
+  int _onDisk() => receivedBytesFor(requestedModels);
+
+  int receivedBytesFor(Iterable<ModelSpec> models) {
     var n = 0;
-    for (final spec in specs) {
+    for (final spec in models) {
       if (isInstalled(spec)) {
         n += spec.bytes;
       } else {
@@ -124,12 +134,18 @@ class ModelManager extends ChangeNotifier {
     return n;
   }
 
-  /// Downloads and installs whatever is missing. Safe to call again after a
-  /// failure or a cancel: finished files are kept and partial ones resumed.
-  Future<void> install() => _running ??= _install().whenComplete(() {
-    _running = null;
-    backupOnly = false;
-  });
+  /// Downloads only the requested models (all models if omitted). Safe to
+  /// call again after failure or cancellation: finished files are kept and
+  /// partial ones resumed. A running operation keeps its original scope.
+  Future<void> install({List<ModelSpec>? requiredModels}) {
+    if (_running != null) return _running!;
+    _requestedModels = List.unmodifiable(requiredModels ?? specs);
+    return _running = _install().whenComplete(() {
+      _running = null;
+      backupOnly = false;
+      notifyListeners();
+    });
+  }
 
   Future<void> _install() async {
     _error = null;
@@ -139,7 +155,7 @@ class ModelManager extends ChangeNotifier {
     try {
       await dir.create(recursive: true);
       excludeFromBackup?.call(dir.path);
-      for (final spec in specs) {
+      for (final spec in requestedModels) {
         if (isInstalled(spec)) continue;
         _current = spec;
         final original = File('${dir.path}/${spec.fileName}');
@@ -157,7 +173,7 @@ class ModelManager extends ChangeNotifier {
       _removeObsoleteModels();
       _current = null;
       _route = null;
-      _set(ModelPhase.ready);
+      _set(isReady ? ModelPhase.ready : ModelPhase.missing);
     } on DownloadCancelled {
       _current = null;
       _route = null;
@@ -278,10 +294,14 @@ class ModelManager extends ChangeNotifier {
   /// Installs model files the user already has (picked in the Files app).
   /// Files are recognised by content, not by name. Returns how many of the
   /// given files were models.
-  Future<int> importFiles(List<String> paths) async {
+  Future<int> importFiles(List<String> paths, {List<ModelSpec>? requiredModels}) async {
     if (busy) return 0;
+    _requestedModels = List.unmodifiable(requiredModels ?? specs);
     final job = _importFiles(paths);
-    _running = job.then((_) {}).whenComplete(() => _running = null);
+    _running = job.then((_) {}).whenComplete(() {
+      _running = null;
+      notifyListeners();
+    });
     return job;
   }
 
@@ -294,7 +314,7 @@ class ModelManager extends ChangeNotifier {
       excludeFromBackup?.call(dir.path);
       for (final path in paths) {
         final length = File(path).lengthSync();
-        final spec = specs.where((s) => s.bytes == length).firstOrNull;
+        final spec = requestedModels.where((s) => s.bytes == length).firstOrNull;
         if (spec == null) continue;
         if (isInstalled(spec)) {
           installed++;
@@ -310,7 +330,7 @@ class ModelManager extends ChangeNotifier {
       _received = _onDisk();
       _set(isReady ? ModelPhase.ready : ModelPhase.missing);
       if (installed == 0) {
-        _fail('选的文件不是这两个模型（${specs.map((s) => s.fileName).join('、')}）');
+        _fail('选的文件不是所需模型（${requestedModels.map((s) => s.fileName).join('、')}）');
       }
     } on ModelDownloadException catch (e) {
       _fail(e.message);
