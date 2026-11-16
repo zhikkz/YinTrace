@@ -29,8 +29,17 @@ String importRemainingText(Duration? left) {
   return '预计还需约 ${(left.inSeconds / 60).ceil()} 分钟';
 }
 
+/// The two ways a song comes into the library; the page offers one at a time.
+enum _ImportSource {
+  /// Audio + timed lyrics, separated and measured on this device.
+  audio,
+
+  /// A `.yintrace` file someone exported from their YinTrace.
+  songFile,
+}
+
 /// Import a song: audio file + timed lyrics -> separated vocal, per
-/// character pitch map, stored locally.
+/// character pitch map, stored locally. Or a song file someone sent.
 class ImportPage extends StatefulWidget {
   const ImportPage({super.key, this.pickSongFile, this.background = true});
 
@@ -51,8 +60,12 @@ class _ImportPageState extends State<ImportPage> {
   String? _audioName;
   String? _accPath;
   String? _accName;
+  _ImportSource _source = _ImportSource.audio;
   bool _vocalsOnly = false;
-  bool _skipHarmony = false;
+
+  /// Off unless asked for: the harmony model is the slowest step of an import
+  /// and most songs sound the same without it.
+  bool _removeHarmony = false;
 
   /// A song file someone sent is being added to the library.
   bool _addingSongFile = false;
@@ -170,7 +183,7 @@ class _ImportPageState extends State<ImportPage> {
       vocalsOnly: _vocalsOnly,
       accompanimentPath: _vocalsOnly ? _accPath : null,
       mdxModelPath: _vocalsOnly ? null : mdx,
-      vrModelPath: _vocalsOnly || _skipHarmony ? null : vr,
+      vrModelPath: !_vocalsOnly && _removeHarmony ? vr : null,
       mdxCoreML: accel.coreML,
       coreMLMarker: accel.marker,
       verifyCoreML: accel.verify,
@@ -252,10 +265,12 @@ class _ImportPageState extends State<ImportPage> {
             ? null
             : SafeArea(
                 minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                child: FilledButton(
-                  onPressed: canStart ? _start : null,
-                  child: Text(_vocalsOnly ? '生成逐字音高图' : '分离人声，生成音高图'),
-                ),
+                child: _source == _ImportSource.songFile
+                    ? FilledButton(onPressed: _importSongFile, child: const Text('选择歌曲文件'))
+                    : FilledButton(
+                        onPressed: canStart ? _start : null,
+                        child: Text(_vocalsOnly ? '生成逐字音高图' : '分离人声，生成音高图'),
+                      ),
               ),
       ),
     );
@@ -328,14 +343,27 @@ class _ImportPageState extends State<ImportPage> {
 
   Widget _buildForm(BuildContext context, LrcParseResult parsed) {
     final p = context.yt;
-    final chars = parsed.lines.fold<int>(0, (s, l) => s + l.tokens.length);
-    final language = detectLyricsLanguage(parsed.lines);
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
       children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: SegmentedButton<_ImportSource>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: _ImportSource.audio, label: Text('从音频生成')),
+              ButtonSegment(value: _ImportSource.songFile, label: Text('别人发来的文件')),
+            ],
+            selected: {_source},
+            onSelectionChanged: (v) => setState(() {
+              _source = v.first;
+              _error = null;
+            }),
+          ),
+        ),
         if (_error != null)
           Container(
-            margin: const EdgeInsets.only(top: 8),
+            margin: const EdgeInsets.only(top: 16),
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: p.cinnabar.withValues(alpha: 0.08),
@@ -343,102 +371,113 @@ class _ImportPageState extends State<ImportPage> {
             ),
             child: Text(_error!, style: context.type.bodyMedium?.copyWith(color: p.cinnabar)),
           ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: OutlinedButton(
-            onPressed: _importSongFile,
-            child: Row(
-              children: [
-                Icon(Icons.inbox_rounded, color: p.inkSoft),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('导入别人发来的歌曲文件', style: context.type.bodyLarge),
-                      Text('对方用 YinTrace 导出的 .yintrace 文件', style: context.type.bodySmall),
-                    ],
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded, color: p.inkFaint),
-              ],
-            ),
-          ),
-        ),
-        _step(context, 1, '选择音频'),
-        _picker(context, picked: _audioName, empty: '整首歌，mp3、m4a、wav 或 flac', onTap: () => _pickAudio()),
-        const SizedBox(height: 6),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          value: _vocalsOnly,
-          onChanged: (v) => setState(() => _vocalsOnly = v),
-          title: const Text('这是已经分离好的纯人声'),
-          subtitle: const Text('跳过人声分离，直接测音高'),
-        ),
-        if (_vocalsOnly)
-          _picker(
-            context,
-            picked: _accName,
-            empty: '伴奏（可选），练习时播放',
-            onTap: () => _pickAudio(accompaniment: true),
-          ),
-        if (!_vocalsOnly)
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _skipHarmony,
-            onChanged: (v) => setState(() => _skipHarmony = v),
-            title: const Text('不去和声'),
-            subtitle: const Text('歌里没有和声时可以打开，处理更快'),
-          ),
-        _step(context, 2, '歌曲信息'),
-        TextField(
-          controller: _title,
-          decoration: const InputDecoration(hintText: '歌名'),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _artist,
-          decoration: const InputDecoration(hintText: '歌手（可选）'),
-        ),
-        _step(
-          context,
-          3,
-          '带时间的歌词',
-          hint: '每行写成 [分:秒.百分秒]歌词，时间是这句开始唱的时刻。中文、英文、日文都可以；'
-              '中文的空格表示停顿。日文汉字后面可以用括号写读音，比如 心(こころ)，对得更准。',
-        ),
-        TextField(
-          controller: _lyrics,
-          minLines: 9,
-          maxLines: 20,
-          keyboardType: TextInputType.multiline,
-          style: context.type.bodyLarge?.copyWith(fontFeatures: tabular, height: 1.6),
-          decoration: const InputDecoration(hintText: lyricsHint),
-        ),
-        const SizedBox(height: 10),
-        if (_lyrics.text.trim().isNotEmpty)
-          Row(
-            children: [
-              Icon(
-                parsed.lines.isEmpty ? Icons.error_outline_rounded : Icons.check_rounded,
-                size: 18,
-                color: parsed.lines.isEmpty ? p.cinnabar : p.malachite,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  parsed.lines.isEmpty
-                      ? '没有找到带时间的歌词'
-                      : '${parsed.lines.length} 句，$chars 个${language.unit}（${language.label}）'
-                            '${parsed.translations == 0 ? '' : '。另有 ${parsed.translations} 行和上一行时间相同，当作翻译，不计入要唱的句子'}'
-                            '${parsed.errors.isEmpty ? '' : '。有 ${parsed.errors.length} 行认不出：${parsed.errors.first}'}',
-                  style: context.type.bodyMedium?.copyWith(color: parsed.lines.isEmpty ? p.cinnabar : p.ink),
-                ),
-              ),
-            ],
-          ),
+        if (_source == _ImportSource.songFile)
+          ..._songFileHelp(context)
+        else
+          ..._audioForm(context, parsed),
       ],
     );
+  }
+
+  /// What a song file is; the button that picks one is at the bottom.
+  List<Widget> _songFileHelp(BuildContext context) {
+    final p = context.yt;
+    return [
+      const SizedBox(height: 28),
+      Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Icon(Icons.inbox_rounded, size: 32, color: p.inkSoft),
+      ),
+      const SizedBox(height: 12),
+      Text('导入别人发来的歌曲文件', style: context.type.titleLarge),
+      const SizedBox(height: 8),
+      Text('对方在 YinTrace 的歌曲页菜单里点“发给别人”，就能导出 .yintrace 文件发给你。', style: context.type.bodyMedium),
+      const SizedBox(height: 8),
+      Text(
+        '文件里已经有分离好的人声和伴奏、歌词和音高图：不用下载模型，也不用再分离，导入后就能练。',
+        style: context.type.bodyMedium,
+      ),
+    ];
+  }
+
+  List<Widget> _audioForm(BuildContext context, LrcParseResult parsed) {
+    final p = context.yt;
+    final chars = parsed.lines.fold<int>(0, (s, l) => s + l.tokens.length);
+    final language = detectLyricsLanguage(parsed.lines);
+    return [
+      _step(context, 1, '选择音频'),
+      _picker(context, picked: _audioName, empty: '整首歌，mp3、m4a、wav 或 flac', onTap: () => _pickAudio()),
+      const SizedBox(height: 6),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        value: _vocalsOnly,
+        onChanged: (v) => setState(() => _vocalsOnly = v),
+        title: const Text('这是已经分离好的纯人声'),
+        subtitle: const Text('跳过人声分离，直接测音高'),
+      ),
+      if (_vocalsOnly)
+        _picker(
+          context,
+          picked: _accName,
+          empty: '伴奏（可选），练习时播放',
+          onTap: () => _pickAudio(accompaniment: true),
+        ),
+      if (!_vocalsOnly)
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _removeHarmony,
+          onChanged: (v) => setState(() => _removeHarmony = v),
+          title: const Text('去和声'),
+          subtitle: const Text('这一步耗时较长，和声明显时再打开'),
+        ),
+      _step(context, 2, '歌曲信息'),
+      TextField(
+        controller: _title,
+        decoration: const InputDecoration(hintText: '歌名'),
+      ),
+      const SizedBox(height: 10),
+      TextField(
+        controller: _artist,
+        decoration: const InputDecoration(hintText: '歌手（可选）'),
+      ),
+      _step(
+        context,
+        3,
+        '带时间的歌词',
+        hint: '每行写成 [分:秒.百分秒]歌词，时间是这句开始唱的时刻。中文、英文、日文都可以；'
+            '中文的空格表示停顿。日文汉字后面可以用括号写读音，比如 心(こころ)，对得更准。',
+      ),
+      TextField(
+        controller: _lyrics,
+        minLines: 9,
+        maxLines: 20,
+        keyboardType: TextInputType.multiline,
+        style: context.type.bodyLarge?.copyWith(fontFeatures: tabular, height: 1.6),
+        decoration: const InputDecoration(hintText: lyricsHint),
+      ),
+      const SizedBox(height: 10),
+      if (_lyrics.text.trim().isNotEmpty)
+        Row(
+          children: [
+            Icon(
+              parsed.lines.isEmpty ? Icons.error_outline_rounded : Icons.check_rounded,
+              size: 18,
+              color: parsed.lines.isEmpty ? p.cinnabar : p.malachite,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                parsed.lines.isEmpty
+                    ? '没有找到带时间的歌词'
+                    : '${parsed.lines.length} 句，$chars 个${language.unit}（${language.label}）'
+                          '${parsed.translations == 0 ? '' : '。另有 ${parsed.translations} 行和上一行时间相同，当作翻译，不计入要唱的句子'}'
+                          '${parsed.errors.isEmpty ? '' : '。有 ${parsed.errors.length} 行认不出：${parsed.errors.first}'}',
+                style: context.type.bodyMedium?.copyWith(color: parsed.lines.isEmpty ? p.cinnabar : p.ink),
+              ),
+            ),
+          ],
+        ),
+    ];
   }
 
   static String _clock(Duration d) {
@@ -452,7 +491,7 @@ class _ImportPageState extends State<ImportPage> {
     final stages = ImportStage.values.where(
       (s) => switch (s) {
         ImportStage.separatingVocals => !_vocalsOnly,
-        ImportStage.removingHarmony => !_vocalsOnly && !_skipHarmony,
+        ImportStage.removingHarmony => !_vocalsOnly && _removeHarmony,
         _ => true,
       },
     );
