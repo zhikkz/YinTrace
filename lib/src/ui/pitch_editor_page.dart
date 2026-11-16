@@ -48,6 +48,7 @@ class PitchEditorPage extends StatefulWidget {
     this.line = 0,
     this.playerFactory,
     this.decodeInBackground = true,
+    this.retimer,
   });
 
   final String songId;
@@ -60,6 +61,9 @@ class PitchEditorPage extends StatefulWidget {
 
   /// Decode and align off the UI isolate (tests turn it off).
   final bool decodeInBackground;
+
+  /// Aligns a line again ([retimeLine] by default; tests can delay it).
+  final Future<SongReference> Function(PitchTrack, List<LyricLine>, SongReference, int, Map<int, double>)? retimer;
 
   @override
   State<PitchEditorPage> createState() => _PitchEditorPageState();
@@ -232,7 +236,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     final ref = _ref;
     if (ref == null) return;
     final line = _line;
-    final moved = ref.lines[line].tokens.any((t) => t.pinned != null);
+    final moved = ref.lines[line].tokens.any((t) => t.pinned != null) || (_wanted[line]?.isNotEmpty ?? false);
     setState(() {
       for (final t in ref.lines[line].tokens) {
         t.restore();
@@ -246,10 +250,10 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
   /// Back to what was detected for the selected token; one that was placed
   /// by hand goes back to where the aligner puts it.
   Future<void> _restoreToken() async {
-    final moved = _selected?.pinned != null;
-    final line = _line;
+    final line = _line, k = _token;
+    final moved = _selected?.pinned != null || (_wanted[line]?.containsKey(k) ?? false);
     await _change((t) => t.restore());
-    if (moved) await _retime(line, _pinsOfLine(line));
+    if (moved) await _retime(line, {...(_wanted[line] ?? _pinsOfLine(line))}..remove(k));
   }
 
   Map<int, double> _pinsOfLine(int line) => {for (final (i, t) in _ref!.lines[line].tokens.indexed) i: ?t.pinned};
@@ -293,22 +297,32 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
   }
 
   Future<void> _retimeNow(int line) async {
-    final pins = _wanted.remove(line);
+    // The line's newest pins; they stay asked for (and shown, and added to
+    // by further taps) until a result with them is in.
+    final pins = _wanted[line];
     final ref = _ref, track = _track, meta = _meta;
     if (pins == null || !mounted || ref == null || track == null || meta == null) return;
+    void done() {
+      if (identical(_wanted[line], pins)) _wanted.remove(line);
+    }
+
     final lines = _lyricLines ??= linesOfReference(ref, meta.lyrics);
     SongReference fresh;
     try {
-      fresh = widget.decodeInBackground
-          ? await retimeLineInBackground(track, lines, ref, line, pins)
-          : retimeLine(track, lines, ref, line, pins);
+      fresh =
+          await (widget.retimer?.call(track, lines, ref, line, pins) ??
+              (widget.decodeInBackground
+                  ? retimeLineInBackground(track, lines, ref, line, pins)
+                  : Future.value(retimeLine(track, lines, ref, line, pins))));
     } catch (e) {
+      done();
       _snack('没能重新对齐：$e');
       return;
     }
     if (!mounted) return;
     if (pins.keys.any((i) => fresh.lines[line].tokens[i].pinned == null)) {
       // No room for a pin there: nothing changes.
+      setState(done);
       _snack('这里放不下，没有改');
       return;
     }
@@ -316,6 +330,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     setState(() {
       _ref = fresh;
       _revision++;
+      done();
     });
     await _save();
   }
