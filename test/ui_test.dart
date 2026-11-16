@@ -728,7 +728,9 @@ void main() {
     final handle = file.openSync(mode: FileMode.write);
     handle.truncateSync(vocalModel.installedBytes);
     handle.closeSync();
-    addTearDown(() => file.deleteSync());
+    addTearDown(() {
+      if (file.existsSync()) file.deleteSync();
+    });
     Navigator.of(tester.element(find.byType(ModelSetupSheet))).pop();
     await tester.pumpAndSettle();
     expect(await result, isTrue);
@@ -753,6 +755,16 @@ void main() {
     await tester.pumpWidget(host(services, const SettingsPage()));
     await tester.pump();
     expect(find.text('已下载部分模型，占用 67 MB'), findsOneWidget);
+    // The vocal model alone can be deleted, without downloading the rest first.
+    expect(find.widgetWithText(TextButton, '下载'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '删除'));
+    await tester.pumpAndSettle();
+    expect(find.text('可以腾出 67 MB。已经导入的歌不受影响；下次导入整首歌时要重新下载。'), findsOneWidget);
+    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('删除')));
+    await tester.pumpAndSettle();
+    expect(file.existsSync(), isFalse);
+    expect(find.text('还没有下载（194 MB）'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '删除'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
 

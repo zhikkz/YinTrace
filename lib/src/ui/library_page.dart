@@ -108,8 +108,9 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 }
 
-/// Says that the separation models still have to be downloaded (or are on
-/// their way). Hidden once they are installed.
+/// Says that the vocal model still has to be downloaded (or is on its way).
+/// Hidden once it is installed: the harmony model is downloaded the first
+/// time an import asks for it.
 class _ModelNotice extends StatelessWidget {
   const _ModelNotice({required this.models});
   final ModelManager models;
