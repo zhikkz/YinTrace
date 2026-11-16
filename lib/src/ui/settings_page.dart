@@ -72,7 +72,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
               const _Footnote(
-                '导入整首歌时，用 UVR 的两个模型在手机上分离人声、去掉和声。'
+                '导入整首歌时，用 UVR 的人声分离模型在手机上提取人声。'
+                '默认不去和声，只有在导入页打开“去和声”时才会使用去和声模型。'
                 '删除模型不影响已经导入的歌。',
               ),
               const _Section('练习'),
