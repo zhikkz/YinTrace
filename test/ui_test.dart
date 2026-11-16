@@ -1,3 +1,4 @@
+import 'dart:async';
 // Widget tests for the main screens. The practice test runs the real
 // native engine in offline mode (set YINTRACE_AUDIO_LIB, see
 // packages/yintrace_audio/tool/run_dart_tests.sh) with a synthetic singer
@@ -14,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yintrace/src/analysis/manual_timing.dart';
 import 'package:yintrace/src/analysis/reference.dart';
 import 'package:yintrace/src/app/screen_awake.dart';
 import 'package:yintrace/src/app/services.dart';
@@ -331,6 +333,76 @@ void main() {
     expect(restored.tokens.every((t) => t.pinned == null), isTrue);
     expect(restored.tokens[4].start, closeTo(start, 1e-6));
     expect(restored.tokens.any((t) => t.corrected), isFalse);
+    await tester.pumpWidget(const SizedBox());
+  }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
+
+  testWidgets('pitch editor: taps while a line is being aligned add up and keep each other', (tester) async {
+    phone(tester);
+    // Each re-alignment waits until the test lets it finish, as on the
+    // phone, where it runs in the background.
+    final gates = <Completer<void>>[];
+    await tester.pumpWidget(
+      host(
+        services,
+        PitchEditorPage(
+          songId: song.id,
+          line: 1,
+          decodeInBackground: false,
+          playerFactory: () => SegmentPlayer(
+            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+            configureSession: false,
+          ),
+          retimer: (track, lines, ref, line, pins) async {
+            final gate = Completer<void>();
+            gates.add(gate);
+            await gate.future;
+            return retimeLine(track, lines, ref, line, pins);
+          },
+        ),
+      ),
+    );
+    await settleIo(tester, rounds: 20);
+    Future<SongReference> stored() async => (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    final before = (await stored()).lines[1];
+    final scrollable = find.byType(Scrollable).first;
+    Future<void> nudge(String char) async {
+      await tester.scrollUntilVisible(find.text(char), -200, scrollable: scrollable);
+      await tester.tap(find.text(char));
+      await tester.pump();
+      await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: scrollable);
+      await tester.tap(find.byTooltip('推后 0.05 秒'));
+      await tester.pump();
+    }
+
+    // Twice on one character, then once on another of the same line, all
+    // before the first result is in.
+    await nudge('得');
+    await tester.tap(find.byTooltip('推后 0.05 秒'));
+    await tester.pump();
+    expect(find.text('你调过'), findsOneWidget);
+    await nudge('带');
+    expect(gates, hasLength(1));
+    for (var round = 0; round < 6; round++) {
+      for (final g in gates) {
+        if (!g.isCompleted) g.complete();
+      }
+      await settleIo(tester, rounds: 5);
+    }
+    final after = (await stored()).lines[1];
+    expect(after.tokens[4].pinned, closeTo(before.tokens[4].start + 0.1, 1e-3));
+    expect(after.tokens[5].pinned, closeTo(before.tokens[5].start + 0.05, 1e-3));
+
+    // Put the line back for the tests after this one.
+    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('这一句全部恢复自动识别'));
+    for (var round = 0; round < 4; round++) {
+      for (final g in gates) {
+        if (!g.isCompleted) g.complete();
+      }
+      await settleIo(tester, rounds: 5);
+    }
+    expect((await stored()).lines[1].tokens.any((t) => t.pinned != null), isFalse);
     await tester.pumpWidget(const SizedBox());
   }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
 
