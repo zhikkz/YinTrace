@@ -324,6 +324,9 @@ class _ModelsRow extends StatelessWidget {
     final p = context.yt;
     final ready = models.isReady;
     final busy = models.busy;
+    // Usually just 人声分离: 去和声 is downloaded the first time an import
+    // uses it.
+    final partial = !ready && !busy && models.installedBytes > 0;
     final String status;
     if (ready) {
       status = '已下载，占用 ${formatMegabytes(models.installedBytes)}';
@@ -331,6 +334,8 @@ class _ModelsRow extends StatelessWidget {
       status = models.phase == ModelPhase.downloading
           ? '正在${isTestBuild && models.onBackupRoute ? '从备用线路' : ''}下载，${(models.progress * 100).floor()}%'
           : '正在准备…';
+    } else if (partial) {
+      status = '已下载部分模型，占用 ${formatMegabytes(models.installedBytes)}';
     } else {
       status = '还没有下载（${formatMegabytes(models.totalBytes)}）';
     }
@@ -353,6 +358,8 @@ class _ModelsRow extends StatelessWidget {
               ],
             ),
           ),
+          // What is there can be deleted without downloading the rest first.
+          if (partial) TextButton(onPressed: () => _delete(context), child: const Text('删除')),
           TextButton(
             onPressed: () => ready ? _delete(context) : ensureModels(context),
             child: Text(ready ? '删除' : (busy ? '查看' : '下载')),

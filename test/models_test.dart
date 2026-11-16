@@ -479,6 +479,52 @@ void main() {
       expect(manager().isReady, isTrue);
     });
 
+    test('downloads only vocals until harmony is requested, then reuses vocals', () async {
+      final m = manager();
+      await m.install(requiredModels: [specs[0]]);
+      expect(m.error, isNull);
+      expect(m.isReadyFor([specs[0]]), isTrue);
+      expect(m.isReady, isFalse);
+      expect(m.phase, ModelPhase.missing);
+      expect(m.busy, isFalse);
+      expect(m.downloadTotalBytes, plain.length);
+      expect(m.receivedBytes, plain.length);
+      expect(m.progress, 1);
+      expect(host.requests.where((r) => r.contains('kara.pth')), isEmpty);
+      expect(m.dir.listSync().map((f) => f.path.split('/').last), ['voc.onnx']);
+      // The next launch can import normally with just the vocal model.
+      expect(manager().isReadyFor([specs[0]]), isTrue);
+      host.requests.clear();
+      await m.install(requiredModels: specs);
+      expect(m.isReady, isTrue);
+      expect(m.progress, 1);
+      expect(host.requests.where((r) => r.contains('voc.onnx')), isEmpty);
+      expect(host.requests.where((r) => r.contains('kara.pth')), isNotEmpty);
+      expect(File(m.pathFor(specs[1])!).readAsBytesSync(), onnx);
+    });
+
+    test('a second request cannot change the models of a running download', () async {
+      final m = manager();
+      final running = m.install(requiredModels: [specs[0]]);
+      final other = m.install(requiredModels: specs);
+      expect(identical(running, other), isTrue);
+      expect(m.requestedModels, [specs[0]]);
+      await other;
+      expect(m.isReadyFor([specs[0]]), isTrue);
+      expect(m.isInstalled(specs[1]), isFalse);
+      expect(host.requests.where((r) => r.contains('kara.pth')), isEmpty);
+    });
+
+    test('picking model files also respects the requested subset', () async {
+      final vocal = File('${tmp.path}/voc.onnx')..writeAsBytesSync(plain);
+      final harmony = File('${tmp.path}/kara.pth')..writeAsBytesSync(weights);
+      final m = manager();
+      expect(await m.importFiles([vocal.path, harmony.path], requiredModels: [specs[0]]), 1);
+      expect(m.isReadyFor([specs[0]]), isTrue);
+      expect(m.isInstalled(specs[1]), isFalse);
+      expect(host.requests, isEmpty);
+    });
+
     test('migrates a previously downloaded official source without networking', () async {
       final m = manager();
       await m.dir.create(recursive: true);
@@ -528,7 +574,7 @@ void main() {
       File('${tmp.path}/song.mp3').writeAsBytesSync(pseudoRandom(1000, 1));
       final m = manager();
       expect(await m.importFiles(['${tmp.path}/song.mp3']), 0);
-      expect(m.error, contains('不是这两个模型'));
+      expect(m.error, contains('不是所需模型'));
       final n = await m.importFiles([
         '${tmp.path}/renamed-download',
         '${tmp.path}/song.mp3',

@@ -108,15 +108,16 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 }
 
-/// Says that the separation models still have to be downloaded (or are on
-/// their way). Hidden once they are installed.
+/// Says that the vocal model still has to be downloaded (or is on its way).
+/// Hidden once it is installed: the harmony model is downloaded the first
+/// time an import asks for it.
 class _ModelNotice extends StatelessWidget {
   const _ModelNotice({required this.models});
   final ModelManager models;
 
   @override
   Widget build(BuildContext context) {
-    if (models.isReady) return const SizedBox.shrink();
+    if (models.isInstalled(vocalModel)) return const SizedBox.shrink();
     final p = context.yt;
     final String text;
     final String action;
@@ -126,7 +127,7 @@ class _ModelNotice extends StatelessWidget {
           : '正在准备分离模型…';
       action = '查看';
     } else {
-      text = '导入整首歌之前，要先下载两个分离模型（${formatMegabytes(models.totalBytes)}）。'
+      text = '导入整首歌之前，要先下载人声分离模型（${formatMegabytes(vocalModel.bytes)}）。去和声模型仅在打开“去和声”时需要。'
           '已经分离好的纯人声可以直接导入。';
       action = '下载';
     }
@@ -144,7 +145,7 @@ class _ModelNotice extends StatelessWidget {
             Container(width: 3, height: 38, decoration: BoxDecoration(color: p.gamboge, borderRadius: BorderRadius.circular(2))),
             const SizedBox(width: 12),
             Expanded(child: Text(text, style: context.type.bodySmall?.copyWith(fontFeatures: tabular))),
-            TextButton(onPressed: () => ensureModels(context), child: Text(action)),
+            TextButton(onPressed: () => ensureModels(context, requiredModels: const [vocalModel]), child: Text(action)),
           ],
         ),
       ),
