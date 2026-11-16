@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "io.github.zhikkz" "\0"
-            VALUE "FileDescription", "yintrace" "\0"
+            VALUE "CompanyName", "zhikkz" "\0"
+            VALUE "FileDescription", "YinTrace" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "yintrace" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 io.github.zhikkz. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 zhikkz. Licensed under the GNU AGPL v3." "\0"
             VALUE "OriginalFilename", "yintrace.exe" "\0"
-            VALUE "ProductName", "yintrace" "\0"
+            VALUE "ProductName", "YinTrace" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
