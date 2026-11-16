@@ -162,7 +162,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     ListTile(
                       title: const Text('只用备用线路重新下载模型'),
-                      subtitle: const Text('删掉已下载的模型，再从 hf-mirror.com 下载一遍（194 MB），看备用线路能不能用'),
+                      subtitle: Text('删掉已下载的模型，再从 ${_backupRoute(services.models)} 下载一遍'
+                          '（${formatMegabytes(services.models.totalBytes)}），看备用线路能不能用'),
                       trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
                       onTap: () => _redownloadFromBackup(context, services.models),
                     ),
@@ -190,6 +191,9 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
+String _backupRoute(ModelManager models) =>
+    {for (final s in models.specs) ...s.mirrors.map(routeName)}.join('、');
+
 /// Test builds: removes the models and downloads them again over the backup
 /// route only.
 Future<void> _redownloadFromBackup(BuildContext context, ModelManager models) async {
@@ -199,7 +203,7 @@ Future<void> _redownloadFromBackup(BuildContext context, ModelManager models) as
     builder: (context) => AlertDialog(
       title: const Text('只用备用线路重新下载？'),
       content: Text(
-        '已下载的模型会被删掉，再只从备用线路 hf-mirror.com 下载 ${formatMegabytes(models.totalBytes)}。'
+        '已下载的模型会被删掉，再只从备用线路 ${_backupRoute(models)} 下载 ${formatMegabytes(models.totalBytes)}。'
         '已经导入的歌不受影响。',
       ),
       actions: [

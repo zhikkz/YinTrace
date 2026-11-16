@@ -124,6 +124,11 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
             ],
             if (models.error != null && !working) ...[
               Text(models.error!, style: context.type.bodyMedium?.copyWith(color: p.cinnabar)),
+              // What each route answered: for testers.
+              if (isTestBuild && models.errorDetail != null) ...[
+                const SizedBox(height: 4),
+                Text(models.errorDetail!, style: context.type.bodySmall?.copyWith(color: p.cinnabar)),
+              ],
               const SizedBox(height: 14),
             ],
             SizedBox(
@@ -154,10 +159,7 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
                 ),
               ),
             const SizedBox(height: 4),
-            Text(
-                '模型由 Ultimate Vocal Remover 项目（Anjok07、aufr33）训练并公开发布，从它的官方模型库下载；'
-                '连不上时自动改用 hf-mirror.com 上的同一文件。下载后都会核对文件指纹（SHA-256）。',
-                style: context.type.labelSmall),
+            Text('模型由 Ultimate Vocal Remover 项目（Anjok07、aufr33）训练并公开发布。', style: context.type.labelSmall),
           ],
         ),
       ),

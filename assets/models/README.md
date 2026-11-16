@@ -1,6 +1,6 @@
 # 模型相关的打包文件
 
-App 只使用 Ultimate Vocal Remover 的两个模型，都在第一次需要时从 UVR 的官方模型库下载，
+App 只使用 Ultimate Vocal Remover 的两个模型，都在第一次需要时下载原版文件（hf-mirror.com 上的副本，不行时改用 UVR 的官方模型库），
 **权重文件不在这个仓库里，也不打包进 App**：
 
 | 用途 | 下载的文件 | 大小 |

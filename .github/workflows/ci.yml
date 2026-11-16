@@ -60,11 +60,11 @@ jobs:
         with:
           name: screenshots
           path: build/screenshots
-      # The backup download route (hf-mirror.com) still serves the official
+      # The main download route (hf-mirror.com) still serves the official
       # files: HEAD requests only. An outage there does not fail the build.
-      - name: Check the backup model download route
+      - name: Check the main model download route
         continue-on-error: true
-        run: LIVE_MIRROR_CHECK=1 flutter test test/models_test.dart --plain-name 'the backup route serves the official files'
+        run: LIVE_MIRROR_CHECK=1 flutter test test/models_test.dart --plain-name 'the main route serves the official files'
 
   model-tools:
     name: Model recipe (PyTorch vs ONNX Runtime)

@@ -24,7 +24,7 @@ void registerThirdPartyLicenses() {
         '''
 YinTrace's vocal separation is a port of the MDX-Net and VR-architecture pre- and post-processing of Ultimate Vocal Remover GUI (https://github.com/Anjok07/ultimatevocalremovergui), and the graph of the harmony-removal network bundled with the app re-implements UVR's VR network definition.
 
-The models UVR-MDX-NET-Voc_FT and 6_HP-Karaoke-UVR were trained and published by the UVR developers (Anjok07, aufr33). They are not part of this app: it downloads them from UVR's official model repository. The UVR authors ask applications that use their models to credit UVR and its developers.
+The models UVR-MDX-NET-Voc_FT and 6_HP-Karaoke-UVR were trained and published by the UVR developers (Anjok07, aufr33). They are not part of this app: it downloads the original files on first use. The UVR authors ask applications that use their models to credit UVR and its developers.
 
 ${_mit('Copyright (c) 2022 Anjok07, Aufr33')}''',
       ),

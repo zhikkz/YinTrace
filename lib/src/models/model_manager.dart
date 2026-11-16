@@ -22,13 +22,14 @@ enum ModelPhase {
 /// Downloads, verifies and installs the two separation models, and tells
 /// the rest of the app where they are.
 ///
-/// Each file is fetched from its first route ([ModelSpec.sources]: UVR's
-/// repository, then hf-mirror.com) that works: a route is given up when it
-/// cannot be reached, answers with an error, stops, stays too slow or
-/// delivers a file with the wrong SHA-256. The next route continues the
-/// partial file (the bytes are the same). Only when every route failed is
-/// the download reported as failed. The route that worked is tried first
-/// for the next file.
+/// Each file is fetched from its first route ([ModelSpec.sources]:
+/// hf-mirror.com, then UVR's repository on GitHub) that works: a route is
+/// given up when it cannot be reached, hands the request on to another site
+/// (see [ResumableDownload.fetch]), answers with an error, stops, stays too
+/// slow or delivers a file with the wrong SHA-256. The next route continues
+/// the partial file (the bytes are the same). Only when every route failed
+/// is the download reported as failed. The route that worked is tried
+/// first for the next file.
 ///
 /// Files are only ever moved to their final name after their SHA-256 has
 /// been checked, so "the file exists with the right size" means "installed".
@@ -59,6 +60,7 @@ class ModelManager extends ChangeNotifier {
 
   ModelPhase _phase = ModelPhase.missing;
   String? _error;
+  String? _errorDetail;
   int _received = 0;
   double _speed = 0;
   ModelSpec? _current;
@@ -74,11 +76,15 @@ class ModelManager extends ChangeNotifier {
 
   ModelPhase get phase => isReady ? ModelPhase.ready : _phase;
   String? get error => _error;
+
+  /// What went wrong on each route, when more than one was tried. Shown in
+  /// test builds only.
+  String? get errorDetail => _errorDetail;
   ModelSpec? get current => _current;
   bool get busy => _running != null;
 
-  /// Host of the route the running download uses ("github.com",
-  /// "hf-mirror.com"), and whether it is a backup route.
+  /// Host of the route the running download uses ("hf-mirror.com",
+  /// "github.com"), and whether it is a backup route.
   String? get route => _route;
   bool get onBackupRoute => _route != null && _routeIndex > 0;
 
@@ -127,6 +133,7 @@ class ModelManager extends ChangeNotifier {
 
   Future<void> _install() async {
     _error = null;
+    _errorDetail = null;
     _received = _onDisk();
     _set(ModelPhase.downloading);
     try {
@@ -155,6 +162,8 @@ class ModelManager extends ChangeNotifier {
       _current = null;
       _route = null;
       _set(ModelPhase.missing);
+    } on _RoutesFailed catch (e) {
+      _fail(e.message, detail: e.detail);
     } on ModelDownloadException catch (e) {
       _fail(e.message);
     } catch (e) {
@@ -192,6 +201,9 @@ class ModelManager extends ChangeNotifier {
           part,
           expectedBytes: spec.bytes,
           minBytesPerSecond: last ? 0 : slowRouteBytesPerSecond,
+          // The main route has to serve the file itself: where it hands
+          // the request on, the backup route is the better choice.
+          stayOnSite: i == 0 && sources.length > 1,
           onProgress: (n) {
             _received = base + n;
             _speed = meter.update(n);
@@ -218,11 +230,10 @@ class ModelManager extends ChangeNotifier {
       part.deleteSync();
       failures.add('$_route：${spec.fileName} 校验失败，文件不完整或不是原版');
     }
-    throw ModelDownloadException(
-      failures.length == 1
-          ? failures.single.substring(failures.single.indexOf('：') + 1)
-          : '主线路和备用线路都下载不了，请检查网络后重试。（${failures.join('；')}）',
-    );
+    if (failures.length == 1) {
+      throw ModelDownloadException(failures.single.substring(failures.single.indexOf('：') + 1));
+    }
+    throw _RoutesFailed('模型下载不了，请检查网络后重试', failures.join('；'));
   }
 
   Future<bool> _matches(ModelSpec spec, String path) async {
@@ -276,6 +287,7 @@ class ModelManager extends ChangeNotifier {
 
   Future<int> _importFiles(List<String> paths) async {
     _error = null;
+    _errorDetail = null;
     var installed = 0;
     try {
       await dir.create(recursive: true);
@@ -323,6 +335,7 @@ class ModelManager extends ChangeNotifier {
     _removeObsoleteModels();
     _received = 0;
     _error = null;
+    _errorDetail = null;
     _set(ModelPhase.missing);
   }
 
@@ -334,10 +347,11 @@ class ModelManager extends ChangeNotifier {
     }
   }
 
-  void _fail(String message) {
+  void _fail(String message, {String? detail}) {
     _current = null;
     _route = null;
     _error = message;
+    _errorDetail = detail;
     _set(ModelPhase.failed);
   }
 
@@ -353,6 +367,12 @@ class ModelManager extends ChangeNotifier {
     _lastNotify = now;
     notifyListeners();
   }
+}
+
+/// Every route of a file failed; [detail] says how, route by route.
+class _RoutesFailed extends ModelDownloadException {
+  _RoutesFailed(super.message, this.detail);
+  final String detail;
 }
 
 String _assemble((ModelRecipe, String, String) job) => job.$1.assembleSync(job.$2, job.$3);

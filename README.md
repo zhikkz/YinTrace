@@ -73,11 +73,12 @@ App 会提示下载（一共 194 MB，只下载一次，支持断点续传），
 | 人声分离 | UVR-MDX-NET Voc FT | `UVR-MDX-NET-Voc_FT.onnx` | 67 MB |
 | 去和声 | 6_HP-Karaoke-UVR | `6_HP-Karaoke-UVR.pth` | 127 MB |
 
-下载地址是 UVR 官方模型库（`github.com/TRvlvr/model_repo` 的 release）。连不上、服务器报错、
-下载中断、半分钟内一直慢于 48 KB/秒，或者文件校验不对时，App 自动改用备用线路
-`hf-mirror.com`（Hugging Face 镜像上 `Blane187/all_public_uvr_models` 固定提交的同名文件，
-已核对与官方文件的大小和 SHA-256 相同），已下载的部分接着续传；两条线路都失败才报错，并写明两边各自的原因。
-下一个文件先用刚才成功的线路。权重文件不在这个仓库里，也不打包进 App。
+主线路是 `hf-mirror.com`（Hugging Face 镜像上 `Blane187/all_public_uvr_models` 固定提交的同名文件，
+已核对与官方文件的大小和 SHA-256 相同）。连不上、被转到 Hugging Face 主站（301/308 重定向，
+在中国大陆以外会这样）、服务器报错、下载中断、半分钟内一直慢于 48 KB/秒，或者文件校验不对时，
+App 自动改用备用线路：UVR 官方模型库（`github.com/TRvlvr/model_repo` 的 release），
+已下载的部分接着续传；两条线路都失败才报错。下一个文件先用刚才成功的线路。
+权重文件不在这个仓库里，也不打包进 App。
 
 - MDX 官方文件在安装时用 6 字节的配方将输入/输出时间轴改为动态，权重不变。
   使用 UVR 可选的 segment size 128（UVR 默认 256）和 UVR 默认的重叠 0.25：内存约为 256 的一半，
@@ -212,7 +213,7 @@ details.
   原本是 MIT、BSD、Apache 2.0 或公有领域，都与 AGPL-3.0 兼容；它们的版权声明和许可全文保留在
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，App 里在“设置 → 致谢与开源许可”也能看到。
 - **模型不属于本项目，也不受这份许可约束**：`UVR-MDX-NET-Voc_FT` 和 `6_HP-Karaoke-UVR` 由
-  Ultimate Vocal Remover 的开发者（Anjok07、aufr33）训练并发布，App 从 UVR 的官方模型库下载，
+  Ultimate Vocal Remover 的开发者（Anjok07、aufr33）训练并发布，App 下载它们的原版文件（见上面的“分离模型”），
   仓库和安装包里都没有权重。UVR 要求使用其模型的第三方应用注明 UVR 及其开发者。
 - 你导入的歌曲、歌词归各自的权利人所有，只保存在你的设备上；仓库里的示例歌词是为本项目写的。
 
