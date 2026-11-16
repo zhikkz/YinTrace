@@ -42,6 +42,7 @@ import 'package:yintrace/src/ui/settings_page.dart';
 import 'package:yintrace/src/ui/practice_page.dart';
 import 'package:yintrace/src/ui/score_trend.dart';
 import 'package:yintrace/src/ui/song_page.dart';
+import 'package:yintrace/src/ui/song_share.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
 import 'support/benchmark_sample.dart';
@@ -602,6 +603,78 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('生成逐字音高图'), findsOneWidget);
     await screenshot(tester, '5_import');
+  });
+
+  testWidgets('a song goes to someone else as one file, and comes into a library from it', (tester) async {
+    phone(tester);
+    // The song page offers it.
+    final before = (await tester.runAsync(services.songs.list))!.map((s) => s.id).toSet();
+    await tester.pumpWidget(host(services, SongPage(songId: song.id)));
+    await settleIo(tester, rounds: 40);
+    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('发给别人'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('把这首歌发给别人'), findsOneWidget);
+    expect(find.textContaining('不包含你的练习成绩和录音'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '导出歌曲文件'), findsOneWidget);
+    await screenshot(tester, '9_share_song');
+    await tester.pumpWidget(const SizedBox());
+
+    // Exporting writes the file and hands it to the share sheet.
+    final out = Directory('${tmp.path}/shared');
+    final shared = <String>[];
+    await tester.pumpWidget(
+      host(
+        services,
+        Scaffold(
+          body: SongShareSheet(
+            song: song,
+            background: false,
+            outputDir: out,
+            share: (path) {
+              shared.add(path);
+              return true;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('导出歌曲文件'));
+    await settleIo(tester, rounds: 5);
+    final file = '${out.path}/夜航（示例） - 演示.yintrace';
+    expect(shared, [file]);
+    expect(File(file).lengthSync(), greaterThan(100000));
+    expect(find.text('已导出 夜航（示例） - 演示.yintrace'), findsOneWidget);
+    await tester.tap(find.text('分享或存到别处'));
+    await tester.pump();
+    expect(shared, [file, file]);
+    await tester.pumpWidget(const SizedBox());
+
+    // The receiver: some other file is refused and the page stays usable...
+    String? picked = '${tmp.path}/vocal.wav';
+    await tester.pumpWidget(host(services, ImportPage(pickSongFile: () async => picked, background: false)));
+    await tester.pump();
+    await tester.tap(find.text('导入别人发来的歌曲文件'));
+    await settleIo(tester, rounds: 5);
+    expect(find.text('这不是 YinTrace 导出的歌曲文件'), findsOneWidget);
+    expect(find.text('导入别人发来的歌曲文件'), findsOneWidget);
+    // ...and the song file opens as a new song that was never practised.
+    picked = file;
+    await tester.tap(find.text('导入别人发来的歌曲文件'));
+    await settleIo(tester, rounds: 40);
+    expect(find.byType(SongPage), findsOneWidget);
+    expect(find.text('夜航（示例）'), findsWidgets);
+    expect(find.text('还没练过'), findsOneWidget);
+    expect(find.text('我的录音'), findsNothing);
+    expect(find.text('夜里的风慢慢吹过窗台'), findsOneWidget);
+    final added = (await tester.runAsync(services.songs.list))!.where((s) => !before.contains(s.id)).single;
+    expect(added.practiceCount, 0);
+    expect((await tester.runAsync(() => services.songs.load(song.id)))!.practiceCount, greaterThan(0));
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(() => services.songs.delete(added.id));
   });
 
   testWidgets('settings page shows the model status and practice options', (tester) async {

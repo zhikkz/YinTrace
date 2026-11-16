@@ -11,6 +11,8 @@ import '../app/services.dart';
 import '../import/import_job.dart';
 import '../import/import_pipeline.dart';
 import '../import/vocal_acceleration.dart';
+import '../library/song.dart';
+import '../library/song_package.dart';
 import '../models/model_catalog.dart';
 import 'model_setup.dart';
 import 'song_page.dart';
@@ -30,7 +32,12 @@ String importRemainingText(Duration? left) {
 /// Import a song: audio file + timed lyrics -> separated vocal, per
 /// character pitch map, stored locally.
 class ImportPage extends StatefulWidget {
-  const ImportPage({super.key});
+  const ImportPage({super.key, this.pickSongFile, this.background = true});
+
+  /// For tests: picks the song file someone sent, and whether it is read in
+  /// a background isolate.
+  final Future<String?> Function()? pickSongFile;
+  final bool background;
 
   @override
   State<ImportPage> createState() => _ImportPageState();
@@ -46,6 +53,9 @@ class _ImportPageState extends State<ImportPage> {
   String? _accName;
   bool _vocalsOnly = false;
   bool _skipHarmony = false;
+
+  /// A song file someone sent is being added to the library.
+  bool _addingSongFile = false;
 
   ImportJob? _job;
   StreamSubscription<ImportEvent>? _sub;
@@ -96,6 +106,38 @@ class _ImportPageState extends State<ImportPage> {
         }
       }
     });
+  }
+
+  /// A song someone exported from their YinTrace (see `song_package.dart`):
+  /// goes into the library as it is.
+  Future<void> _importSongFile() async {
+    final songs = AppScope.of(context).songs;
+    // Any file can be picked: what it is shows in its content, and a name
+    // may have changed on the way.
+    final path = await (widget.pickSongFile ?? () async => (await FilePicker.pickFile(type: FileType.any))?.path)();
+    if (path == null || !mounted) return;
+    setState(() {
+      _error = null;
+      _addingSongFile = true;
+    });
+    final SongMeta song;
+    try {
+      song = widget.background
+          ? await importSongPackageInBackground(songs.root.path, path)
+          : importSongPackageSync(songs.root.path, path);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _addingSongFile = false;
+          _error = e is SongPackageException ? e.message : '导入失败：$e';
+        });
+      }
+      return;
+    } finally {
+      discardPickedCopy(path); // the song is in the library, or will not be
+    }
+    if (!mounted) return;
+    await Navigator.of(context).pushReplacement(MaterialPageRoute<void>(builder: (_) => SongPage(songId: song.id)));
   }
 
   LrcParseResult get _parsed => parseLrc(_lyrics.text);
@@ -185,14 +227,27 @@ class _ImportPageState extends State<ImportPage> {
 
   @override
   Widget build(BuildContext context) {
-    final busy = _progress != null;
+    final busy = _progress != null || _addingSongFile;
     final parsed = _parsed;
     final canStart = !busy && _audioPath != null && parsed.lines.isNotEmpty;
     return PopScope(
       canPop: !busy,
       child: Scaffold(
         appBar: AppBar(title: Text(busy ? '' : '导入歌曲')),
-        body: busy ? _buildProgress(context) : _buildForm(context, parsed),
+        body: _addingSongFile
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text('正在导入…', style: context.type.bodyMedium),
+                  ],
+                ),
+              )
+            : busy
+            ? _buildProgress(context)
+            : _buildForm(context, parsed),
         bottomNavigationBar: busy
             ? null
             : SafeArea(
@@ -288,6 +343,28 @@ class _ImportPageState extends State<ImportPage> {
             ),
             child: Text(_error!, style: context.type.bodyMedium?.copyWith(color: p.cinnabar)),
           ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: OutlinedButton(
+            onPressed: _importSongFile,
+            child: Row(
+              children: [
+                Icon(Icons.inbox_rounded, color: p.inkSoft),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('导入别人发来的歌曲文件', style: context.type.bodyLarge),
+                      Text('对方用 YinTrace 导出的 .yintrace 文件', style: context.type.bodySmall),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+              ],
+            ),
+          ),
+        ),
         _step(context, 1, '选择音频'),
         _picker(context, picked: _audioName, empty: '整首歌，mp3、m4a、wav 或 flac', onTap: () => _pickAudio()),
         const SizedBox(height: 6),

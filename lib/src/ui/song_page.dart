@@ -13,6 +13,7 @@ import 'pitch_editor_page.dart';
 import 'pitch_graph.dart';
 import 'practice_page.dart';
 import 'score_trend.dart';
+import 'song_share.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -173,11 +174,13 @@ class _SongPageState extends State<SongPage> {
                 onSelected: (v) => switch (v) {
                   'edit' => _editLyrics(),
                   'pitch' => _correct(0),
+                  'share' => showSongShare(context, meta),
                   _ => _delete(),
                 },
                 itemBuilder: (_) => const [
                   PopupMenuItem(value: 'pitch', child: Text('校正位置和音高')),
                   PopupMenuItem(value: 'edit', child: Text('修改歌词')),
+                  PopupMenuItem(value: 'share', child: Text('发给别人')),
                   PopupMenuItem(value: 'delete', child: Text('删除这首歌')),
                 ],
               ),
