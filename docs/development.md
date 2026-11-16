@@ -10,7 +10,7 @@ lib/
     separation/   MDX-Net 与 VR 推理流程（UVR 移植）、模型配置、ONNX Runtime 封装
     analysis/     LRC 解析、语言识别（中/英/日）、离线音高跟踪、逐字对齐、参考旋律与校正
     import/       导入流水线（后台 isolate）
-    library/      本地曲库（每首歌一个目录）、练习记录、我的录音
+    library/      本地曲库（每首歌一个目录）、练习记录、我的录音、发给别人的歌曲文件
     practice/     实时音高跟踪、评分、练习会话、校正页的片段播放
     export/       制作成品：混音、后台导出、保存录音
     models/       两个分离模型的下载、校验、动态时间轴配方与 .pth → ONNX 组装
@@ -37,6 +37,12 @@ test/                       单元测试、对照测试、端到端 UI 测试
   `takes/`（我的录音：每段一个 m4a 和一个记录混音设置的 json）。
   以前的版本导入的歌还有一份 `original.*`（原文件的副本），现在不再保存，也没有地方用到它。
 - 导出的成品在 App 的 Documents 目录，“文件”App 里显示为 我的 iPhone › YinTrace。
+- 发给别人的歌曲文件（`.yintrace`，`lib/src/library/song_package.dart`）也导出到 Documents 目录。
+  格式：12 字节 `YinTraceSong`、容器版本（u32 小端，现在是 1）、清单长度（u32 小端）、清单（UTF-8 JSON：
+  歌名、歌手、时长、歌词，以及每个文件的角色、大小和 SHA-256），后面依次是各个文件：
+  `reference.json`、`pitch.bin`、人声、伴奏。`history.json` 和 `takes/` 不在里面，
+  `song.json` 里的分数和练习次数也不写进清单。导入时文件名由 App 自己定（只沿用音频的扩展名），
+  不认识的角色跳过，大小或 SHA-256 对不上就整首不导入。
 - 模型在 Application Support 目录 `models/`（不参与 iCloud 备份）。
 
 ## 测试
