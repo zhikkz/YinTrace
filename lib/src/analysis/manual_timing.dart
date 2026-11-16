@@ -80,7 +80,10 @@ SongReference retimeLine(
   final hold = <(int, int), double>{};
   final all = <(int, int), double>{};
   for (final (k, l) in current.lines.indexed) {
-    final free = overlaps(k);
+    // A line the aligner left unsung (evenly spaced, no pitch) is not held:
+    // its made-up times could crowd out the line after it.
+    final unsung = l.tokens.every((t) => t.notes.isEmpty && t.pinned == null);
+    final free = unsung || overlaps(k);
     for (final (i, token) in l.tokens.indexed) {
       if (k == line) {
         if (pins[i] case final pin?) all[(k, i)] = pin;

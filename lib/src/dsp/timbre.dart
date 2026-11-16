@@ -10,9 +10,10 @@ import 'real_fft.dart';
 ///
 /// It rises where a new syllable changes the vowel or brings a consonant,
 /// also when the voice is sung legato on one note, and stays low in the
-/// middle of a held note. A big change of note moves the harmonics across
-/// the bands and raises it too. Frame `f` is centred at `f * hop` in [x]
-/// (sampled at [rate]), like the frames of `analyzePitch`.
+/// middle of a held note. A change of note inside a syllable (a turn)
+/// raises it too, mostly less than a new syllable does. Frame `f` is
+/// centred at `f * hop` in [x] (sampled at [rate]), like the frames of
+/// `analyzePitch`.
 Float32List spectralChange(List<double> x, int rate, int frames,
     {int hop = 128, int size = 1024, int bands = 26, int coeffs = 12, int half = 6}) {
   final fft = RealFft(size);
