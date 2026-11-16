@@ -167,7 +167,9 @@ class _ImportPageState extends State<ImportPage> {
     if (_audioPath == null) return;
     // Only ask for the harmony model when this import will use it.
     if (!_vocalsOnly &&
-        !await ensureModels(context, requiredModels: [vocalModel, if (_removeHarmony) karaokeModel])) return;
+        !await ensureModels(context, requiredModels: [vocalModel, if (_removeHarmony) karaokeModel])) {
+      return;
+    }
     if (!mounted) return;
     final mdx = services.models.pathFor(vocalModel);
     final vr = services.models.pathFor(karaokeModel);
