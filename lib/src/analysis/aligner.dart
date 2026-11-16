@@ -56,18 +56,77 @@ class AlignOptions {
 /// times (GTSinger, two singers, about 5000 characters).
 ///
 /// [language] defaults to the one detected from the lyrics.
+///
+/// [pins] are starts the user set by hand, keyed by (line, token) index in
+/// [lines]: those tokens start exactly there (it is stored as
+/// [RefToken.pinned]), the rest of the song is aligned around them, and a
+/// line with a pin is aligned even where no voice was found near its time
+/// stamp. [hold] keeps tokens where they are in the same way, without
+/// storing it (to change one line and leave the others as they are). A pin
+/// that cannot be kept (out of order with the others, or with no room for
+/// the characters around it) is dropped, and the song is aligned as if it
+/// had not been set.
 SongReference buildReference(PitchTrack track, List<LyricLine> lines,
-    {AlignOptions options = const AlignOptions(), LyricsLanguage? language}) {
+    {AlignOptions options = const AlignOptions(),
+    LyricsLanguage? language,
+    Map<(int, int), double> pins = const {},
+    Map<(int, int), double> hold = const {}}) {
   final lang = language ?? detectLyricsLanguage(lines);
   if (lines.isEmpty) return SongReference(lines: const [], duration: track.duration, language: lang);
-  return _ChainAligner(track, options, lang).run(lines);
+  final aligner = _ChainAligner(track, options, lang);
+  bool valid(MapEntry<(int, int), double> e) =>
+      e.key.$1 >= 0 &&
+      e.key.$1 < lines.length &&
+      e.key.$2 >= 0 &&
+      e.key.$2 < lines[e.key.$1].tokens.length &&
+      e.value >= 0 &&
+      e.value < track.duration;
+  final held = {for (final e in hold.entries) if (valid(e)) e.key: e.value};
+  final pinned = {for (final e in pins.entries) if (valid(e)) e.key: e.value};
+  if (held.isEmpty && pinned.isEmpty) return aligner.run(lines, const {})!;
+  return aligner.run(lines, _ordered(held, pinned, aligner.cellSeconds)) ??
+      (held.isEmpty ? null : aligner.run(lines, _ordered(held, const {}, aligner.cellSeconds))) ??
+      aligner.run(lines, const {})!;
+}
+
+/// The fixed starts in song order, each at least two grid cells after the
+/// one before; a user pin that breaks the order gives way to a held start.
+Map<(int, int), _Fixed> _ordered(Map<(int, int), double> held, Map<(int, int), double> pins, double cell) {
+  final all = <(int, int), _Fixed>{
+    for (final e in held.entries) e.key: _Fixed(e.value, user: false),
+    for (final e in pins.entries) e.key: _Fixed(e.value, user: true),
+  };
+  final keys = all.keys.toList()..sort((a, b) => a.$1 != b.$1 ? a.$1 - b.$1 : a.$2 - b.$2);
+  final out = <(int, int), _Fixed>{};
+  (int, int)? last;
+  for (final k in keys) {
+    final f = all[k]!;
+    final before = last == null ? null : out[last]!;
+    if (before == null || f.seconds >= before.seconds + 2 * cell) {
+      out[k] = f;
+      last = k;
+    } else if (!f.user && before.user) {
+      // A held start wins over a pin it conflicts with.
+      out.remove(last);
+      out[k] = f;
+      last = k;
+    }
+  }
+  return out;
+}
+
+/// A start kept fixed: set by the user ([user]) or held from before.
+class _Fixed {
+  const _Fixed(this.seconds, {required this.user});
+  final double seconds;
+  final bool user;
 }
 
 /// One syllable placed by the dynamic programme. A token is one or more
 /// consecutive units (an English word: one per syllable).
 class _Tok {
   _Tok(this.line, this.index, this.token, this.cls, this.weight, this.first, this.last,
-      {required this.lead, this.lineStop});
+      {required this.lead, this.lineStop, this.fixed});
   final int line;
 
   /// Index of the token in its line.
@@ -88,7 +147,11 @@ class _Tok {
   /// When the next line starts, or this one is marked to end; null for the
   /// last line without an end mark.
   final double? lineStop;
+
+  /// Where this unit must start (only a token's first unit).
+  final _Fixed? fixed;
   int lo = 0; // grid range [lo, hi)
+  int lineHi = 0; // end of its line's window
   int hi = 0;
   late Float64List dp;
   late Int32List back;
@@ -195,6 +258,7 @@ class _ChainAligner {
   int frameOf(double s) => (s / hop).round().clamp(0, t.length).toInt();
   int cellOf(double s) => (frameOf(s) / g).floor().clamp(0, _cells).toInt();
   double secOfCell(int c) => c * g * hop;
+  double get cellSeconds => g * hop;
 
   /// Seconds of unvoiced signal right before a voiced frame [j].
   double _gapBefore(int j) {
@@ -313,7 +377,8 @@ class _ChainAligner {
     return 0;
   }
 
-  SongReference run(List<LyricLine> lines) {
+  /// The reference, or null when the [fixed] starts leave no placement.
+  SongReference? run(List<LyricLine> lines, Map<(int, int), _Fixed> fixed) {
     final toks = <_Tok>[];
     final lineAvg = <double>[];
     final end = t.duration;
@@ -326,7 +391,7 @@ class _ChainAligner {
       final next = k + 1 < lines.length ? lines[k + 1].start : math.min(end, line.start + o.maxLastLine);
       var stop = line.end ?? next;
       if (stop > next) stop = next;
-      final lo = cellOf(math.max(0, line.start - o.earlySlack));
+      var lo = cellOf(math.max(0, line.start - o.earlySlack));
       final firstEnd = math.min(end, math.min(line.start + o.lateSlack, stop));
       final f0 = math.min(lo * g, t.length), f1 = frameOf(firstEnd);
       sung[k] = f1 > f0 && _voicedPrefix[f1] - _voicedPrefix[f0] >= (0.08 / hop).round();
@@ -335,8 +400,29 @@ class _ChainAligner {
       final units = syllables.fold<double>(0, (a, s) => a + s.fold<double>(0, (b, x) => b + x.$2));
       // A line cannot plausibly last much longer than ~1 s per syllable.
       final cap = line.start + 1.5 + units * 1.0;
-      final hi = math.max(lo + 1, cellOf(math.min(end, math.min(stop + o.lateSlack, cap))));
-      final firstHi = math.max(lo + 1, math.min(hi, cellOf(line.start + o.lateSlack) + 1));
+      var hi = math.max(lo + 1, cellOf(math.min(end, math.min(stop + o.lateSlack, cap))));
+      var firstHi = math.max(lo + 1, math.min(hi, cellOf(line.start + o.lateSlack) + 1));
+      // Fixed starts in this line: the user knows better than the time
+      // stamp, so the line gets room around them.
+      final fixedHere = [for (var i = 0; i < n; i++) if (fixed[(k, i)] != null) i];
+      var pinnedLate = false;
+      if (fixedHere.isNotEmpty) {
+        if (fixedHere.any((i) => fixed[(k, i)]!.user)) sung[k] = true;
+        var unitsBefore = 0;
+        for (var i = 0; i < fixedHere.first; i++) {
+          unitsBefore += syllables[i].length;
+        }
+        var unitsAfter = 0;
+        for (var i = fixedHere.last; i < n; i++) {
+          unitsAfter += syllables[i].length;
+        }
+        final c1 = cellOf(fixed[(k, fixedHere.first)]!.seconds), c2 = cellOf(fixed[(k, fixedHere.last)]!.seconds);
+        lo = math.min(lo, math.max(0, c1 - unitsBefore * cellOf(0.6) - 1));
+        hi = math.min(_cells, math.max(hi, c2 + unitsAfter * cellOf(1.0) + 1));
+        if (fixedHere.first > 0) firstHi = math.max(firstHi, c1 - unitsBefore + 1);
+        firstHi = math.min(firstHi, hi);
+        pinnedLate = fixedHere.any((i) => fixed[(k, i)]!.user && fixed[(k, i)]!.seconds > stop - 0.1);
+      }
       // Expected voiced seconds per syllable in this line. Its last syllable
       // is usually held, about as long as two: counted so, it does not make
       // every other character of the line expected longer.
@@ -344,14 +430,21 @@ class _ChainAligner {
       final voiced = (_voicedPrefix[v1] - _voicedPrefix[v0]) * hop;
       lineAvg.add((voiced / (units + 1)).clamp(0.12, 1.5).toDouble());
       if (!sung[k]) continue;
-      final lineStop = k + 1 < lines.length || line.end != null ? stop : null;
+      // A pin after the next line's time stamp says the stamp is wrong.
+      final lineStop = (k + 1 < lines.length || line.end != null) && !pinnedLate ? stop : null;
       for (var i = 0; i < n; i++) {
         final syl = syllables[i];
         for (var j = 0; j < syl.length; j++) {
+          final f = j == 0 ? fixed[(k, i)] : null;
           final tok = _Tok(k, i, line.tokens[i], syl[j].$1, syl[j].$2, i == 0 && j == 0,
-              i == n - 1 && j == syl.length - 1, lead: j == 0, lineStop: lineStop)
+              i == n - 1 && j == syl.length - 1, lead: j == 0, lineStop: lineStop, fixed: f)
             ..lo = lo
-            ..hi = i == 0 && j == 0 ? firstHi : hi;
+            ..hi = i == 0 && j == 0 ? firstHi : hi
+            ..lineHi = hi;
+          if (f != null) {
+            tok.lo = cellOf(f.seconds);
+            tok.hi = tok.lo + 1;
+          }
           toks.add(tok);
         }
       }
@@ -362,13 +455,23 @@ class _ChainAligner {
           duration: t.duration,
           language: language);
     }
-    // Keep the ranges feasible for a strictly increasing placement.
+    // Keep the ranges feasible for a strictly increasing placement. A fixed
+    // start is never moved: with no room around it, there is no placement.
     for (var m = 1; m < toks.length; m++) {
-      toks[m].lo = math.max(toks[m].lo, toks[m - 1].lo + 1);
+      final need = toks[m - 1].lo + 1;
+      if (toks[m].fixed != null) {
+        if (need > toks[m].lo) return null;
+      } else {
+        toks[m].lo = math.max(toks[m].lo, need);
+      }
     }
     for (var m = toks.length - 1; m >= 0; m--) {
       final cap = m + 1 < toks.length ? toks[m + 1].hi - 1 : _cells;
-      toks[m].hi = math.max(toks[m].lo + 1, math.min(toks[m].hi, cap));
+      if (toks[m].fixed != null) {
+        if (toks[m].hi > cap) return null;
+      } else {
+        toks[m].hi = math.max(toks[m].lo + 1, math.min(toks[m].hi, cap));
+      }
     }
 
     // Duration penalty tables per line and token length, indexed by voiced
@@ -468,7 +571,8 @@ class _ChainAligner {
     }
     // Close the last character at the end of its window.
     final last = toks.last;
-    final endCell = last.hi;
+    // A fixed last character still runs to the end of its line's window.
+    final endCell = last.fixed == null ? last.hi : math.max(last.hi, math.min(last.lineHi, _cells));
     var best = neg;
     var arg = -1;
     for (var c = last.lo; c < last.hi; c++) {
@@ -481,6 +585,7 @@ class _ChainAligner {
       }
     }
     final starts = List<int>.filled(toks.length, 0);
+    if (arg < 0 && fixed.isNotEmpty) return null;
     if (arg < 0) {
       // Infeasible (should not happen): fall back to the time stamps.
       for (var m = 0; m < toks.length; m++) {
@@ -494,7 +599,12 @@ class _ChainAligner {
       }
     }
 
-    // Build the reference.
+    // Build the reference. A fixed start is used to the frame.
+    int frameStart(int x) {
+      final f = toks[x].fixed;
+      return f == null ? starts[x] * g : frameOf(f.seconds);
+    }
+
     final out = <RefLine>[];
     var m = 0;
     for (var k = 0; k < lines.length; k++) {
@@ -511,9 +621,13 @@ class _ChainAligner {
           m++;
         }
         m++;
-        final s = starts[first] * g;
-        final e = m < toks.length ? starts[m] * g : endCell * g;
-        final (vs, ve) = _voicedExtent(s, math.max(s + 1, e));
+        final s = frameStart(first);
+        final e = m < toks.length ? frameStart(m) : endCell * g;
+        // A character the user placed takes the voice anywhere in its slot,
+        // however long the consonant or the silence before it.
+        final pin = toks[first].fixed;
+        final user = pin != null && pin.user;
+        final (vs, ve) = _voicedExtent(s, math.max(s + 1, e), anyLead: user);
         final notes = ve > vs ? _notes(vs, ve) : <RefNote>[];
         final onset = _onset(toks[first], starts[first]);
         refTokens.add(RefToken(
@@ -523,6 +637,7 @@ class _ChainAligner {
           notes: notes,
           spaceBefore: line.tokens[i].spaceBefore,
           confidence: notes.isEmpty ? 0 : (0.4 + onset / 6).clamp(0.0, 1.0).toDouble(),
+          pinned: user ? pin.seconds : null,
         ));
       }
       out.add(RefLine(
@@ -566,11 +681,11 @@ class _ChainAligner {
 
   /// The voiced part of a slot: from its first voiced frame (allowing for
   /// the consonant) through the voiced runs connected to it.
-  (int, int) _voicedExtent(int s, int e) {
+  (int, int) _voicedExtent(int s, int e, {bool anyLead = false}) {
     final n = t.length;
     e = math.min(e, n);
     var a = s;
-    final maxLead = (0.25 / hop).round();
+    final maxLead = anyLead ? e - s : (0.25 / hop).round();
     while (a < e && a - s < maxLead && !t.voiced(a)) {
       a++;
     }

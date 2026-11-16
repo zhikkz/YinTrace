@@ -35,6 +35,7 @@ import 'package:yintrace/src/ui/export_page.dart';
 import 'package:yintrace/src/ui/import_page.dart';
 import 'package:yintrace/src/ui/library_page.dart';
 import 'package:yintrace/src/ui/pitch_editor_page.dart';
+import 'package:yintrace/src/ui/pitch_graph.dart';
 import 'package:yintrace/src/ui/settings_page.dart';
 import 'package:yintrace/src/ui/practice_page.dart';
 import 'package:yintrace/src/ui/score_trend.dart';
@@ -190,7 +191,7 @@ void main() {
     expect(find.text('最近 82 分，比第一次高 8 分'), findsOneWidget);
     expect(find.byType(LineScoreSparkline), findsNWidgets(2));
     // Every line can be corrected.
-    expect(find.byTooltip('校正这一句的音高'), findsNWidgets(2));
+    expect(find.byTooltip('校正这一句'), findsNWidgets(2));
   });
 
   testWidgets('pitch editor moves a character, leaves it out of the score and restores it', (tester) async {
@@ -266,6 +267,70 @@ void main() {
     final restored = await stored();
     expect(restored.notes.first.midi, closeTo(detected, 1e-6));
     expect(restored.corrected, isFalse);
+    await tester.pumpWidget(const SizedBox());
+  }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
+
+  testWidgets('pitch editor sets where a character starts, and the rest of the line follows', (tester) async {
+    phone(tester);
+    await tester.pumpWidget(
+      host(
+        services,
+        PitchEditorPage(
+          songId: song.id,
+          line: 1,
+          decodeInBackground: false,
+          playerFactory: () => SegmentPlayer(
+            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+            configureSession: false,
+          ),
+        ),
+      ),
+    );
+    await settleIo(tester, rounds: 20);
+    Future<SongReference> stored() async => (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    final before = await stored();
+    final start = before.lines[1].tokens[4].start;
+    final firstLine = [for (final t in before.lines[0].tokens) (t.start, t.end, t.notes.length)];
+    await tester.tap(find.text('得'));
+    await tester.pump();
+    final shown = find.textContaining(RegExp(r'^从 \d+:\d\d\.\d\d 开始$'));
+    expect(shown, findsOneWidget);
+
+    // Two quick taps add up; the result is saved.
+    await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.byTooltip('推后 0.05 秒'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('推后 0.05 秒'));
+    await settleIo(tester, rounds: 20);
+    final moved = (await stored()).lines[1];
+    expect(moved.tokens[4].pinned, closeTo(start + 0.1, 1e-3));
+    // Its voice starts there (to the pitch frame, 5.8 ms), and the
+    // character before now ends there.
+    expect(moved.tokens[4].start, greaterThanOrEqualTo(moved.tokens[4].pinned! - 0.003));
+    expect(moved.tokens[3].end, lessThanOrEqualTo(moved.tokens[4].pinned! + 0.003));
+    expect(find.text('你调过'), findsOneWidget);
+    await screenshot(tester, '2c_pitch_editor_timing');
+    // The other line did not move.
+    expect([for (final t in (await stored()).lines[0].tokens) (t.start, t.end, t.notes.length)], firstLine);
+
+    // A long press on the graph puts the start of the selected character
+    // there.
+    await tester.scrollUntilVisible(find.text('带'), -200, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('带'));
+    await tester.pump();
+    await tester.longPress(find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter));
+    await settleIo(tester, rounds: 20);
+    expect((await stored()).lines[1].tokens[5].pinned, isNotNull);
+
+    // Restoring the line puts every character back where the aligner has it.
+    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('这一句全部恢复自动识别'));
+    await settleIo(tester, rounds: 20);
+    final restored = (await stored()).lines[1];
+    expect(restored.tokens.every((t) => t.pinned == null), isTrue);
+    expect(restored.tokens[4].start, closeTo(start, 1e-6));
+    expect(restored.tokens.any((t) => t.corrected), isFalse);
     await tester.pumpWidget(const SizedBox());
   }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
 
@@ -388,7 +453,7 @@ void main() {
     await tester.pumpWidget(host(services, SongPage(songId: meta.id)));
     await settleIo(tester, rounds: 30);
     expect(find.text('Morning comes over the river'), findsOneWidget);
-    expect(find.textContaining('哪个词的目标音不对'), findsOneWidget);
+    expect(find.textContaining('哪个词的位置或目标音不对'), findsOneWidget);
     await screenshot(tester, '2c_english_song');
     await tester.pumpWidget(const SizedBox());
   });

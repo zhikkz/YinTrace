@@ -101,7 +101,7 @@ class _SongPageState extends State<SongPage> {
             const SizedBox(height: 6),
             Text(
               '改完会用已经测好的音高重新对齐每个${_ref!.language.unit}，不需要重新分离人声。'
-              '${_ref!.corrected ? '没改动的句子里，你校正过的音高会保留。' : ''}',
+              '${_ref!.corrected ? '没改动的句子里，你校正过的位置和音高会保留。' : ''}',
               style: ctx.type.bodySmall,
             ),
             const SizedBox(height: 14),
@@ -176,7 +176,7 @@ class _SongPageState extends State<SongPage> {
                   _ => _delete(),
                 },
                 itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'pitch', child: Text('校正音高')),
+                  PopupMenuItem(value: 'pitch', child: Text('校正位置和音高')),
                   PopupMenuItem(value: 'edit', child: Text('修改歌词')),
                   PopupMenuItem(value: 'delete', child: Text('删除这首歌')),
                 ],
@@ -263,7 +263,7 @@ class _SongPageState extends State<SongPage> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-              child: Text('点任意一句，单独循环练这一句。哪个${ref.language.unit}的目标音不对，点那一句右边的笔校正。',
+              child: Text('点任意一句，单独循环练这一句。哪个${ref.language.unit}的位置或目标音不对，点那一句右边的笔校正。',
                   style: context.type.bodySmall),
             ),
           ),
@@ -313,7 +313,7 @@ class _SongPageState extends State<SongPage> {
                             ),
                           if (score != null) ScoreNumeral(score: score, size: 20),
                           IconButton(
-                            tooltip: '校正这一句的音高',
+                            tooltip: '校正这一句',
                             visualDensity: VisualDensity.compact,
                             icon: Icon(Icons.edit_rounded, size: 19, color: p.inkSoft),
                             onPressed: () => _correct(line.index),

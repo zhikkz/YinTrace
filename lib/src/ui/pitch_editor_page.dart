@@ -5,7 +5,9 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../analysis/corrections.dart';
+import '../analysis/lrc.dart';
 import '../analysis/lyrics_language.dart';
+import '../analysis/manual_timing.dart';
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../app/services.dart';
@@ -24,11 +26,21 @@ Float32List _decodeMono(String path) => const NativeAudioBackend().decode(path, 
 /// isolate's closure captures nothing but the path.
 Future<Float32List> decodeMonoInBackground(String path) => Isolate.run(() => _decodeMono(path));
 
-/// Fix the target pitch of single characters (or words) of a song: listen
-/// to the original singer and to the target note, move a character's notes
-/// by semitones or octaves, leave it out of the score, or give it a note
-/// where none was detected. Every change is saved at once; the detected
-/// melody can always be restored.
+/// [retimeLine] in a background isolate (top level for the same reason).
+Future<SongReference> retimeLineInBackground(
+  PitchTrack track,
+  List<LyricLine> lines,
+  SongReference current,
+  int line,
+  Map<int, double> pins,
+) => Isolate.run(() => retimeLine(track, lines, current, line, pins));
+
+/// Fix single characters (or words) of a song: listen to the original
+/// singer and to the target note; set where a character starts when the
+/// aligner put it in the wrong place (the rest of its line follows); move
+/// a character's notes by semitones or octaves, leave it out of the score,
+/// or give it a note where none was detected. Every change is saved at
+/// once; what was detected can always be restored.
 class PitchEditorPage extends StatefulWidget {
   const PitchEditorPage({
     super.key,
@@ -45,6 +57,8 @@ class PitchEditorPage extends StatefulWidget {
 
   /// For tests.
   final SegmentPlayer Function()? playerFactory;
+
+  /// Decode and align off the UI isolate (tests turn it off).
   final bool decodeInBackground;
 
   @override
@@ -59,6 +73,12 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
   late int _line = widget.line;
   int? _token;
   int _revision = 0;
+  List<LyricLine>? _lyricLines;
+
+  /// Lines waiting to be aligned again, with the pins asked for last.
+  final Map<int, Map<int, double>> _wanted = {};
+  Future<void>? _retimeQueue;
+  int _retimesQueued = 0;
   late final SegmentPlayer _player = widget.playerFactory?.call() ?? SegmentPlayer();
   Future<Float32List?>? _vocal;
   bool _loaded = false;
@@ -157,7 +177,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     if (ref == null) return;
     final line = ref.lines[_line];
     final tok = _selected;
-    final from = math.max(0.0, (tok?.start ?? line.start) - 0.12);
+    final from = math.max(0.0, (tok?.slotStart ?? line.start) - 0.12);
     final to = (tok?.end ?? line.end) + 0.25;
     Float32List? vocal;
     if (original) {
@@ -211,10 +231,90 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
   Future<void> _restoreLine() async {
     final ref = _ref;
     if (ref == null) return;
+    final line = _line;
+    final moved = ref.lines[line].tokens.any((t) => t.pinned != null);
     setState(() {
-      for (final t in ref.lines[_line].tokens) {
+      for (final t in ref.lines[line].tokens) {
         t.restore();
       }
+      _revision++;
+    });
+    await _save();
+    if (moved) await _retime(line, const {});
+  }
+
+  /// Back to what was detected for the selected token; one that was placed
+  /// by hand goes back to where the aligner puts it.
+  Future<void> _restoreToken() async {
+    final moved = _selected?.pinned != null;
+    final line = _line;
+    await _change((t) => t.restore());
+    if (moved) await _retime(line, _pinsOfLine(line));
+  }
+
+  Map<int, double> _pinsOfLine(int line) => {for (final (i, t) in _ref!.lines[line].tokens.indexed) i: ?t.pinned};
+
+  /// Where token [k] of the current line starts, counting a change that is
+  /// still being aligned (so that quick taps add up).
+  double _startOf(int k) => _wanted[_line]?[k] ?? _ref!.lines[_line].tokens[k].slotStart;
+
+  /// Sets where the selected token starts (within what its neighbours
+  /// allow) and aligns the rest of its line again around it.
+  Future<void> _setStart(double seconds) async {
+    final ref = _ref, k = _token;
+    if (ref == null || k == null || _track == null || _selected == null) return;
+    final (lo, hi) = pinRange(ref, _line, k);
+    final pin = seconds.clamp(lo, hi).toDouble();
+    if ((pin - _startOf(k)).abs() < 0.002) {
+      _snack(seconds < pin ? '再往前就碰到前面的$_unit了' : '再往后就碰到后面的$_unit了');
+      return;
+    }
+    await _retime(_line, {...(_wanted[_line] ?? _pinsOfLine(_line)), k: pin});
+  }
+
+  String get _unit => _ref?.language.unit ?? '字';
+
+  /// Aligns [line] again with [pins] (its pins from now on), the rest of the
+  /// song held. Requests are done one after another on the newest
+  /// reference, a line's newest pins only; the corrections are taken from
+  /// the reference as it is when the result arrives.
+  Future<void> _retime(int line, Map<int, double> pins) {
+    setState(() {
+      _wanted[line] = pins;
+      _retimesQueued++;
+    });
+    return _retimeQueue = (_retimeQueue ?? Future<void>.value()).then((_) async {
+      try {
+        await _retimeNow(line);
+      } finally {
+        if (mounted) setState(() => _retimesQueued--);
+      }
+    });
+  }
+
+  Future<void> _retimeNow(int line) async {
+    final pins = _wanted.remove(line);
+    final ref = _ref, track = _track, meta = _meta;
+    if (pins == null || !mounted || ref == null || track == null || meta == null) return;
+    final lines = _lyricLines ??= linesOfReference(ref, meta.lyrics);
+    SongReference fresh;
+    try {
+      fresh = widget.decodeInBackground
+          ? await retimeLineInBackground(track, lines, ref, line, pins)
+          : retimeLine(track, lines, ref, line, pins);
+    } catch (e) {
+      _snack('没能重新对齐：$e');
+      return;
+    }
+    if (!mounted) return;
+    if (pins.keys.any((i) => fresh.lines[line].tokens[i].pinned == null)) {
+      // No room for a pin there: nothing changes.
+      _snack('这里放不下，没有改');
+      return;
+    }
+    fresh.applyCorrectionsFrom(_ref!);
+    setState(() {
+      _ref = fresh;
       _revision++;
     });
     await _save();
@@ -247,7 +347,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     }
     if (ref.lines.isEmpty) {
       return Scaffold(
-        appBar: AppBar(title: const Text('校正音高')),
+        appBar: AppBar(title: const Text('校正')),
         body: const Center(child: Text('这首歌没有歌词')),
       );
     }
@@ -255,7 +355,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     final lineCorrected = line.tokens.any((t) => t.corrected);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('校正音高'),
+        title: const Text('校正'),
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_horiz_rounded),
@@ -269,7 +369,11 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
         children: [
-          Text('听一听原唱和目标音；不一样，就把目标音调到和原唱一样。改动马上保存，练习和打分都用改过的。', style: context.type.bodySmall),
+          Text(
+            '听一听原唱和目标音。哪个${ref.language.unit}的位置不对，调它开始的时间；音不对，就把目标音调到和原唱一样。'
+            '改动马上保存，练习和打分都用改过的。',
+            style: context.type.bodySmall,
+          ),
           const SizedBox(height: 14),
           Text('第 ${_line + 1} 句，共 ${ref.lines.length} 句', style: context.type.labelMedium),
           const SizedBox(height: 8),
@@ -341,6 +445,10 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
           }
           if (best >= 0) setState(() => _token = best);
         },
+        // Long press: the selected character starts here.
+        onLongPressStart: _track == null
+            ? null
+            : (d) => _setStart(t0 + (d.localPosition.dx - gutter) / (c.maxWidth - gutter) * (t1 - t0)),
         child: SizedBox(
           height: 230,
           child: CustomPaint(
@@ -355,12 +463,68 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
               style: PitchGraphStyle.of(context, language: ref.language),
               gutter: gutter,
               glyphSize: 15,
-              highlight: tok == null ? null : (tok.start, tok.end),
+              highlight: tok == null ? null : (tok.slotStart, tok.end),
               revision: _revision,
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// Where the selected token starts, and buttons to move it.
+  Widget _timing(BuildContext context, SongReference ref, RefLine line, RefToken tok) {
+    final p = context.yt;
+    final unit = ref.language.unit;
+    final k = line.tokens.indexOf(tok);
+    final start = _startOf(k);
+    final canMove = _track != null;
+    Widget nudge(IconData icon, String label, String tip, double by) => Expanded(
+      child: Tooltip(
+        message: tip,
+        child: OutlinedButton.icon(
+          onPressed: canMove ? () => _setStart(_startOf(k) + by) : null,
+          icon: Icon(icon, size: 18),
+          label: Text(label, style: TextStyle(fontFeatures: tabular)),
+          style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 4)),
+        ),
+      ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('从 ${_seconds(start)} 开始', style: context.type.titleSmall?.copyWith(fontFeatures: tabular)),
+            const SizedBox(width: 8),
+            if (tok.pinned != null || _wanted[_line]?[k] != null)
+              Text('你调过', style: context.type.labelSmall?.copyWith(color: p.inkSoft)),
+            const Spacer(),
+            if (_retimesQueued > 0)
+              const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            nudge(Icons.keyboard_double_arrow_left_rounded, '0.2', '提前 0.2 秒', -0.2),
+            const SizedBox(width: 6),
+            nudge(Icons.chevron_left_rounded, '0.05', '提前 0.05 秒', -0.05),
+            const SizedBox(width: 6),
+            nudge(Icons.chevron_right_rounded, '0.05', '推后 0.05 秒', 0.05),
+            const SizedBox(width: 6),
+            nudge(Icons.keyboard_double_arrow_right_rounded, '0.2', '推后 0.2 秒', 0.2),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          canMove
+              ? '原唱已经唱到这个$unit、这里还算在前一个$unit上时，把它提前；也可以长按上面的图，把它的开头放到那里。'
+                    '这一句其余的$unit会跟着重新对齐。'
+              : '读不到原唱的音高曲线，不能调整位置。',
+          style: context.type.bodySmall,
+        ),
+      ],
     );
   }
 
@@ -441,7 +605,9 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
               label: const Text('停止'),
             ),
           ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
+        _timing(context, ref, line, tok),
+        const SizedBox(height: 16),
         if (has)
           Row(
             children: [
@@ -472,7 +638,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
-              onPressed: () => _change((t) => t.restore()),
+              onPressed: _restoreToken,
               icon: const Icon(Icons.undo_rounded),
               label: const Text('恢复自动识别'),
             ),
@@ -480,6 +646,12 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
       ],
     );
   }
+}
+
+String _seconds(double s) {
+  final m = s ~/ 60;
+  final rest = s - m * 60;
+  return '$m:${rest.toStringAsFixed(2).padLeft(5, '0')}';
 }
 
 /// The line's characters as chips; tap one to edit it.

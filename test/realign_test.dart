@@ -3,6 +3,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yintrace/src/analysis/aligner.dart';
+import 'package:yintrace/src/analysis/lrc.dart';
 import 'package:yintrace/src/analysis/reference.dart';
 import 'package:yintrace/src/audio/audio_backend.dart';
 import 'package:yintrace/src/audio/wav.dart';
@@ -120,6 +122,25 @@ void main() {
       expect(history[0].coverage, closeTo(1, 1e-9));
       expect(wholeSongScores(history), [70]);
       expect((await repo.load(meta.id)).lyrics, first + rest);
+    });
+
+    test('a start set by hand stays with its line', () async {
+      // “灯” set 0.1 s late by hand, in the line that will move down.
+      var ref = await repo.loadReference(meta.id);
+      final lamp = ref.lines[0].tokens[3];
+      final pin = lamp.start + 0.1;
+      ref = buildReference(await repo.loadPitchTrack(meta.id), parseLrc(rest).lines, pins: {(0, 3): pin})
+        ..applyCorrectionsFrom(ref);
+      await repo.saveReference(meta.id, ref);
+      await realignSong(repo, meta.id, first + rest);
+      ref = await repo.loadReference(meta.id);
+      expect(ref.lines[1].tokens[3].text, '灯');
+      expect(ref.lines[1].tokens[3].pinned, pin);
+      expect(ref.lines[1].tokens[3].corrected, isTrue);
+      expect(ref.tokens.where((t) => t.pinned != null), hasLength(1));
+      // Rewritten, the line loses it.
+      await realignSong(repo, meta.id, '$first[00:05.00]远处的灯一盏一盏亮了\n[00:09.00]下雨了记得带伞\n');
+      expect((await repo.loadReference(meta.id)).tokens.where((t) => t.pinned != null), isEmpty);
     });
 
     test('a removed line takes its scores with it; a rewritten one starts over', () async {

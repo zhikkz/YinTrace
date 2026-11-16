@@ -26,8 +26,9 @@ class RefNote {
 ///
 /// The user can correct a token's pitch: [shift] moves its detected notes
 /// (they already include it), [skip] leaves it out of the score, and
-/// [manual] marks notes the user added where none were detected. The
-/// detected melody can always be restored.
+/// [manual] marks notes the user added where none were detected. Where the
+/// aligner put the token in the wrong place, [pinned] holds the start the
+/// user set instead. The detected melody can always be restored.
 class RefToken {
   RefToken({
     required this.text,
@@ -39,6 +40,7 @@ class RefToken {
     this.shift = 0,
     this.skip = false,
     this.manual = false,
+    this.pinned,
   });
 
   final String text;
@@ -61,6 +63,11 @@ class RefToken {
   /// The notes were added by the user.
   bool manual;
 
+  /// The start the user set for this token (seconds), or null where the
+  /// aligner placed it. Its notes are the voice from there to the next
+  /// token, so [start] is where that voice begins.
+  double? pinned;
+
   double get duration => end - start;
   bool get hasPitch => notes.isNotEmpty;
 
@@ -68,7 +75,10 @@ class RefToken {
   bool get scored => !skip && notes.isNotEmpty;
 
   /// Whether the user changed anything about this token.
-  bool get corrected => shift != 0 || skip || manual;
+  bool get corrected => shift != 0 || skip || manual || pinned != null;
+
+  /// Where the user's or the aligner's slot for this token begins.
+  double get slotStart => pinned ?? start;
 
   /// Moves every note by [semitones].
   void transpose(double semitones) {
@@ -78,7 +88,8 @@ class RefToken {
     if (!manual) shift += semitones;
   }
 
-  /// Back to the detected melody.
+  /// Back to the detected melody. A pinned token also needs aligning again
+  /// to go back to where the aligner puts it.
   void restore() {
     if (manual) {
       notes = [];
@@ -90,6 +101,7 @@ class RefToken {
     shift = 0;
     skip = false;
     manual = false;
+    pinned = null;
   }
 
   /// Copies the corrections of [other] (the same token in an earlier
@@ -131,6 +143,7 @@ class RefToken {
         if (shift != 0 && !manual) 'sh': _r(shift, 100),
         if (skip) 'skip': true,
         if (manual) 'man': true,
+        if (pinned != null) 'pin': _r(pinned!),
       };
 
   factory RefToken.fromJson(Map<String, dynamic> j) {
@@ -149,6 +162,7 @@ class RefToken {
       shift: shift,
       skip: j['skip'] == true,
       manual: manual,
+      pinned: (j['pin'] as num?)?.toDouble(),
     );
   }
 
