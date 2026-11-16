@@ -8,6 +8,7 @@ import 'package:yintrace/src/analysis/aligner.dart';
 import 'package:yintrace/src/analysis/lrc.dart';
 import 'package:yintrace/src/analysis/manual_timing.dart';
 import 'package:yintrace/src/analysis/reference.dart';
+import 'package:yintrace/src/ui/pitch_editor_page.dart' show retimeLineInBackground;
 
 import 'support/hand_track.dart';
 
@@ -99,6 +100,49 @@ void main() {
     expect(early.tokens.any((t) => t.pinned != null), isFalse);
     // Outside the song.
     expect(_startsOf(buildReference(_track, _lines, pins: {(2, 0): 99})), _startsOf(plain));
+  });
+
+  test('of two pins, only the one without room is dropped', () {
+    final both = buildReference(_track, _lines, pins: {(1, 0): 3.80, (0, 2): 0.001});
+    expect(_startsOf(both), _startsOf(buildReference(_track, _lines, pins: {(1, 0): 3.80})));
+    expect(both.lines[1].tokens[0].pinned, 3.80);
+    expect(both.lines[0].tokens[2].pinned, isNull);
+  });
+
+  test('the re-alignment the phone runs in the background gives the same result', () async {
+    final plain = buildReference(_track, _lines);
+    final lines = linesOfReference(plain, _lyrics);
+    final here = retimeLine(_track, lines, plain, 1, {0: 3.80});
+    final there = await retimeLineInBackground(_track, lines, plain, 1, {0: 3.80});
+    expect(jsonEncode(there.toJson()), jsonEncode(here.toJson()));
+    _expectOnTime(there);
+  });
+
+  test('a line left unsung does not unsettle the line after it', () {
+    // The middle line's stamp finds no voice: its characters are spread
+    // evenly from it, the last one past where the next line really starts.
+    const chars = [
+      HandChar(1.00, 1.30, 60, gap: 0.3),
+      HandChar(1.40, 1.70, 62, gap: 0.08),
+      HandChar(1.80, 2.40, 64, gap: 0.08),
+      HandChar(6.00, 6.30, 62, gap: 0.5),
+      HandChar(6.40, 7.00, 60, gap: 0.08),
+    ];
+    const lyrics = '[00:00.95]春天好\n[00:05.00]草地上花开\n[00:06.50]是谁';
+    final track = handTrack(chars, 8);
+    final lines = parseLrc(lyrics).lines;
+    // As an older version might have left it: “是” 0.1 s late.
+    final old = buildReference(track, lines, pins: {(2, 0): 6.1});
+    old.lines[2].tokens[0].pinned = null;
+    expect(old.lines[1].tokens.every((t) => t.notes.isEmpty), isTrue);
+    expect(old.lines[1].tokens.last.start, greaterThan(old.lines[2].tokens.first.start));
+    final edited = retimeLine(track, linesOfReference(old, lyrics), old, 0, {1: 1.40});
+    for (final (i, t) in old.lines[2].tokens.indexed) {
+      final u = edited.lines[2].tokens[i];
+      expect(u.start, closeTo(t.start, 1e-6), reason: 'token $i');
+      expect(u.end, closeTo(t.end, 1e-6), reason: 'token $i');
+    }
+    expect(edited.lines[0].tokens[2].start, closeTo(1.8, 0.03));
   });
 
   test('a character pinned before a silence takes the voice after it', () {

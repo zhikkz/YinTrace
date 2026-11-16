@@ -84,8 +84,20 @@ SongReference buildReference(PitchTrack track, List<LyricLine> lines,
   final held = {for (final e in hold.entries) if (valid(e)) e.key: e.value};
   final pinned = {for (final e in pins.entries) if (valid(e)) e.key: e.value};
   if (held.isEmpty && pinned.isEmpty) return aligner.run(lines, const {})!;
-  return aligner.run(lines, _ordered(held, pinned, aligner.cellSeconds)) ??
-      (held.isEmpty ? null : aligner.run(lines, _ordered(held, const {}, aligner.cellSeconds))) ??
+  // A pin that leaves no room goes, the nearest one before where the
+  // placement failed; the others stay.
+  final left = Map.of(pinned);
+  for (;;) {
+    final r = aligner.run(lines, _ordered(held, left, aligner.cellSeconds));
+    if (r != null) return r;
+    final at = aligner.blocked;
+    if (at == null || left.isEmpty) break;
+    int order((int, int) k) => k.$1 * 100000 + k.$2;
+    final keys = left.keys.toList()..sort((a, b) => order(a) - order(b));
+    final before = keys.where((k) => order(k) <= order(at));
+    left.remove(before.isNotEmpty ? before.last : keys.first);
+  }
+  return (held.isEmpty ? null : aligner.run(lines, _ordered(held, const {}, aligner.cellSeconds))) ??
       aligner.run(lines, const {})!;
 }
 
@@ -260,6 +272,10 @@ class _ChainAligner {
   double secOfCell(int c) => c * g * hop;
   double get cellSeconds => g * hop;
 
+  /// Where the last [run] found no placement: the (line, token) of the
+  /// fixed start it could not keep.
+  (int, int)? blocked;
+
   /// Seconds of unvoiced signal right before a voiced frame [j].
   double _gapBefore(int j) {
     final voicedHere = t.voiced(j) || (j + 1 < t.length && t.voiced(j + 1));
@@ -343,9 +359,10 @@ class _ChainAligner {
       // consonant, often the note); the middle of a held note does not. In
       // sung Mandarin most such starts change it by well over the usual
       // amount, few places inside a character do, and a start where
-      // nothing changes counts against it. (A big pitch step inside a
-      // character changes it too, so this does not tell a turn from a new
-      // character.)
+      // nothing changes counts against it. A turn inside a character
+      // changes it too, but mostly less: of a character boundary with a
+      // change of note and a note change inside a character, the boundary
+      // changes the sound more three times in four.
       s += ((change[c] - 1.8 * _usualChange) / (0.8 * _usualChange)).clamp(-1.0, 1.0);
     }
     if (pause) s = gap > 0 ? s * 1.5 + 1 : s - 1;
@@ -379,6 +396,7 @@ class _ChainAligner {
 
   /// The reference, or null when the [fixed] starts leave no placement.
   SongReference? run(List<LyricLine> lines, Map<(int, int), _Fixed> fixed) {
+    blocked = null;
     final toks = <_Tok>[];
     final lineAvg = <double>[];
     final end = t.duration;
@@ -460,7 +478,10 @@ class _ChainAligner {
     for (var m = 1; m < toks.length; m++) {
       final need = toks[m - 1].lo + 1;
       if (toks[m].fixed != null) {
-        if (need > toks[m].lo) return null;
+        if (need > toks[m].lo) {
+          blocked = (toks[m].line, toks[m].index);
+          return null;
+        }
       } else {
         toks[m].lo = math.max(toks[m].lo, need);
       }
@@ -468,7 +489,10 @@ class _ChainAligner {
     for (var m = toks.length - 1; m >= 0; m--) {
       final cap = m + 1 < toks.length ? toks[m + 1].hi - 1 : _cells;
       if (toks[m].fixed != null) {
-        if (toks[m].hi > cap) return null;
+        if (toks[m].hi > cap) {
+          blocked = (toks[m].line, toks[m].index);
+          return null;
+        }
       } else {
         toks[m].hi = math.max(toks[m].lo + 1, math.min(toks[m].hi, cap));
       }
@@ -568,6 +592,16 @@ class _ChainAligner {
         cur.dp[c - cur.lo] = best + s;
         cur.back[c - cur.lo] = arg;
       }
+      if (fixed.isNotEmpty && !cur.dp.any((v) => v > neg / 2)) {
+        // No way to reach this unit: blame the fixed start that hems it in.
+        var f = m;
+        while (f < toks.length && toks[f].fixed == null) {
+          f++;
+        }
+        if (f == toks.length) f = m;
+        blocked = (toks[f].line, toks[f].index);
+        return null;
+      }
     }
     // Close the last character at the end of its window.
     final last = toks.last;
@@ -585,7 +619,11 @@ class _ChainAligner {
       }
     }
     final starts = List<int>.filled(toks.length, 0);
-    if (arg < 0 && fixed.isNotEmpty) return null;
+    if (arg < 0 && fixed.isNotEmpty) {
+      final f = toks.lastIndexWhere((t) => t.fixed != null);
+      blocked = f < 0 ? null : (toks[f].line, toks[f].index);
+      return null;
+    }
     if (arg < 0) {
       // Infeasible (should not happen): fall back to the time stamps.
       for (var m = 0; m < toks.length; m++) {
