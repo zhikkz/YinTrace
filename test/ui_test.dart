@@ -605,7 +605,7 @@ void main() {
     // page shows only that, and coming back keeps what was typed.
     await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
     await tester.pump(const Duration(milliseconds: 500));
-    await tester.tap(find.text('YinTrace 文件'));
+    await tester.tap(find.text('导入yintrace文件'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('导入 YinTrace 歌曲文件'), findsOneWidget);
@@ -615,7 +615,7 @@ void main() {
     expect(find.text('去和声'), findsNothing);
     expect(find.widgetWithText(FilledButton, '分离人声，生成音高图'), findsNothing);
     await screenshot(tester, '5b_import_song_file');
-    await tester.tap(find.text('音频文件'));
+    await tester.tap(find.text('添加新歌曲'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('导入 YinTrace 歌曲文件'), findsNothing);
@@ -679,7 +679,7 @@ void main() {
     String? picked = '${tmp.path}/vocal.wav';
     await tester.pumpWidget(host(services, ImportPage(pickSongFile: () async => picked, background: false)));
     await tester.pump();
-    await tester.tap(find.text('YinTrace 文件'));
+    await tester.tap(find.text('导入yintrace文件'));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.widgetWithText(FilledButton, '选择 YinTrace 文件'));
     await settleIo(tester, rounds: 5);

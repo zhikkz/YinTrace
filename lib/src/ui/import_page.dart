@@ -351,8 +351,8 @@ class _ImportPageState extends State<ImportPage> {
           child: SegmentedButton<_ImportSource>(
             showSelectedIcon: false,
             segments: const [
-              ButtonSegment(value: _ImportSource.audio, label: Text('音频文件')),
-              ButtonSegment(value: _ImportSource.songFile, label: Text('YinTrace 文件')),
+              ButtonSegment(value: _ImportSource.audio, label: Text('添加新歌曲')),
+              ButtonSegment(value: _ImportSource.songFile, label: Text('导入yintrace文件')),
             ],
             selected: {_source},
             onSelectionChanged: (v) => setState(() {
