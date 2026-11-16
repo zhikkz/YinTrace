@@ -269,7 +269,7 @@ class _ImportPageState extends State<ImportPage> {
             : SafeArea(
                 minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
                 child: _source == _ImportSource.songFile
-                    ? FilledButton(onPressed: _importSongFile, child: const Text('选择歌曲文件'))
+                    ? FilledButton(onPressed: _importSongFile, child: const Text('选择 YinTrace 文件'))
                     : FilledButton(
                         onPressed: canStart ? _start : null,
                         child: Text(_vocalsOnly ? '生成逐字音高图' : '分离人声，生成音高图'),
@@ -354,8 +354,8 @@ class _ImportPageState extends State<ImportPage> {
           child: SegmentedButton<_ImportSource>(
             showSelectedIcon: false,
             segments: const [
-              ButtonSegment(value: _ImportSource.audio, label: Text('从音频生成')),
-              ButtonSegment(value: _ImportSource.songFile, label: Text('别人发来的文件')),
+              ButtonSegment(value: _ImportSource.audio, label: Text('添加新歌曲')),
+              ButtonSegment(value: _ImportSource.songFile, label: Text('导入yintrace文件')),
             ],
             selected: {_source},
             onSelectionChanged: (v) => setState(() {
@@ -392,12 +392,12 @@ class _ImportPageState extends State<ImportPage> {
         child: Icon(Icons.inbox_rounded, size: 32, color: p.inkSoft),
       ),
       const SizedBox(height: 12),
-      Text('导入别人发来的歌曲文件', style: context.type.titleLarge),
+      Text('导入 YinTrace 歌曲文件', style: context.type.titleLarge),
       const SizedBox(height: 8),
-      Text('对方在 YinTrace 的歌曲页菜单里点“发给别人”，就能导出 .yintrace 文件发给你。', style: context.type.bodyMedium),
+      Text('在 YinTrace 的歌曲页菜单里点“发给别人”，即可导出 .yintrace 文件，用于分享或再次导入。', style: context.type.bodyMedium),
       const SizedBox(height: 8),
       Text(
-        '文件里已经有分离好的人声和伴奏、歌词和音高图：不用下载模型，也不用再分离，导入后就能练。',
+        '文件中已保存人声、歌词和音高图等练习内容，无需下载模型或重新分离，导入后即可练习。',
         style: context.type.bodyMedium,
       ),
     ];
