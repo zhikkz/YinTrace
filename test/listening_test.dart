@@ -1,6 +1,7 @@
 // Listening to the original singer and to the take, and switching between
 // them, with the real native engine in offline mode.
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -108,6 +109,106 @@ void main() {
     expect(session.reviewing, isFalse);
     expect(session.engine!.positionSeconds, closeTo(session.reference.lines[0].start - 1.0, 0.02));
     expect(session.scorer.lineResult(0).score, line0);
+  }, skip: lib == null);
+
+  test('replaying the take works after playback reaches the end of the song', () {
+    session.play();
+    run(20);
+    expect(session.finished, isTrue);
+    session.finished = false;
+
+    // With real-device audio latency > 100 ms, `position` stays more than
+    // 50 ms short of the track end even after playback reaches it.
+    session.settings.latencyOffsetMs = 140;
+    session.applyMix();
+
+    session.listenBack();
+    final e = session.engine!;
+    expect(session.listening, ListenKind.take);
+    expect(session.isPlaying, isTrue);
+
+    var ticksNotified = 0;
+    void count() => ticksNotified++;
+    session.addListener(count);
+    var stoppedTickNotified = false;
+    for (var n = 0; n < 20 * sr && e.isPlaying; n += 512) {
+      e.render(512, input: Float32List(512));
+      ticksNotified = 0;
+      final justStopped = !e.isPlaying;
+      session.tick();
+      if (justStopped) stoppedTickNotified = ticksNotified > 0;
+    }
+    expect(e.isPlaying, isFalse);
+    expect(e.positionSeconds, closeTo(e.lengthSeconds, 0.01));
+    expect(session.position, lessThan(e.lengthSeconds - 0.05));
+    expect(stoppedTickNotified, isTrue);
+    ticksNotified = 0;
+    for (var i = 0; i < 5; i++) {
+      session.tick();
+    }
+    expect(ticksNotified, 0);
+    session.removeListener(count);
+
+    // Pressing play again rewinds to the start of the take and renders audio.
+    session.togglePlay();
+    expect(session.isPlaying, isTrue);
+    final startFrame = e.positionFrame;
+    expect(startFrame / sr, lessThan(1.0));
+    var peak = 0.0;
+    for (var i = 0; i < 200 && e.isPlaying; i++) {
+      final out = e.render(512, input: Float32List(512));
+      for (final s in out) {
+        if (s.abs() > peak) peak = s.abs();
+      }
+      if (e.positionSeconds >= 2.0) break;
+    }
+    expect(e.isPlaying, isTrue);
+    expect(e.positionFrame, greaterThan(startFrame + 2048));
+    expect(peak, greaterThan(0.05));
+
+    // Leaving listening right after hitting the end (before tick() runs) must
+    // not carry the review endCount into practice and mark the run finished.
+    for (var n = 0; n < 20 * sr && e.isPlaying; n += 512) {
+      e.render(512, input: Float32List(512));
+    }
+    expect(e.isPlaying, isFalse);
+    session.stopListening();
+    session.tick();
+    expect(session.reviewing, isFalse);
+    expect(session.finished, isFalse);
+  }, skip: lib == null);
+
+  test('listening back to a line before the end notifies once on pause and replays', () {
+    session.play();
+    run(5.5);
+    session.listenBack(line: 0);
+    final e = session.engine!;
+    var ticksNotified = 0;
+    void count() => ticksNotified++;
+    session.addListener(count);
+    var pauseTickNotified = false;
+    for (var n = 0; n < 20 * sr && e.isPlaying; n += 512) {
+      e.render(512, input: Float32List(512));
+      ticksNotified = 0;
+      session.tick();
+      if (!e.isPlaying) pauseTickNotified = ticksNotified > 0;
+    }
+    expect(e.isPlaying, isFalse);
+    expect(pauseTickNotified, isTrue);
+    ticksNotified = 0;
+    for (var i = 0; i < 5; i++) {
+      session.tick();
+    }
+    expect(ticksNotified, 0);
+    session.removeListener(count);
+
+    session.togglePlay();
+    expect(session.isPlaying, isTrue);
+    expect(e.positionSeconds, closeTo(math.max(0.0, session.reference.lines[0].start - 1.2), 0.02));
+    final startFrame = e.positionFrame;
+    e.render(2048, input: Float32List(2048));
+    expect(session.isPlaying, isTrue);
+    expect(e.positionFrame, startFrame + 2048);
   }, skip: lib == null);
 
   test('the pitch editor plays again after the output was lost', () {
