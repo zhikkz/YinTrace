@@ -10,35 +10,9 @@ import 'package:yintrace/src/analysis/aligner.dart';
 import 'package:yintrace/src/analysis/lrc.dart';
 import 'package:yintrace/src/analysis/pitch_track.dart';
 
-/// The frame step of [analyzePitch].
-const _hop = 128 / 22050;
+import 'support/hand_track.dart';
 
-/// One sung character: voiced from [start] to [end] at [midi] ([midi2] from
-/// [split] on), after [gap] seconds of a voiceless consonant. A level dip
-/// of [dip] dB at its start stands for a voiced consonant (m, n, l, r).
-class _Char {
-  const _Char(this.start, this.end, this.midi, {this.gap = 0, this.midi2, this.split, this.dip = 0});
-  final double start, end, midi, gap, dip;
-  final double? midi2, split;
-}
-
-PitchTrack _render(List<_Char> chars, double seconds, {double hop = _hop}) {
-  final n = (seconds / hop).ceil();
-  final midi = Float32List(n), db = Float32List(n)..fillRange(0, n, -100);
-  for (var f = 0; f < n; f++) {
-    final t = f * hop;
-    for (final c in chars) {
-      if (t >= c.start - c.gap && t < c.start) db[f] = -45;
-      if (t < c.start || t >= c.end) continue;
-      var m = c.midi2 != null && t >= c.split! ? c.midi2! : c.midi;
-      // A little vibrato on held notes, as singers do.
-      if (t - c.start > 0.2) m += 0.3 * math.sin(2 * math.pi * 5.5 * (t - c.start));
-      midi[f] = m;
-      db[f] = -20 - (t - c.start < 0.05 ? c.dip * (1 - (t - c.start) / 0.05) : 0);
-    }
-  }
-  return PitchTrack(hopSeconds: hop, midi: midi, rmsDb: db, aperiodicity: Float32List(n));
-}
+const _hop = handHop;
 
 List<double> _starts(PitchTrack track, String lyrics) =>
     [for (final t in buildReference(track, parseLrc(lyrics).lines).tokens) t.start];
@@ -154,20 +128,20 @@ void main() {
     // used to slide onto the consonant gaps after them, and every
     // character up to the end of the line moved one place late.
     const chars = [
-      _Char(1.00, 1.25, 57, gap: 0.09), // 春
-      _Char(1.33, 1.60, 59, gap: 0.08), // 天
-      _Char(1.60, 1.85, 59), // 里
-      _Char(1.85, 2.25, 59, midi2: 61, split: 2.05), // 绿
-      _Char(2.34, 2.75, 61, gap: 0.09), // 草
-      _Char(2.75, 2.97, 61), // 与
-      _Char(2.97, 3.12, 61), // 鸟
-      _Char(3.22, 3.40, 60, gap: 0.1), // 声
-      _Char(3.47, 3.62, 57, gap: 0.07), // 都
-      _Char(3.70, 3.88, 61, gap: 0.08), // 是
-      _Char(3.88, 4.36, 66, midi2: 68, split: 4.10), // 明
-      _Char(4.36, 4.85, 66), // 亮
+      HandChar(1.00, 1.25, 57, gap: 0.09), // 春
+      HandChar(1.33, 1.60, 59, gap: 0.08), // 天
+      HandChar(1.60, 1.85, 59), // 里
+      HandChar(1.85, 2.25, 59, midi2: 61, split: 2.05), // 绿
+      HandChar(2.34, 2.75, 61, gap: 0.09), // 草
+      HandChar(2.75, 2.97, 61), // 与
+      HandChar(2.97, 3.12, 61), // 鸟
+      HandChar(3.22, 3.40, 60, gap: 0.1), // 声
+      HandChar(3.47, 3.62, 57, gap: 0.07), // 都
+      HandChar(3.70, 3.88, 61, gap: 0.08), // 是
+      HandChar(3.88, 4.36, 66, midi2: 68, split: 4.10), // 明
+      HandChar(4.36, 4.85, 66), // 亮
     ];
-    final got = _starts(_render(chars, 6), '[00:00.90]春天里绿草与鸟声都是明亮');
+    final got = _starts(handTrack(chars, 6), '[00:00.90]春天里绿草与鸟声都是明亮');
     for (final k in [0, 1, 4, 7, 8, 9, 10]) {
       expect(got[k], closeTo(chars[k].start, 0.03), reason: 'character $k');
     }
@@ -180,12 +154,12 @@ void main() {
   test('a faint level dip marks a character that starts with m, n, l or r', () {
     // “木兰明媚” sung on one pitch, each character after a 1.5 dB dip.
     const chars = [
-      _Char(1.0, 1.5, 62, gap: 0.3),
-      _Char(1.5, 2.0, 62, dip: 1.5),
-      _Char(2.0, 2.5, 62, dip: 1.5),
-      _Char(2.5, 3.3, 62, dip: 1.5),
+      HandChar(1.0, 1.5, 62, gap: 0.3),
+      HandChar(1.5, 2.0, 62, dip: 1.5),
+      HandChar(2.0, 2.5, 62, dip: 1.5),
+      HandChar(2.5, 3.3, 62, dip: 1.5),
     ];
-    final got = _starts(_render(chars, 5), '[00:00.95]木兰明媚');
+    final got = _starts(handTrack(chars, 5), '[00:00.95]木兰明媚');
     for (var k = 0; k < chars.length; k++) {
       expect(got[k], closeTo(chars[k].start, 0.03), reason: 'character $k');
     }
@@ -195,15 +169,15 @@ void main() {
     // A 0.45 s breath before the fourth character, with no space in the
     // lyrics to say so.
     const chars = [
-      _Char(1.00, 1.40, 60, gap: 0.1),
-      _Char(1.48, 1.90, 62, gap: 0.08),
-      _Char(1.98, 2.80, 64, gap: 0.08),
-      _Char(3.25, 3.60, 65, gap: 0.45),
-      _Char(3.68, 4.00, 64, gap: 0.08),
-      _Char(4.08, 4.90, 62, gap: 0.08),
+      HandChar(1.00, 1.40, 60, gap: 0.1),
+      HandChar(1.48, 1.90, 62, gap: 0.08),
+      HandChar(1.98, 2.80, 64, gap: 0.08),
+      HandChar(3.25, 3.60, 65, gap: 0.45),
+      HandChar(3.68, 4.00, 64, gap: 0.08),
+      HandChar(4.08, 4.90, 62, gap: 0.08),
     ];
     for (final lyrics in ['[00:00.90]心底的爱情深', '[00:00.90]心底的看情深']) {
-      final got = _starts(_render(chars, 6), lyrics);
+      final got = _starts(handTrack(chars, 6), lyrics);
       for (var k = 0; k < chars.length; k++) {
         expect(got[k], closeTo(chars[k].start, 0.03), reason: '$lyrics: character $k');
       }
