@@ -19,7 +19,7 @@ class DownloadCancelled implements Exception {
 }
 
 /// Downloads a large file to disk, resuming a partial download when the
-/// server supports range requests (GitHub release assets do).
+/// server supports range requests (both download routes do).
 class ResumableDownload {
   ResumableDownload({HttpClient? client, this.idleTimeout = const Duration(seconds: 30)})
       : _client = client ??
@@ -52,6 +52,11 @@ class ResumableDownload {
   /// With [minBytesPerSecond], a transfer that stays slower than that over
   /// [slowWindow] gives up with [ModelDownloadException] (so that another
   /// route can be tried); the partial file is kept.
+  ///
+  /// With [stayOnSite], a permanent redirect (301 or 308) to another host
+  /// is not followed and gives up the same way: the site does not serve the
+  /// file here but hands the request on (hf-mirror.com does, to
+  /// huggingface.co, where it takes the request for one from abroad).
   Future<void> fetch(
     Uri url,
     File partFile, {
@@ -59,6 +64,7 @@ class ResumableDownload {
     void Function(int received)? onProgress,
     int minBytesPerSecond = 0,
     Duration slowWindow = const Duration(seconds: 30),
+    bool stayOnSite = false,
   }) async {
     _cancelled = false;
     var have = partFile.existsSync() ? partFile.lengthSync() : 0;
@@ -72,7 +78,7 @@ class ResumableDownload {
     }
     HttpClientResponse response;
     try {
-      response = await _open(url, have);
+      response = await _open(url, have, stayOnSite);
     } on DownloadCancelled {
       rethrow;
     } on ModelDownloadException {
@@ -92,6 +98,7 @@ class ResumableDownload {
         onProgress: onProgress,
         minBytesPerSecond: minBytesPerSecond,
         slowWindow: slowWindow,
+        stayOnSite: stayOnSite,
       );
     }
     if (response.statusCode == HttpStatus.ok) {
@@ -189,7 +196,7 @@ class ResumableDownload {
 
   /// Sends the request, following redirects by hand so that the Range header
   /// reaches the final host.
-  Future<HttpClientResponse> _open(Uri url, int from) async {
+  Future<HttpClientResponse> _open(Uri url, int from, bool stayOnSite) async {
     var current = url;
     for (var hop = 0; hop < 6; hop++) {
       if (_cancelled) throw const DownloadCancelled();
@@ -199,13 +206,19 @@ class ResumableDownload {
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
       if (from > 0) request.headers.set(HttpHeaders.rangeHeader, 'bytes=$from-');
       final response = await request.close().timeout(idleTimeout);
-      // Every redirect, including 308 (hf-mirror.com outside China), which
-      // HttpClientResponse.isRedirect does not count on every SDK.
+      // Every redirect, including 308, which HttpClientResponse.isRedirect
+      // does not count on every SDK.
       if (response.statusCode >= 300 && response.statusCode < 400 && response.statusCode != HttpStatus.notModified) {
         final location = response.headers.value(HttpHeaders.locationHeader);
         await response.drain<void>();
         if (location == null) throw ModelDownloadException('下载地址无效');
-        current = current.resolve(location);
+        final target = current.resolve(location);
+        final permanent = response.statusCode == HttpStatus.movedPermanently ||
+            response.statusCode == HttpStatus.permanentRedirect;
+        if (stayOnSite && permanent && target.host.toLowerCase() != url.host.toLowerCase()) {
+          throw ModelDownloadException('这条线路在这里不能用（转到了 ${target.host}）');
+        }
+        current = target;
         continue;
       }
       return response;

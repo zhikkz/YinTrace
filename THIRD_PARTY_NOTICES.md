@@ -18,9 +18,10 @@ Trained and published by the developers of Ultimate Vocal Remover,
 [Anjok07](https://github.com/anjok07) and [aufr33](https://github.com/aufr33).
 
 - The models are **not redistributed** by this project. The app downloads the
-  original files from UVR's official model repository
-  (`https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/`)
-  and checks their SHA-256.
+  original files and checks their SHA-256: from a copy of UVR's public models
+  on Hugging Face (`Blane187/all_public_uvr_models`, through hf-mirror.com)
+  or, when that does not work, from UVR's official model repository
+  (`https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/`).
 - UVR's README says: "For all third-party application developers who wish to
   use our models, please honor the MIT license by providing credit to UVR and
   its developers." YinTrace credits them in the app, in the model download
