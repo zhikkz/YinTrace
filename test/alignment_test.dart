@@ -150,6 +150,19 @@ void main() {
       expect(_starts(track, marked(scrambled)), _starts(track, _issueLyrics));
     });
 
+    test('give way to a start set by hand', () {
+      // The user put the last character 0.3 s after its word time: it
+      // stays there, and its line is aligned by the voice alone.
+      final track = _issueExample('weak');
+      final lines = parseLrc(marked(_issueTruth)).lines;
+      final r = buildReference(track, lines, pins: {(0, 5): 3.3});
+      expect(r.lines[0].tokens[5].pinned, 3.3);
+      expect(r.lines[0].tokens[5].slotStart, 3.3);
+      for (var k = 0; k < 2; k++) {
+        expect(r.lines[1].tokens[k].start, closeTo(_issueTruth[6 + k], 0.03));
+      }
+    });
+
     test('that agree with the voice where nothing else marks a start', () {
       // The weak boundary, held twice as long: the durations put it at
       // 3.04 s, the word time puts it right.

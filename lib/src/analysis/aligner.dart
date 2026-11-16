@@ -136,31 +136,44 @@ SongReference buildReference(PitchTrack track, List<LyricLine> lines,
 (double, double) _voiceAfterMark(OnsetClass c) => c == OnsetClass.unvoiced ? (0.112, 0.25) : (0.0, 0.15);
 
 /// Where each marked token may start, and where its voice most likely
-/// starts, or null when the marks do not agree
-/// with [first] (aligned without them): after their common offset, at
-/// least 60% of the marked characters must have their voice where their
-/// mark says. A file of word times off by a constant is shifted; one that
-/// does not fit the voice is not used.
+/// starts, or null when the marks do not agree with [first] (aligned
+/// without them): after their common offset, at least 60% of the marked
+/// characters must have their voice where their mark says. The offset is
+/// found separately for characters with a voiceless initial and the rest,
+/// so that word times off by a constant, or put where the voice starts
+/// rather than the syllable, fit too; ones that do not fit the voice are
+/// not used.
 Map<(int, int), (double, double, double)>? _wordTimeWindows(
     SongReference first, List<LyricLine> lines, Map<(int, int), double> marks, LyricsLanguage language) {
   final classes = {for (final k in marks.keys) k: tokenOnsetClass(lines[k.$1].tokens[k.$2], language)};
-  final d = <double>[];
+  bool voiceless((int, int) k) => classes[k] == OnsetClass.unvoiced;
+  final d = <(int, int), double>{};
   for (final MapEntry(key: k, value: time) in marks.entries) {
     if (k.$1 >= first.lines.length || k.$2 >= first.lines[k.$1].tokens.length) continue;
     final token = first.lines[k.$1].tokens[k.$2];
     if (token.notes.isEmpty) continue;
-    d.add(token.start - time - _voiceAfterMark(classes[k]!).$1);
+    d[k] = token.start - time - _voiceAfterMark(classes[k]!).$1;
   }
   if (d.length < 3) return null;
-  final offset = median(d);
-  final agree = d.where((x) => (x - offset).abs() <= 0.12).length / d.length;
-  if (agree < 0.6 || offset.abs() > 1.0) return null;
+  final all = median(d.values.toList());
+  double offsetOf(bool unvoiced) {
+    final own = [for (final e in d.entries) if (voiceless(e.key) == unvoiced) e.value];
+    return own.length >= 3 ? median(own) : all;
+  }
+
+  // One offset for all, unless the two kinds clearly differ (word times
+  // put where the voice starts: a voiceless initial's mark is late by its
+  // consonant).
+  final split = (offsetOf(true) - offsetOf(false)).abs() > 0.06;
+  final offsets = {true: split ? offsetOf(true) : all, false: split ? offsetOf(false) : all};
+  final agree = d.entries.where((e) => (e.value - offsets[voiceless(e.key)]!).abs() <= 0.12).length / d.length;
+  if (agree < 0.6 || offsets.values.any((o) => o.abs() > 1.0)) return null;
   return {
     for (final MapEntry(key: k, value: time) in marks.entries)
       k: (
-        time + offset - 0.08,
-        time + offset + _voiceAfterMark(classes[k]!).$2 + 0.08,
-        time + offset + _voiceAfterMark(classes[k]!).$1,
+        time + offsets[voiceless(k)]! - 0.08,
+        time + offsets[voiceless(k)]! + _voiceAfterMark(classes[k]!).$2 + 0.08,
+        time + offsets[voiceless(k)]! + _voiceAfterMark(classes[k]!).$1,
       ),
   };
 }
