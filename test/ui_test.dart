@@ -582,6 +582,11 @@ void main() {
     await tester.pump();
     final start = find.widgetWithText(FilledButton, '分离人声，生成音高图');
     expect(tester.widget<FilledButton>(start).onPressed, isNull);
+    // Removing the harmony is slow, so it is off unless asked for.
+    final harmony = find.widgetWithText(SwitchListTile, '去和声');
+    expect(tester.widget<SwitchListTile>(harmony).value, isFalse);
+    expect(find.text('这一步耗时较长，和声明显时再打开'), findsOneWidget);
+    await screenshot(tester, '5a_import_start');
     await tester.enterText(find.byType(TextField).last, lyrics);
     await tester.pump();
     await tester.scrollUntilVisible(find.text('2 句，17 个字（中文）'), 200, scrollable: find.byType(Scrollable).first);
@@ -596,9 +601,26 @@ void main() {
     expect(find.text('2 句，17 个字（中文）。另有 2 行和上一行时间相同，当作翻译，不计入要唱的句子'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, lyrics);
     await tester.pump();
-    // Back to the top, then switch to "already separated vocals".
+    // Back to the top. A song file someone sent is the other way in: the
+    // page shows only that, and coming back keeps what was typed.
     await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
     await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('别人发来的文件'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('导入别人发来的歌曲文件'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '选择歌曲文件'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('选择音频'), findsNothing);
+    expect(find.text('去和声'), findsNothing);
+    expect(find.widgetWithText(FilledButton, '分离人声，生成音高图'), findsNothing);
+    await screenshot(tester, '5b_import_song_file');
+    await tester.tap(find.text('从音频生成'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('导入别人发来的歌曲文件'), findsNothing);
+    expect(tester.widget<TextField>(find.byType(TextField).last).controller!.text, lyrics);
+    // Then switch to "already separated vocals".
     await tester.tap(find.text('这是已经分离好的纯人声'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('生成逐字音高图'), findsOneWidget);
@@ -657,13 +679,16 @@ void main() {
     String? picked = '${tmp.path}/vocal.wav';
     await tester.pumpWidget(host(services, ImportPage(pickSongFile: () async => picked, background: false)));
     await tester.pump();
-    await tester.tap(find.text('导入别人发来的歌曲文件'));
+    await tester.tap(find.text('别人发来的文件'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.widgetWithText(FilledButton, '选择歌曲文件'));
     await settleIo(tester, rounds: 5);
     expect(find.text('这不是 YinTrace 导出的歌曲文件'), findsOneWidget);
     expect(find.text('导入别人发来的歌曲文件'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '选择歌曲文件'), findsOneWidget);
     // ...and the song file opens as a new song that was never practised.
     picked = file;
-    await tester.tap(find.text('导入别人发来的歌曲文件'));
+    await tester.tap(find.widgetWithText(FilledButton, '选择歌曲文件'));
     await settleIo(tester, rounds: 40);
     expect(find.byType(SongPage), findsOneWidget);
     expect(find.text('夜航（示例）'), findsWidgets);
