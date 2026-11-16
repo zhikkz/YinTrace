@@ -67,7 +67,7 @@ CI 归档证明可编译、所有 FFI 符号可见；模拟器冒烟测试覆盖
 - [ ] 在测试版里运行 设置 → 性能测试（4 分钟，见 [只用 iPhone 测试](phone-testing.md)）并复制报告，
       或运行 `tools/device_benchmark.sh <设备 ID> 240`（见 [真机测速](device-benchmark.md)）：
       报告里有完整导入的各阶段耗时、内存峰值、去和声用的窗口、“预计还需”的误差，以及 CPU 与 Core ML 的对比。
-- [ ] 分别记录 MDX / VR / 全流程耗时。README 的桌面结果不能用作 iPhone 承诺。
+- [ ] 分别记录 MDX / VR / 全流程耗时。[已知限制](known-limitations.md)里的桌面结果不能用作 iPhone 承诺。
       导入页的“预计还需”在开始一分钟后应与实际剩余时间大致相符；记下偏差。
 - [ ] 导入完成后看 `songs/<id>/song.json` 的 `modelInfo.vr`：写着 `(window 320)` 表示系统报告的
       剩余内存不够 512 窗口，自动用了更省内存但更慢的设置。分别在 4 GB 和 6 GB 以上的
