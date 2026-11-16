@@ -273,7 +273,12 @@ class PracticeSession extends ChangeNotifier {
     }
     final review = _review;
     if (review != null) {
-      if (position >= review.$2 - 0.05) _seekEngine(review.$1);
+      // `position` trails `e.positionSeconds` by `_latency / 2`, so when a
+      // review range runs to the end of the track `position` may stay more
+      // than 0.05 s below `review.$2` even after the engine stopped there.
+      if (position >= review.$2 - 0.05 || e.positionSeconds >= e.lengthSeconds - 0.05) {
+        _seekEngine(review.$1);
+      }
     } else if (finished || e.positionSeconds >= e.lengthSeconds - 0.05) {
       finished = false;
       // From the top again: another run through the song.
@@ -295,7 +300,8 @@ class PracticeSession extends ChangeNotifier {
       e.loadTrackPcm(TrackSlot.take, t.samples!, 1);
       _loadedTake = t.version;
     }
-    final range = line != null ? _loopRange(line) : (math.max(0.0, t.startSeconds - 0.5), t.endSeconds + 0.3);
+    final (a, b) = line != null ? _loopRange(line) : (math.max(0.0, t.startSeconds - 0.5), t.endSeconds + 0.3);
+    final range = (a, math.min(b, math.max(a, e.lengthSeconds)));
     if (listening == ListenKind.original) {
       // Straight from the original singer: practice would have gone on at
       // the start of that line.
@@ -346,6 +352,7 @@ class PracticeSession extends ChangeNotifier {
         e.unloadTrack(TrackSlot.take);
         _loadedTake = -1;
       }
+      _endCount = e.endCount; // reaching the end while reviewing is not a finished run
       applyMix();
       if (kind == ListenKind.original && _originalLine != null) {
         // Ready to sing the line just heard (and loop it, when looping).
@@ -519,14 +526,19 @@ class PracticeSession extends ChangeNotifier {
     if (review != null) {
       // The microphone would only hear the playback: nothing to score.
       e.flushCapture();
-      _endCount = e.endCount; // reaching the end here is not a finished run
-      final atEnd = !e.isPlaying && e.positionSeconds >= e.lengthSeconds - 0.05;
+      final playing = e.isPlaying;
+      // Read `endCount` after `isPlaying` (yt_audio clears playing before
+      // bumping end_count) and reuse it so a stop transition is never missed.
+      final endCount = e.endCount;
+      final ended = endCount != _endCount;
+      _endCount = endCount; // reaching the end here is not a finished run
+      final atEnd = !playing && e.positionSeconds >= e.lengthSeconds - 0.05;
       if (_listenKind == ListenKind.original && (position >= review.$2 || atEnd)) {
         stopListening(); // heard the line: ready to sing it
         return;
       }
-      if (e.isPlaying && position >= review.$2) e.pause();
-      if (e.isPlaying || position >= review.$2) notifyListeners();
+      if (playing && position >= review.$2) e.pause();
+      if (playing || ended) notifyListeners();
       return;
     }
     var changed = false;
