@@ -83,13 +83,37 @@ SongReference buildReference(PitchTrack track, List<LyricLine> lines,
       e.value < track.duration;
   final held = {for (final e in hold.entries) if (valid(e)) e.key: e.value};
   final pinned = {for (final e in pins.entries) if (valid(e)) e.key: e.value};
-  if (held.isEmpty && pinned.isEmpty) return aligner.run(lines, const {})!;
-  // A pin that leaves no room goes, the nearest one before where the
-  // placement failed; the others stay.
+  var (reference, fixed) = _alignFixed(aligner, lines, held, pinned);
+  // Word times from the lyrics (enhanced LRC), in lines without fixed
+  // starts. The first pass ignores them: a word time marks where the
+  // syllable starts, its consonant included, and pulling a character there
+  // put it in the end of the voice before. When they agree with where the
+  // voice put the characters, each marked character is kept within what
+  // its time allows in a second pass, where the voice decides.
+  final marks = <(int, int), double>{};
+  for (final (k, line) in lines.indexed) {
+    if (fixed.keys.any((f) => f.$1 == k)) continue;
+    for (final (i, token) in line.tokens.indexed) {
+      final time = token.time;
+      if (time != null && time >= 0 && time < track.duration) marks[(k, i)] = time;
+    }
+  }
+  final windows = marks.length >= 3 ? _wordTimeWindows(reference, lines, marks, lang) : null;
+  if (windows != null) reference = aligner.run(lines, fixed, windows) ?? reference;
+  return reference;
+}
+
+/// Aligns with the [held] starts and the user's [pins]; a pin that leaves
+/// no room goes (the nearest one before where the placement failed), the
+/// others stay. Returns the reference and the fixed starts it kept.
+(SongReference, Map<(int, int), _Fixed>) _alignFixed(
+    _ChainAligner aligner, List<LyricLine> lines, Map<(int, int), double> held, Map<(int, int), double> pinned) {
+  if (held.isEmpty && pinned.isEmpty) return (aligner.run(lines, const {})!, const {});
   final left = Map.of(pinned);
   for (;;) {
-    final r = aligner.run(lines, _ordered(held, left, aligner.cellSeconds));
-    if (r != null) return r;
+    final fixed = _ordered(held, left, aligner.cellSeconds);
+    final r = aligner.run(lines, fixed);
+    if (r != null) return (r, fixed);
     final at = aligner.blocked;
     if (at == null || left.isEmpty) break;
     int order((int, int) k) => k.$1 * 100000 + k.$2;
@@ -97,8 +121,48 @@ SongReference buildReference(PitchTrack track, List<LyricLine> lines,
     final before = keys.where((k) => order(k) <= order(at));
     left.remove(before.isNotEmpty ? before.last : keys.first);
   }
-  return (held.isEmpty ? null : aligner.run(lines, _ordered(held, const {}, aligner.cellSeconds))) ??
-      aligner.run(lines, const {})!;
+  if (held.isNotEmpty) {
+    final fixed = _ordered(held, const {}, aligner.cellSeconds);
+    final r = aligner.run(lines, fixed);
+    if (r != null) return (r, fixed);
+  }
+  return (aligner.run(lines, const {})!, const {});
+}
+
+/// How long after a syllable's marked start its voice begins, by how the
+/// syllable starts: typical and longest (median and 98th percentile in sung
+/// Mandarin, GTSinger). A voiceless consonant comes first; m/n/l/r and
+/// vowels are voiced from the start.
+(double, double) _voiceAfterMark(OnsetClass c) => c == OnsetClass.unvoiced ? (0.112, 0.25) : (0.0, 0.15);
+
+/// Where each marked token may start, and where its voice most likely
+/// starts, or null when the marks do not agree
+/// with [first] (aligned without them): after their common offset, at
+/// least 60% of the marked characters must have their voice where their
+/// mark says. A file of word times off by a constant is shifted; one that
+/// does not fit the voice is not used.
+Map<(int, int), (double, double, double)>? _wordTimeWindows(
+    SongReference first, List<LyricLine> lines, Map<(int, int), double> marks, LyricsLanguage language) {
+  final classes = {for (final k in marks.keys) k: tokenOnsetClass(lines[k.$1].tokens[k.$2], language)};
+  final d = <double>[];
+  for (final MapEntry(key: k, value: time) in marks.entries) {
+    if (k.$1 >= first.lines.length || k.$2 >= first.lines[k.$1].tokens.length) continue;
+    final token = first.lines[k.$1].tokens[k.$2];
+    if (token.notes.isEmpty) continue;
+    d.add(token.start - time - _voiceAfterMark(classes[k]!).$1);
+  }
+  if (d.length < 3) return null;
+  final offset = median(d);
+  final agree = d.where((x) => (x - offset).abs() <= 0.12).length / d.length;
+  if (agree < 0.6 || offset.abs() > 1.0) return null;
+  return {
+    for (final MapEntry(key: k, value: time) in marks.entries)
+      k: (
+        time + offset - 0.08,
+        time + offset + _voiceAfterMark(classes[k]!).$2 + 0.08,
+        time + offset + _voiceAfterMark(classes[k]!).$1,
+      ),
+  };
 }
 
 /// The fixed starts in song order, each at least two grid cells after the
@@ -153,7 +217,7 @@ class _Tok {
   final bool first;
   final bool last;
 
-  /// First unit of its token (where a pause or a word time applies).
+  /// First unit of its token (where a pause applies).
   final bool lead;
 
   /// When the next line starts, or this one is marked to end; null for the
@@ -162,6 +226,9 @@ class _Tok {
 
   /// Where this unit must start (only a token's first unit).
   final _Fixed? fixed;
+
+  /// Where its word time says its voice starts.
+  double? expected;
   int lo = 0; // grid range [lo, hi)
   int lineHi = 0; // end of its line's window
   int hi = 0;
@@ -272,6 +339,9 @@ class _ChainAligner {
   double secOfCell(int c) => c * g * hop;
   double get cellSeconds => g * hop;
 
+  /// Points a start loses per second away from where its word time says.
+  static const _wordPull = 10.0;
+
   /// Where the last [run] found no placement: the (line, token) of the
   /// fixed start it could not keep.
   (int, int)? blocked;
@@ -375,13 +445,15 @@ class _ChainAligner {
     // A character rarely starts once the next line is due. Without this a
     // line can slide a character late, its last character taking the first
     // onset of the next line.
+    // A word time that agrees with the voice: where nothing else tells,
+    // near it rather than far.
+    final expected = tok.expected;
+    if (expected != null) s -= (secOfCell(c) - expected).abs() * _wordPull;
     final stop = tok.lineStop;
     if (stop != null) {
       final over = secOfCell(c) - (stop - 0.1);
       if (over > 0) s -= 10 * over;
     }
-    final time = tok.lead ? tok.token.time : null;
-    if (time != null && (secOfCell(c) - time).abs() < 0.08) s += 10;
     return s;
   }
 
@@ -394,9 +466,12 @@ class _ChainAligner {
     return 0;
   }
 
-  /// The reference, or null when the [fixed] starts leave no placement.
-  SongReference? run(List<LyricLine> lines, Map<(int, int), _Fixed> fixed) {
+  /// The reference, or null when the [fixed] starts (or the [windows] some
+  /// tokens must start in) leave no placement.
+  SongReference? run(List<LyricLine> lines, Map<(int, int), _Fixed> fixed,
+      [Map<(int, int), (double, double, double)> windows = const {}]) {
     blocked = null;
+    final constrained = fixed.isNotEmpty || windows.isNotEmpty;
     final toks = <_Tok>[];
     final lineAvg = <double>[];
     final end = t.duration;
@@ -462,6 +537,18 @@ class _ChainAligner {
           if (f != null) {
             tok.lo = cellOf(f.seconds);
             tok.hi = tok.lo + 1;
+          } else if (windows[(k, i)] case final w? when j == 0) {
+            // A window with voice in it, inside the line's range.
+            final a = math.max(tok.lo, cellOf(w.$1)), b = math.min(tok.hi, cellOf(w.$2) + 1);
+            var voiced = false;
+            for (var c = a; c < b && !voiced; c++) {
+              voiced = _voicedAt[c];
+            }
+            if (voiced) {
+              tok.lo = a;
+              tok.hi = b;
+              tok.expected = w.$3;
+            }
           }
           toks.add(tok);
         }
@@ -592,7 +679,7 @@ class _ChainAligner {
         cur.dp[c - cur.lo] = best + s;
         cur.back[c - cur.lo] = arg;
       }
-      if (fixed.isNotEmpty && !cur.dp.any((v) => v > neg / 2)) {
+      if (constrained && !cur.dp.any((v) => v > neg / 2)) {
         // No way to reach this unit: blame the fixed start that hems it in.
         var f = m;
         while (f < toks.length && toks[f].fixed == null) {
@@ -619,7 +706,7 @@ class _ChainAligner {
       }
     }
     final starts = List<int>.filled(toks.length, 0);
-    if (arg < 0 && fixed.isNotEmpty) {
+    if (arg < 0 && constrained) {
       final f = toks.lastIndexWhere((t) => t.fixed != null);
       blocked = f < 0 ? null : (toks[f].line, toks[f].index);
       return null;

@@ -122,6 +122,42 @@ void main() {
     });
   });
 
+  group('word times in the lyrics (enhanced LRC)', () {
+    String marked(List<double> times, {double shift = 0}) {
+      String at(double t) => '<${formatLrcTime(t + shift)}>';
+      const first = '妈妈慢慢来了', second = '妈妈';
+      return '[00:01.00]${[for (var i = 0; i < 6; i++) '${at(times[i])}${first[i]}'].join()}\n'
+          '[00:06.00]${[for (var i = 0; i < 2; i++) '${at(times[6 + i])}${second[i]}'].join()}';
+    }
+
+    test('that agree with the voice keep each character near its time', () {
+      // The turn inside the held note took the last character's start;
+      // its word time says better.
+      final track = _issueExample('weak', turn: true);
+      expect(_starts(track, _issueLyrics)[5], greaterThan(3.3));
+      final got = _starts(track, marked(_issueTruth));
+      for (var k = 0; k < _issueTruth.length; k++) {
+        expect(got[k], closeTo(_issueTruth[k], k == 5 ? 0.25 : 0.03), reason: 'character $k');
+      }
+      expect(got[5], lessThan(3.25));
+      // Word times all off by the same amount are used all the same.
+      expect(_starts(track, marked(_issueTruth, shift: 0.3)), got);
+    });
+
+    test('that do not fit the voice are not used', () {
+      final track = _issueExample('weak', turn: true);
+      final scrambled = [2.9, 1.1, 5.0, 1.5, 4.0, 2.0, 7.5, 6.1];
+      expect(_starts(track, marked(scrambled)), _starts(track, _issueLyrics));
+    });
+
+    test('that agree with the voice where nothing else marks a start', () {
+      // The weak boundary, held twice as long: the durations put it at
+      // 3.04 s, the word time puts it right.
+      final track = _issueExample('weak', tail: 1.6);
+      expect(_starts(track, marked(_issueTruth))[5], closeTo(3.0, 0.03));
+    });
+  });
+
   test('characters sung legato do not push the voiceless ones after them late', () {
     // “草与鸟” on one pitch with nothing between the characters, then
     // “声都是” each after its voiceless consonant. The legato characters
