@@ -209,8 +209,9 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
         Text('测一测这台手机分离人声有多快，以及换用 Core ML（神经网络引擎、GPU）能不能更快。', style: context.type.bodyLarge),
         const SizedBox(height: 10),
         Text(
-          'App 先自己合成一首歌，像平时一样完整导入一遍（分离人声、去和声、测音高），'
-          '再用 CPU 和几种 Core ML 设置分别运行两个模型。不读取你的曲库，不上传任何东西，测试用的文件测完就删掉。',
+          'App 先自己合成一首歌，测试包含去和声的完整导入流程（分离人声、去和声、测音高），'
+          '再用 CPU 和几种 Core ML 设置分别运行两个模型。平时导入默认不去和声，耗时可能比这里测得的更短。'
+          '不读取你的曲库，不上传任何东西，测试用的文件测完就删掉。',
           style: context.type.bodyMedium,
         ),
         const SizedBox(height: 24),
@@ -218,7 +219,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
         const SizedBox(height: 10),
         bullet('全程大约 5 到 10 分钟。请接上电源，手机发热时系统会降速。'),
         bullet('让 YinTrace 一直在前台，不要锁屏或切到别的 App（屏幕会保持常亮）。'),
-        bullet('第一次会先下载两个分离模型（194 MB），最好连着 Wi‑Fi。'),
+        bullet('这项测试需要两个分离模型（共 194 MB），缺少时会先下载，最好连着 Wi‑Fi。'),
         bullet('中途被打断也没关系：已经测完的项目会保留，回来可以接着测。'),
         const SizedBox(height: 22),
         Text('合成歌曲的长度', style: context.type.titleMedium),
@@ -233,7 +234,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
           onSelectionChanged: (s) => setState(() => _songSeconds = s.first),
         ),
         const SizedBox(height: 6),
-        Text('4 分钟和一首普通的歌差不多长，能看出导入整首歌要等多久；1 分钟能少等几分钟。', style: context.type.bodySmall),
+        Text('4 分钟和一首普通的歌差不多长，能看出包含去和声的完整导入要等多久；1 分钟能少等几分钟。', style: context.type.bodySmall),
         const SizedBox(height: 26),
         FilledButton(
           onPressed: () => _start(),
