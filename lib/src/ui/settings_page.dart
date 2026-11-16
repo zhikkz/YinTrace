@@ -331,6 +331,8 @@ class _ModelsRow extends StatelessWidget {
       status = models.phase == ModelPhase.downloading
           ? '正在${isTestBuild && models.onBackupRoute ? '从备用线路' : ''}下载，${(models.progress * 100).floor()}%'
           : '正在准备…';
+    } else if (models.installedBytes > 0) {
+      status = '已下载部分模型，占用 ${formatMegabytes(models.installedBytes)}';
     } else {
       status = '还没有下载（${formatMegabytes(models.totalBytes)}）';
     }

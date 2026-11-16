@@ -26,6 +26,8 @@ import 'package:yintrace/src/import/import_pipeline.dart';
 import 'package:yintrace/src/library/song.dart';
 import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/models/model_manager.dart';
+import 'package:yintrace/src/models/model_catalog.dart';
+import 'package:yintrace/src/ui/model_setup.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
 import 'package:yintrace/src/practice/segment_player.dart';
 import 'package:yintrace/src/practice/take_recorder.dart';
@@ -176,7 +178,7 @@ void main() {
     expect(find.text('夜航（示例）'), findsOneWidget);
     expect(find.text('82'), findsOneWidget);
     // The separation models are not installed: the library offers them.
-    expect(find.textContaining('两个分离模型（194 MB）'), findsOneWidget);
+    expect(find.textContaining('人声分离模型（67 MB）'), findsOneWidget);
     expect(find.widgetWithText(TextButton, '下载'), findsOneWidget);
     await screenshot(tester, '1_library');
   });
@@ -700,6 +702,58 @@ void main() {
     expect((await tester.runAsync(() => services.songs.load(song.id)))!.practiceCount, greaterThan(0));
     await tester.pumpWidget(const SizedBox());
     await tester.runAsync(() => services.songs.delete(added.id));
+  });
+
+  testWidgets('model setup only gates on the models required by this import', (tester) async {
+    phone(tester);
+    Future<bool>? result;
+    Widget entry(List<ModelSpec> requiredModels) => host(
+      services,
+      Scaffold(
+        body: Builder(builder: (context) => TextButton(
+          onPressed: () => result = ensureModels(context, requiredModels: requiredModels),
+          child: const Text('检查模型'),
+        )),
+      ),
+    );
+    await tester.pumpWidget(entry(const [vocalModel]));
+    await tester.tap(find.text('检查模型'));
+    await tester.pumpAndSettle();
+    expect(find.text('人声分离'), findsOneWidget);
+    expect(find.text('去和声'), findsNothing);
+    expect(find.textContaining('本次所需模型共 67 MB'), findsOneWidget);
+    // Emulate an installed vocal model (a sparse file; no weights downloaded).
+    final file = File('${services.models.dir.path}/${vocalModel.installedName}');
+    file.parent.createSync(recursive: true);
+    final handle = file.openSync(mode: FileMode.write);
+    handle.truncateSync(vocalModel.installedBytes);
+    handle.closeSync();
+    addTearDown(() => file.deleteSync());
+    Navigator.of(tester.element(find.byType(ModelSetupSheet))).pop();
+    await tester.pumpAndSettle();
+    expect(await result, isTrue);
+    await tester.tap(find.text('检查模型'));
+    await tester.pumpAndSettle();
+    expect(await result, isTrue);
+    expect(find.byType(ModelSetupSheet), findsNothing);
+
+    // Enabling harmony still asks for the missing second model.
+    await tester.pumpWidget(entry(separationModels));
+    await tester.tap(find.text('检查模型'));
+    await tester.pumpAndSettle();
+    expect(find.text('去和声'), findsOneWidget);
+    expect(find.text('127 MB'), findsOneWidget);
+    Navigator.of(tester.element(find.byType(ModelSetupSheet))).pop();
+    await tester.pumpAndSettle();
+    expect(await result, isFalse);
+
+    await tester.pumpWidget(host(services, const LibraryPage()));
+    await settleIo(tester);
+    expect(find.textContaining('导入整首歌之前'), findsNothing);
+    await tester.pumpWidget(host(services, const SettingsPage()));
+    await tester.pump();
+    expect(find.text('已下载部分模型，占用 67 MB'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('settings page shows the model status and practice options', (tester) async {

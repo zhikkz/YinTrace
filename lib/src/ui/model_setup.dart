@@ -9,23 +9,25 @@ import '../models/model_catalog.dart';
 import '../models/model_manager.dart';
 import 'theme.dart';
 
-/// Makes sure the two separation models are on the device, offering to
+/// Makes sure the requested separation models are on the device, offering to
 /// download them if they are not. Returns whether they are ready.
-Future<bool> ensureModels(BuildContext context) async {
+Future<bool> ensureModels(BuildContext context, {List<ModelSpec> requiredModels = separationModels}) async {
   final models = AppScope.of(context).models;
-  if (models.isReady) return true;
+  if (models.isReadyFor(requiredModels)) return true;
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    builder: (_) => const ModelSetupSheet(),
+    builder: (_) => ModelSetupSheet(requiredModels: requiredModels),
   );
-  return models.isReady;
+  return models.isReadyFor(requiredModels);
 }
 
-/// Download (or pick from Files) the two UVR models. The download belongs
+/// Download (or pick from Files) the requested UVR models. The download belongs
 /// to the app, not to this sheet: closing the sheet does not stop it.
 class ModelSetupSheet extends StatefulWidget {
-  const ModelSetupSheet({super.key});
+  const ModelSetupSheet({super.key, this.requiredModels = separationModels});
+
+  final List<ModelSpec> requiredModels;
 
   @override
   State<ModelSetupSheet> createState() => _ModelSetupSheetState();
@@ -60,7 +62,7 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
     // its end must not switch off what the page then open keeps on.
     final awake = ScreenAwake()..hold();
     try {
-      await models.install();
+      await models.install(requiredModels: widget.requiredModels);
     } finally {
       awake.release();
     }
@@ -75,9 +77,9 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
     ];
     if (paths.isEmpty) return;
     try {
-      await models.importFiles(paths);
+      await models.importFiles(paths, requiredModels: widget.requiredModels);
     } finally {
-      // The models are installed from the picker's copies (194 MB); only
+      // The models are installed from the picker's copies; only
       // these, not the song that may be waiting on the import page.
       for (final path in paths) {
         discardPickedCopy(path);
@@ -91,8 +93,11 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
     final p = context.yt;
     final phase = models.phase;
     final working = models.busy;
-    final ready = phase == ModelPhase.ready;
-    final partial = !working && !ready && models.receivedBytes > 0;
+    final ready = models.isReadyFor(widget.requiredModels);
+    final shownModels = working ? models.requestedModels : widget.requiredModels;
+    final total = models.bytesFor(shownModels);
+    final received = working ? models.receivedBytes : models.receivedBytesFor(shownModels);
+    final partial = !working && !ready && received > 0;
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.fromLTRB(24, 4, 24, 16 + MediaQuery.viewInsetsOf(context).bottom),
@@ -105,24 +110,26 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
             Text(
               ready
                   ? '现在可以导入整首歌了。'
-                  : '导入整首歌时，YinTrace 用这两个模型在手机上把主唱分出来。'
-                      '一共 ${formatMegabytes(models.totalBytes)}，只需下载一次，建议连 Wi‑Fi。',
+                  : 'YinTrace 用人声分离模型提取人声，打开“去和声”时才需要去和声模型。'
+                      '本次所需模型共 ${formatMegabytes(total)}，已下载的不会重复下载，建议连 Wi‑Fi。',
               style: context.type.bodyMedium,
             ),
             const SizedBox(height: 18),
-            for (final spec in models.specs) _ModelLine(spec: spec, models: models),
+            for (final spec in shownModels) _ModelLine(spec: spec, models: models),
             const SizedBox(height: 14),
             if (working || partial) ...[
               LinearProgressIndicator(
-                value: phase == ModelPhase.downloading || partial ? models.progress : null,
+                value: phase == ModelPhase.downloading || partial
+                    ? (total == 0 ? 0.0 : (received / total).clamp(0.0, 1.0))
+                    : null,
                 minHeight: 4,
                 borderRadius: BorderRadius.circular(2),
               ),
               const SizedBox(height: 8),
-              Text(_status(models, partial), style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
+              Text(_status(models, partial, received, total), style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
               const SizedBox(height: 14),
             ],
-            if (models.error != null && !working) ...[
+            if (models.error != null && !working && !ready) ...[
               Text(models.error!, style: context.type.bodyMedium?.copyWith(color: p.cinnabar)),
               // What each route answered: for testers.
               if (isTestBuild && models.errorDetail != null) ...[
@@ -154,7 +161,7 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
               Center(
                 child: TextButton(
                   onPressed: _pick,
-                  child: Text('已经有这两个文件？从“文件”里选',
+                  child: Text('已有模型文件？从“文件”里选',
                       style: context.type.labelMedium?.copyWith(color: p.inkSoft)),
                 ),
               ),
@@ -166,8 +173,8 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
     );
   }
 
-  static String _status(ModelManager m, bool partial) {
-    final got = '${(m.receivedBytes / 1e6).toStringAsFixed(0)} / ${formatMegabytes(m.totalBytes)}';
+  static String _status(ModelManager m, bool partial, int received, int total) {
+    final got = '${(received / 1e6).toStringAsFixed(0)} / ${formatMegabytes(total)}';
     if (partial) return '已下载 $got';
     switch (m.phase) {
       case ModelPhase.downloading:
@@ -175,7 +182,7 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
         final route = isTestBuild && m.onBackupRoute ? '备用线路 ${m.route}，' : '';
         final speed = m.bytesPerSecond;
         if (speed <= 0) return '$route$got';
-        final remain = ((m.totalBytes - m.receivedBytes) / speed).round();
+        final remain = ((total - received) / speed).round();
         final eta = remain >= 60 ? '还要约 ${remain ~/ 60} 分钟' : '还要约 $remain 秒';
         return '$route$got，${(speed / 1e6).toStringAsFixed(1)} MB/秒，$eta';
       case ModelPhase.verifying:
