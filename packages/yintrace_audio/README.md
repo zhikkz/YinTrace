@@ -12,6 +12,12 @@ YinTrace's native audio core, used through `dart:ffi`.
   that was being rendered in the same audio callback, so the app can map each
   sung sample to a song position exactly (loop jumps split blocks).
   Nothing calls back into Dart: captured audio is polled with `readCapture()`.
+- **Wired microphone monitoring**: `monitorAvailable` checks an iOS wired
+  headphone/USB route; `setMonitorGain(0..1)` mixes the dry mic to both output
+  channels in the native callback while playing. Pauses/end-of-track mute it;
+  route changes and device stops clear the gain. Callers re-check availability
+  before reapplying. Unknown routes/platforms and null devices reject it;
+  offline engines allow it for deterministic tests. Capture stays dry.
 
 The C sources live in `src/` and are shared by all platforms:
 CocoaPods compiles them as Objective-C through the forwarders in

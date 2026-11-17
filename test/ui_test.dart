@@ -959,6 +959,21 @@ void main() {
     await settleIo(tester, rounds: 5);
     expect(session.error, isNull);
     expect(session.started, isTrue);
+    // The practice settings expose wired monitoring, initially off.
+    await tester.tap(find.byTooltip('练习设置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final monitorSwitch = find.widgetWithText(SwitchListTile, '耳返（有线耳机）');
+    await tester.ensureVisible(monitorSwitch);
+    await tester.pump();
+    expect(tester.widget<SwitchListTile>(monitorSwitch).value, isFalse);
+    await tester.tap(monitorSwitch);
+    await tester.pump();
+    expect(session.monitorEnabled, isTrue);
+    expect(find.text('耳返音量'), findsOneWidget);
+    Navigator.of(tester.element(monitorSwitch)).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     session.engine!.render(512, input: Float32List(512));
     expect(session.engine!.readCapture(), isEmpty);
     session.play();

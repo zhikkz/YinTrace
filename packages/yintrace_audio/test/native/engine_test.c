@@ -110,7 +110,11 @@ static void test_mix_seek_loop(void) {
   got = yt_engine_read_capture(e, cap, 4096, &song, &clock, &flags);
   CHECK(got == 156 && flags == 0);
 
-  // Monitor gain mixes the mic in.
+  // Monitor gain mixes the mic in only while playing.
+  yt_engine_seek(e, 0);
+  yt_engine_set_track_gain(e, 0, 0);
+  yt_engine_set_track_gain(e, 1, 0);
+  yt_engine_set_playing(e, 1);
   yt_engine_set_monitor_gain(e, 0.001f);
   yt_engine_render(e, out, in, 256);
   CHECK(fabsf(out[2 * 100] - 0.1f) < 1e-4f);
@@ -274,6 +278,74 @@ static void test_audio_interruption(void) {
   yt_engine_destroy(e);
 }
 
+static void test_monitoring(void) {
+  char err[256];
+  yt_engine* e = yt_engine_create(44100, YT_MODE_OFFLINE, 0, err, sizeof err);
+  CHECK(e != NULL && yt_engine_monitor_available(e));
+  float track[256], mic[64] = {0}, out[128], capture[4096];
+  for (int i = 0; i < 256; i++) track[i] = 0.1f;
+  mic[7] = 0.4f;
+  mic[8] = -0.4f;
+  int64_t song, clock;
+  int32_t flags;
+  CHECK(yt_engine_load_track_pcm(e, 0, track, 256, 1) == 0);
+  yt_engine_set_playing(e, 1);
+  // Off by default. The impulse is not in the output.
+  yt_engine_render(e, out, mic, 64);
+  CHECK(fabsf(out[14] - 0.1f) < 1e-3f);
+  yt_engine_flush_capture(e);
+  yt_engine_set_monitor_gain(e, 0.5f);
+  yt_engine_render(e, out, mic, 64);
+  // Both ears hear the input in this very callback, mixed with the track.
+  CHECK(fabsf(out[14] - 0.3f) < 1e-3f && out[14] == out[15]);
+  CHECK(fabsf(out[16] + 0.1f) < 1e-3f && out[16] == out[17]);
+  CHECK(yt_engine_read_capture(e, capture, 4096, &song, &clock, &flags) == 64);
+  CHECK(song == 64 && clock == 64 && flags == YT_CAPTURE_FLAG_PLAYING);
+  CHECK(capture[7] == mic[7] && capture[8] == mic[8]); // dry capture, no monitor gain
+
+  yt_engine_set_playing(e, 0);
+  yt_engine_render(e, out, mic, 64);
+  CHECK(out[14] == 0 && out[16] == 0); // pause mutes immediately
+  yt_engine_set_playing(e, 1);
+  yt_engine_seek(e, 248);
+  yt_engine_render(e, out, mic, 64);
+  CHECK(fabsf(out[14] - 0.3f) < 1e-3f && out[16] == 0); // mute at natural end, mid-block
+
+  yt_engine_seek(e, 0);
+  yt_engine_set_playing(e, 1);
+  yt_engine_signal_audio_event(e, YT_EVENT_ROUTE_CHANGED);
+  yt_engine_render(e, out, mic, 64);
+  CHECK(fabsf(out[14] - 0.1f) < 1e-3f); // route changes disarm before Dart polls
+  yt_engine_set_monitor_gain(e, 0.5f);
+  yt_engine_signal_audio_event(e, YT_EVENT_DEVICE_LOST);
+  yt_engine_render(e, out, mic, 64);
+  CHECK(out[14] == 0 && out[16] == 0);
+  CHECK(yt_engine_start(e) == 0);
+  yt_engine_set_playing(e, 1);
+  yt_engine_render(e, out, mic, 64);
+  CHECK(fabsf(out[14] - 0.1f) < 1e-3f); // restarting does not restore the live mic
+
+  // Invalid gains cannot poison the output; values above unity are capped.
+  const float gains[] = {NAN, INFINITY, -1.0f, 2.0f};
+  for (int i = 0; i < 4; i++) {
+    yt_engine_seek(e, 0);
+    yt_engine_set_monitor_gain(e, gains[i]);
+    yt_engine_render(e, out, mic, 64);
+    CHECK(fabsf(out[14] - (i == 3 ? 0.5f : 0.1f)) < 1e-3f);
+  }
+  yt_engine_destroy(e);
+
+  // A null/unknown output never opens live monitoring.
+  e = yt_engine_create(44100, YT_MODE_DUPLEX, 1, err, sizeof err);
+  CHECK(e != NULL && !yt_engine_monitor_available(e));
+  CHECK(yt_engine_load_track_pcm(e, 0, track, 256, 1) == 0);
+  yt_engine_set_monitor_gain(e, 1.0f);
+  yt_engine_set_playing(e, 1);
+  yt_engine_render(e, out, mic, 64);
+  CHECK(fabsf(out[14] - 0.1f) < 1e-3f);
+  yt_engine_destroy(e);
+}
+
 static void test_track_offset(void) {
   char err[256];
   yt_engine* e = yt_engine_create(44100, YT_MODE_OFFLINE, 0, err, sizeof err);
@@ -353,6 +425,7 @@ int main(int argc, char** argv) {
   test_big_block_split();
   test_null_device();
   test_audio_interruption();
+  test_monitoring();
   test_audio_log();
   test_track_offset();
   for (int i = 1; i + 1 < argc; i += 2) test_decode(argv[i], atoi(argv[i + 1]));

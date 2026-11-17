@@ -63,8 +63,8 @@ abstract final class AudioEvents {
   static const interruptionEnded = 2;
 
   /// The audio route or its configuration changed. iOS also reports this
-  /// when a session starts playing and recording. Nothing is silenced; the
-  /// latency may differ.
+  /// when a session starts playing and recording. Tracks keep playing; live
+  /// monitoring is cleared until the route is checked. Latency may differ.
   static const routeChanged = 4;
 
   /// Headphones, a Bluetooth/USB device or AirPlay went away, so the sound
@@ -382,6 +382,15 @@ class PracticeEngine {
     _b.engineSetTrackGain(_ptr, slot, gain);
   }
 
+  /// Whether live monitoring is available on the current wired route.
+  /// Offline engines allow it for tests; unsupported platforms fail closed.
+  bool get monitorAvailable {
+    _check();
+    return _b.engineMonitorAvailable(_ptr) != 0;
+  }
+
+  /// Direct mic-to-stereo mix, only while playing. Gain is limited to 0..1;
+  /// route changes clear it, so check [monitorAvailable] before reapplying.
   void setMonitorGain(double gain) {
     _check();
     _b.engineSetMonitorGain(_ptr, gain);

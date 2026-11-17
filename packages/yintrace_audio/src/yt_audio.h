@@ -126,7 +126,12 @@ YT_EXPORT void yt_engine_unload_track(yt_engine* engine, int32_t slot);
 YT_EXPORT void yt_engine_set_track_offset(yt_engine* engine, int32_t slot, int64_t frame);
 YT_EXPORT void yt_engine_set_track_gain(yt_engine* engine, int32_t slot,
                                         float gain);
-// Mixes the microphone into the output (0 = off).
+// Whether this engine can monitor to a wired output (iOS headphones/USB).
+// False on unsupported platforms and null devices; true offline for tests.
+YT_EXPORT int32_t yt_engine_monitor_available(yt_engine* engine);
+// Mixes the microphone straight into stereo output while playing (0 = off,
+// 1 = unity). Unavailable routes reject the gain. Route changes and stops
+// clear it; the control thread must check the route before reapplying it.
 YT_EXPORT void yt_engine_set_monitor_gain(yt_engine* engine, float gain);
 
 YT_EXPORT void yt_engine_set_playing(yt_engine* engine, int32_t playing);
@@ -160,7 +165,8 @@ YT_EXPORT void yt_engine_flush_capture(yt_engine* engine);
 //   YT_EVENT_INTERRUPTION_ENDED: informational.
 //   YT_EVENT_ROUTE_CHANGED: the audio route or its configuration changed
 //     (iOS announces this when a session starts playing and recording, too).
-//     Nothing is silenced; the latency may differ.
+//     Tracks keep playing; monitor gain is cleared until the route is checked.
+//     The latency may differ.
 //   YT_EVENT_DEVICE_LOST: headphones, a Bluetooth/USB device or AirPlay went
 //     away, so the sound would now come from the phone. Playback and capture
 //     are silenced at once.

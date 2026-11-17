@@ -94,6 +94,23 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
 // reconfigured when a session starts playing and recording: those must not
 // stop practice. Only a lost private output (headphones unplugged, Bluetooth
 // disconnected) pauses, so the song does not continue from the speaker.
+static int32_t yt_platform_monitor_available(void) {
+#if TARGET_OS_IOS
+  // Check every output: the phone speaker, Bluetooth, AirPlay, or an unknown route
+  // must never receive the live microphone. USB includes wired headsets
+  // and Lightning/USB-C audio adapters.
+  NSArray<AVAudioSessionPortDescription*>* outputs = [[AVAudioSession sharedInstance] currentRoute].outputs;
+  if (outputs.count == 0) return 0;
+  for (AVAudioSessionPortDescription* port in outputs) {
+    if (![port.portType isEqualToString:AVAudioSessionPortHeadphones] &&
+        ![port.portType isEqualToString:AVAudioSessionPortUSBAudio]) return 0;
+  }
+  return 1;
+#else
+  return 0;
+#endif
+}
+
 #if TARGET_OS_IOS
 #define YT_ROUTE_WATCH_SLOTS 8
 static os_unfair_lock yt_route_lock = OS_UNFAIR_LOCK_INIT;
@@ -159,9 +176,13 @@ static void yt_route_changed(NSNotification* note) {
                                               [outputs componentsJoinedByString:@"+"],
                                               (events & YT_EVENT_DEVICE_LOST) ? " (paused: output lost)" : ""]);
   // Signalling under the lock: an engine is never destroyed while in use.
+  int32_t monitor_available = yt_platform_monitor_available();
   os_unfair_lock_lock(&yt_route_lock);
   for (int i = 0; i < YT_ROUTE_WATCH_SLOTS; i++) {
-    if (yt_route_engines[i] != NULL) yt_engine_signal_audio_event(yt_route_engines[i], events);
+    if (yt_route_engines[i] != NULL) {
+      yt_update_monitor_route(yt_route_engines[i], monitor_available);
+      yt_engine_signal_audio_event(yt_route_engines[i], events);
+    }
   }
   os_unfair_lock_unlock(&yt_route_lock);
 }
@@ -197,6 +218,7 @@ static void yt_platform_watch_routes(yt_engine* e) {
   for (int i = 0; i < YT_ROUTE_WATCH_SLOTS; i++) {
     if (yt_route_engines[i] == NULL) {
       yt_route_engines[i] = e;
+      yt_update_monitor_route(e, yt_platform_monitor_available());
       break;
     }
   }

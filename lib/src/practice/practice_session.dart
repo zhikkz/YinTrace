@@ -115,6 +115,25 @@ class PracticeSession extends ChangeNotifier {
   PracticeEngine? get engine => _engine;
   bool get isPlaying => _engine?.isPlaying ?? false;
 
+  bool _monitorEnabled = false;
+  bool _monitorAvailable = false;
+
+  /// The level is remembered, but each new session starts with monitoring off.
+  bool get monitorEnabled => _monitorEnabled;
+  bool get monitorAvailable => _monitorAvailable;
+
+  void _refreshMonitorRoute() {
+    _monitorAvailable = _engine?.monitorAvailable ?? false;
+    if (!_monitorAvailable) _monitorEnabled = false;
+  }
+
+  void setMonitorEnabled(bool enabled) {
+    _refreshMonitorRoute();
+    _monitorEnabled = enabled && _monitorAvailable;
+    applyMix();
+    notifyListeners();
+  }
+
   /// Listening (to the take or the original singer) instead of practising.
   bool get reviewing => _review != null;
 
@@ -244,6 +263,8 @@ class PracticeSession extends ChangeNotifier {
       },
     );
     e.setTrackGain(TrackSlot.take, kind == ListenKind.take ? 1 : 0);
+    _refreshMonitorRoute();
+    e.setMonitorGain(_monitorEnabled && kind == null ? settings.monitorVolume : 0);
     scorer.options = _scoringOptions();
     final t = _tracker;
     if (t != null) {
@@ -270,7 +291,8 @@ class PracticeSession extends ChangeNotifier {
     _log('play at ${position.toStringAsFixed(1)} s');
     try {
       NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
-      e.takeAudioEvents();
+      final events = e.takeAudioEvents();
+      if (events & AudioEvents.deviceLost != 0) _monitorEnabled = false;
       e.flushCapture();
       _tracker?.reset();
       e.start();
@@ -570,6 +592,8 @@ class PracticeSession extends ChangeNotifier {
     final events = e.takeAudioEvents();
     if (events != 0) _log('audio events 0x${events.toRadixString(16)}');
     if (events & AudioEvents.silencing != 0) {
+      if (events & AudioEvents.deviceLost != 0) _monitorEnabled = false;
+      _refreshMonitorRoute();
       suspend(
         reason: events & AudioEvents.deviceLost != 0
             ? '耳机断开了，已暂停，免得从扬声器外放。点播放继续'
@@ -580,7 +604,10 @@ class PracticeSession extends ChangeNotifier {
     }
     // iOS also reports this when playback and recording start: keep going,
     // only the new route's latency matters.
-    if (events & AudioEvents.routeChanged != 0) applyMix();
+    if (events & AudioEvents.routeChanged != 0) {
+      applyMix();
+      notifyListeners(); // update an open mix sheet even while paused
+    }
     final review = _review;
     if (review != null) {
       // The microphone would only hear the playback: nothing to score.

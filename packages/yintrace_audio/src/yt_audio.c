@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #define MA_NO_ENGINE
 #define MA_NO_NODE_GRAPH
@@ -138,6 +139,10 @@ int32_t yt_audio_log(char* buf, int32_t len) {
 // announces whenever a session starts playing and recording).
 static void yt_platform_watch_routes(yt_engine* e);
 static void yt_platform_unwatch_routes(yt_engine* e);
+static int32_t yt_platform_monitor_available(void);
+#if defined(__APPLE__) && defined(__OBJC__) && TARGET_OS_IOS
+static void yt_update_monitor_route(yt_engine* e, int32_t available);
+#endif
 
 #if defined(__APPLE__) && defined(__OBJC__)
 #define YT_HAS_APPLE_PLATFORM 1
@@ -146,6 +151,7 @@ static void yt_platform_unwatch_routes(yt_engine* e);
 #define YT_HAS_APPLE_PLATFORM 0
 static void yt_platform_watch_routes(yt_engine* e) { (void)e; }
 static void yt_platform_unwatch_routes(yt_engine* e) { (void)e; }
+static int32_t yt_platform_monitor_available(void) { return 0; }
 int32_t yt_mic_permission_status(void) { return 1; }
 void yt_request_mic_permission(void) {}
 int32_t yt_configure_session(int32_t record, int32_t measurement) {
@@ -292,6 +298,7 @@ struct yt_engine {
   volatile ma_uint32 playing;
   volatile ma_int64 end_count;
   volatile float monitor_gain;
+  volatile ma_uint32 monitor_route_allowed;
   ma_int64 clock;  // audio thread only
 
   // Capture ring (single producer: audio thread, single consumer: Dart).
@@ -303,6 +310,14 @@ struct yt_engine {
   volatile ma_uint64 cap_sample_read;
   volatile ma_int64 cap_overruns;
 };
+
+#if YT_HAS_APPLE_PLATFORM && TARGET_OS_IOS
+// Called by the route observer, never by the real-time audio callback.
+static void yt_update_monitor_route(yt_engine* e, int32_t available) {
+  ma_atomic_store_32(&e->monitor_route_allowed, available ? 1 : 0);
+  if (!available) ma_atomic_store_f32(&e->monitor_gain, 0.0f);
+}
+#endif
 
 static void yt_track_lock(yt_engine* e) {
   while (ma_atomic_exchange_32(&e->track_lock, 1) != 0) {
@@ -435,7 +450,8 @@ void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames)
     if (in != NULL) {
       yt_push_capture(e, in + done, seg, pos, e->clock + done,
                       seg_playing ? YT_CAPTURE_FLAG_PLAYING : 0);
-      if (out != NULL && monitor > 0.0f) {
+      if (out != NULL && seg_playing && monitor > 0.0f &&
+          ma_atomic_load_32(&e->monitor_route_allowed)) {
         float* o = out + (size_t)done * 2;
         const float* s = in + done;
         for (ma_uint32 i = 0; i < seg; i++) {
@@ -476,6 +492,9 @@ static void yt_data_callback(ma_device* device, void* output, const void* input,
 // to its notifications without restarting/uninitializing inside the callback.
 void yt_engine_signal_audio_event(yt_engine* e, int32_t events) {
   if (!e) return;
+  if (events & (YT_EVENTS_SILENCING | YT_EVENT_ROUTE_CHANGED)) {
+    ma_atomic_store_f32(&e->monitor_gain, 0.0f);
+  }
   if (events & YT_EVENTS_SILENCING) {
     ma_atomic_store_32(&e->playing, 0);
     ma_atomic_store_32(&e->capture_suspended, 1);
@@ -530,6 +549,7 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
   }
   e->mode = mode;
   e->sample_rate = sample_rate;
+  e->monitor_route_allowed = mode == YT_MODE_OFFLINE ? 1 : 0;
   e->seek_request = -1;
   e->loop_start = 0;
   e->loop_end = 0;
@@ -600,6 +620,7 @@ int32_t yt_engine_start(yt_engine* e) {
 
 int32_t yt_engine_stop(yt_engine* e) {
   if (e == NULL) return -1;
+  ma_atomic_store_f32(&e->monitor_gain, 0.0f);
   ma_atomic_store_32(&e->playing, 0);
   ma_atomic_store_32(&e->capture_suspended, 1);
   if (!e->has_device) return 0;
@@ -709,8 +730,17 @@ void yt_engine_set_track_gain(yt_engine* e, int32_t slot, float gain) {
   ma_atomic_store_f32(&e->gains[slot], gain);
 }
 
+int32_t yt_engine_monitor_available(yt_engine* e) {
+  if (e == NULL) return 0;
+  if (e->mode == YT_MODE_OFFLINE) return 1;
+  return e->mode == YT_MODE_DUPLEX && ma_atomic_load_32(&e->monitor_route_allowed) &&
+         yt_platform_monitor_available();
+}
+
 void yt_engine_set_monitor_gain(yt_engine* e, float gain) {
   if (e == NULL) return;
+  if (!isfinite(gain) || gain < 0.0f || !yt_engine_monitor_available(e)) gain = 0.0f;
+  if (gain > 1.0f) gain = 1.0f;
   ma_atomic_store_f32(&e->monitor_gain, gain);
 }
 
