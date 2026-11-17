@@ -57,7 +57,11 @@ class ResultsSheet extends StatelessWidget {
     final overall = scorer.overallScore(results);
     final attempted = results.where((r) => r.attempted).toList();
     final p = context.yt;
-    final problems = attempted.expand((r) => r.problems).toList()..sort((a, b) => a.score.compareTo(b.score));
+    // Each with the line it is in: tapping one practises that line.
+    final problems = [
+      for (final r in attempted)
+        for (final t in r.problems) (r.line.index, t),
+    ]..sort((a, b) => a.$2.score.compareTo(b.$2.score));
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.8,
@@ -127,12 +131,19 @@ class ResultsSheet extends StatelessWidget {
           if (problems.isNotEmpty) ...[
             const SizedBox(height: 28),
             Text('先练这几个${scorer.reference.language.unit}', style: context.type.titleLarge),
+            const SizedBox(height: 4),
+            Text('点一个${scorer.reference.language.unit}，单独循环练它所在的那一句。', style: context.type.bodySmall),
             const SizedBox(height: 12),
             Wrap(
               spacing: 10,
               runSpacing: 10,
               children: [
-                for (final t in problems.take(12)) _GlyphTile(result: t, language: scorer.reference.language),
+                for (final (line, t) in problems.take(12))
+                  _GlyphTile(
+                    result: t,
+                    language: scorer.reference.language,
+                    onTap: () => Navigator.of(context).pop(LoopLineAction(line)),
+                  ),
               ],
             ),
             const SizedBox(height: 10),
@@ -205,45 +216,55 @@ String _shortIssue(TokenResult t) {
 }
 
 class _GlyphTile extends StatelessWidget {
-  const _GlyphTile({required this.result, required this.language});
+  const _GlyphTile({required this.result, required this.language, required this.onTap});
   final TokenResult result;
   final LyricsLanguage language;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final p = context.yt;
     final color = issueColor(p, result.issues);
     final timing = result.issues.contains(TokenIssue.late) || result.issues.contains(TokenIssue.early);
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(14),
+      side: BorderSide(color: color.withValues(alpha: 0.55), width: 1.4),
+    );
     return Tooltip(
-      message: result.summary,
-      child: Container(
-        width: 68,
-        padding: const EdgeInsets.fromLTRB(4, 10, 4, 8),
-        decoration: BoxDecoration(
-          color: p.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withValues(alpha: 0.55), width: 1.4),
-        ),
-        child: Column(
-          children: [
-            // A word shrinks to fit the tile.
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                result.token.text,
-                maxLines: 1,
-                style: lyricsStyle(
-                  TextStyle(fontSize: 30, height: 1.1, fontWeight: FontWeight.w600, color: color),
-                  language,
+      message: '「${result.token.text}」${result.summary}，点一下练这一句',
+      child: Material(
+        color: p.surface,
+        shape: shape,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            width: 68,
+            padding: const EdgeInsets.fromLTRB(4, 10, 4, 8),
+            child: Column(
+              children: [
+                // A word shrinks to fit the tile.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    result.token.text,
+                    maxLines: 1,
+                    style: lyricsStyle(
+                      TextStyle(fontSize: 30, height: 1.1, fontWeight: FontWeight.w600, color: color),
+                      language,
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 6),
+                Text(
+                  _shortIssue(result),
+                  style: context.type.labelSmall?.copyWith(color: p.inkSoft, fontFeatures: tabular),
+                ),
+                if (timing && (result.issues.contains(TokenIssue.sharp) || result.issues.contains(TokenIssue.flat)))
+                  Text(result.issues.contains(TokenIssue.late) ? '进晚了' : '抢拍', style: context.type.labelSmall),
+              ],
             ),
-            const SizedBox(height: 6),
-            Text(_shortIssue(result),
-                style: context.type.labelSmall?.copyWith(color: p.inkSoft, fontFeatures: tabular)),
-            if (timing && (result.issues.contains(TokenIssue.sharp) || result.issues.contains(TokenIssue.flat)))
-              Text(result.issues.contains(TokenIssue.late) ? '进晚了' : '抢拍', style: context.type.labelSmall),
-          ],
+          ),
         ),
       ),
     );

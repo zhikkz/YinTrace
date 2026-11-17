@@ -88,6 +88,11 @@ class PracticeSession extends ChangeNotifier {
   /// only leads in, and what was sung there before stays in the take.
   double _recordFrom = 0;
 
+  /// The line jumped to (上一句, 下一句, 重唱这一句, after hearing the
+  /// original singer): while playback is still in its lead-in, the music
+  /// belongs to the line before, but this is the line being sung next.
+  int? _aimLine;
+
   /// The run being sung (a pass through the song, or a spell of looping one
   /// line) is one record in the song's history, identified by this time.
   DateTime? _runAt;
@@ -434,6 +439,7 @@ class PracticeSession extends ChangeNotifier {
     _tracker?.reset();
     scorer.startPass(to, fromLine: toLine ?? 0);
     _recordFrom = toLine == null ? 0 : lineSpan(toLine).$1;
+    _aimLine = toLine;
     points.removeWhere((p) => p.time >= seconds - 0.05);
     notifyListeners();
   }
@@ -501,7 +507,22 @@ class PracticeSession extends ChangeNotifier {
     _seekBeforeLine(line);
   }
 
-  int get currentLine => reference.lineIndexAt(position);
+  /// The line in focus: the one shown, and the one 上一句, 下一句,
+  /// 重唱这一句 and 单句循环 move from. While looping, the looped line,
+  /// from its lead-in to its end; while hearing the original singer, the
+  /// line heard; in the lead-in after jumping to a line, that line, though
+  /// the line before may still be sounding. Otherwise the line playing.
+  int get currentLine {
+    if (reference.lines.isEmpty) return -1;
+    final original = originalLine;
+    if (original != null) return original;
+    final at = reference.lineIndexAt(position);
+    if (reviewing) return at; // listening back to the take
+    final loop = loopLine;
+    if (loop != null) return loop;
+    final aim = _aimLine;
+    return aim != null && aim > at ? aim : at;
+  }
 
   /// Pulls captured audio, updates pitch and scores. Call once per frame.
   void tick() {
@@ -541,6 +562,10 @@ class PracticeSession extends ChangeNotifier {
       if (playing || ended) notifyListeners();
       return;
     }
+    // Playback reached the line jumped to: from here the line playing is
+    // the one in focus.
+    final aim = _aimLine;
+    if (aim != null && reference.lineIndexAt(position) >= aim) _aimLine = null;
     var changed = false;
     final t = take;
     final latencyFrames = (_latency * e.sampleRate).round();

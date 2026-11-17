@@ -217,6 +217,59 @@ void main() {
     expect(stored.bestScore, closeTo(whole.score, 1e-9));
   }, skip: lib == null);
 
+  test('上一句 and 下一句 move one line at a time, also while paused in a lead-in', () async {
+    // Lines 0.26 s apart: one second before a line starts, the line before
+    // it is still sounding.
+    await open(gap: 0.26);
+    final lines = session.reference.lines;
+    final e = session.engine!;
+    expect(session.currentLine, 0);
+    session.seekToLine(session.currentLine + 1); // 下一句
+    expect(e.positionSeconds, closeTo(lines[1].start - 1.0, 0.02));
+    expect(lines[0].end, greaterThan(session.position), reason: 'line 0 still sounds here');
+    expect(session.currentLine, 1, reason: 'the line jumped to, not the one still sounding');
+    session.seekToLine(session.currentLine + 1); // 下一句 again, still paused
+    expect(session.currentLine, 2);
+    expect(e.positionSeconds, closeTo(lines[2].start - 1.0, 0.02));
+    session.seekToLine(session.currentLine - 1); // 上一句
+    expect(session.currentLine, 1);
+    session.seekToLine(session.currentLine); // 重唱这一句: the same line
+    expect(session.currentLine, 1);
+    expect(e.positionSeconds, closeTo(lines[1].start - 1.0, 0.02));
+
+    // Played on, the line playing is in focus again.
+    session.play();
+    run(lines[2].start - session.position + 0.3);
+    expect(session.currentLine, 2);
+    session.pause();
+
+    // The progress bar moves to a time, not to a line.
+    session.seek(lines[1].start - 0.5);
+    expect(session.currentLine, 0);
+
+    // Looping: the looped line, from its lead-in on; 下一句 / 上一句 move
+    // the loop one line at a time.
+    session.setLoopLine(1);
+    expect(session.currentLine, 1);
+    session.seekToLine(session.currentLine + 1);
+    expect([session.loopLine, session.currentLine], [2, 2]);
+    session.seekToLine(session.currentLine - 1);
+    session.seekToLine(session.currentLine - 1);
+    expect([session.loopLine, session.currentLine], [0, 0]);
+  }, skip: lib == null);
+
+  test('the line heard from the original singer is the one shown, before and after', () async {
+    await open(gap: 0.26);
+    final lines = session.reference.lines;
+    session.listenOriginal(line: 2);
+    expect(session.position, lessThan(lines[2].start));
+    expect(session.currentLine, 2);
+    run(20); // to the end of the line
+    expect(session.reviewing, isFalse);
+    expect(session.engine!.positionSeconds, closeTo(lines[2].start - 1.0, 0.02));
+    expect(session.currentLine, 2, reason: 'ready to sing the line just heard');
+  }, skip: lib == null);
+
   test('the song from the top again is another run', () async {
     await open();
     session.play();

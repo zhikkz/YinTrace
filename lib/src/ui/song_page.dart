@@ -67,9 +67,18 @@ class _SongPageState extends State<SongPage> {
   }
 
   Future<void> _practice({int? line}) async {
+    Future<void>? saved;
     await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => PracticePage(meta: _meta!, reference: _ref!, contour: _track, loopLine: line),
+      builder: (_) => PracticePage(
+        meta: _meta!,
+        reference: _ref!,
+        contour: _track,
+        loopLine: line,
+        onLeave: (f) => saved = f,
+      ),
     ));
+    // What was just sung is in the history before it is read again.
+    await saved;
     await _load();
   }
 
