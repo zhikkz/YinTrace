@@ -1017,7 +1017,89 @@ void main() {
     expect(find.text('成品 ${kept.first.id}'), findsOneWidget);
     expect(kept.first.start, closeTo(math.max(0, session.take!.startSeconds - 0.2), 0.01));
     expect(session.isPlaying, isFalse);
+
+    // Back from 制作成品: a character to work on opens its line's loop.
+    Navigator.of(tester.element(find.text('成品 ${kept.first.id}'))).pop();
+    await settleIo(tester, rounds: 5);
+    await tester.pump(const Duration(milliseconds: 600)); // the page's exit
+    await tester.tap(find.byTooltip('查看评分'));
+    await settleIo(tester, rounds: 20);
+    final tile = find.descendant(of: find.byType(BottomSheet), matching: find.text('记'));
+    await tester.ensureVisible(tile);
+    await tester.pump();
+    await tester.tap(tile);
+    await settleIo(tester, rounds: 5);
+    await tester.pump(const Duration(milliseconds: 300)); // the sheet's exit
+    expect(session.loopLine, 1, reason: '记 is in the second line');
+    expect(session.currentLine, 1);
     // Dispose the page (and with it the native engine).
+    await tester.pumpWidget(const SizedBox());
+  }, skip: lib == null || lib.isEmpty);
+
+  testWidgets('leaving the practice page keeps what was sung', (tester) async {
+    phone(tester);
+    final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    final before = (await tester.runAsync(() => services.songs.loadHistory(song.id)))!.length;
+    late PracticeSession session;
+    Future<void>? saved;
+    await tester.pumpWidget(
+      host(
+        services,
+        Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => PracticePage(
+                    meta: song,
+                    reference: ref,
+                    onLeave: (f) => saved = f,
+                    sessionFactory: (_) => session = PracticeSession(
+                      meta: song,
+                      reference: ref,
+                      repository: services.songs,
+                      settings: services.settings,
+                      engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+                    ),
+                    backgroundWork: false,
+                  ),
+                ),
+              ),
+              child: const Text('练习'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('练习'));
+    await settleIo(tester, rounds: 10);
+    expect(session.started, isTrue);
+    // The first line, sung; nobody looks at the scores.
+    session.play();
+    final engine = session.engine!;
+    while (engine.positionSeconds < ref.lines[0].end + 0.5) {
+      final pos = engine.positionFrame;
+      final input = Float32List(512);
+      for (var i = 0; i < 512 && pos + i < singer.length; i++) {
+        input[i] = singer[pos + i];
+      }
+      engine.render(512, input: input);
+      await tester.pump(const Duration(milliseconds: 11));
+    }
+    expect(session.scorer.lineResult(0).attempted, isTrue);
+    await tester.tap(find.byType(BackButton));
+    await tester.pump();
+    expect(saved, isNotNull, reason: 'the page below gets the save to wait for');
+    var done = false;
+    saved!.then((_) => done = true);
+    for (var i = 0; i < 60 && !done; i++) {
+      await settleIo(tester, rounds: 1);
+    }
+    expect(done, isTrue);
+    final history = (await tester.runAsync(() => services.songs.loadHistory(song.id)))!;
+    expect(history, hasLength(before + 1));
+    expect(history.last.lineScores.keys, [0]);
+    await settleIo(tester, rounds: 5);
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);
 }

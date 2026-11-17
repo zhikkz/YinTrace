@@ -28,6 +28,7 @@ class PracticePage extends StatefulWidget {
     required this.reference,
     this.contour,
     this.loopLine,
+    this.onLeave,
     this.sessionFactory,
     this.exportPageBuilder,
     this.backgroundWork = true,
@@ -37,6 +38,10 @@ class PracticePage extends StatefulWidget {
   final SongReference reference;
   final PitchTrack? contour;
   final int? loopLine;
+
+  /// Called as the page is left, with the save of what was sung in it: the
+  /// page below can wait for it before it reads the song's history again.
+  final void Function(Future<void> saved)? onLeave;
 
   /// For tests.
   final PracticeSession Function(BuildContext context)? sessionFactory;
@@ -110,11 +115,19 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     }
   }
 
+  /// Leaving the page keeps what was sung in it: the run goes into the
+  /// song's history like when its scores are looked at (one record however
+  /// often). Started once, when the page is popped or else disposed.
+  Future<void>? _leaving;
+
+  Future<void> _saveOnLeave() => _leaving ??= _session.save().then((_) {}, onError: (_) {});
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
     _session.removeListener(_onSession);
+    unawaited(_saveOnLeave()); // before the engine goes: the scores stay
     _session.dispose();
     _awake.release();
     super.dispose();
@@ -218,6 +231,17 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
 
   @override
   Widget build(BuildContext context) {
+    // Runs as the page is popped (back button or swipe), before the page
+    // below continues: it gets the save to wait for.
+    return PopScope(
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) widget.onLeave?.call(_saveOnLeave());
+      },
+      child: _scaffold(context),
+    );
+  }
+
+  Widget _scaffold(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.meta.title, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -323,7 +347,9 @@ class _LiveMeter extends StatelessWidget {
         ? recorded != null && recorded.midi > 0
         : s != null && session.isPlaying && session.clockTime - s.pitch.clockTime < 0.5;
     final sungMidi = reviewing ? recorded?.midi : s?.pitch.midi;
-    final cents = !fresh ? null : (reviewing ? recorded!.cents : s!.deviationCents);
+    // Judged only against a note sounding now: between notes the left shows
+    // the next one, and "准" next to it would read as a verdict on that.
+    final cents = !fresh || current == null ? null : (reviewing ? recorded!.cents : s!.deviationCents);
     String verdict = '';
     Color verdictColor = p.inkFaint;
     final tol = session.settings.toleranceCents.toDouble();
@@ -503,9 +529,10 @@ class _Transport extends StatelessWidget {
     final dur = session.duration;
     final pos = session.position.clamp(0, dur > 0 ? dur : 1).toDouble();
     final li = session.currentLine;
+    final lineCount = session.reference.lines.length;
     final looping = session.loopLine != null;
     // Listening back plays one take; moving between lines is for practising.
-    final practising = !session.reviewing;
+    final practising = !session.reviewing && li >= 0;
     return SafeArea(
       top: false,
       child: Padding(
@@ -533,7 +560,7 @@ class _Transport extends StatelessWidget {
                 IconButton(
                   tooltip: '上一句',
                   icon: const Icon(Icons.skip_previous_rounded, size: 30),
-                  onPressed: practising ? () => session.seekToLine(li - 1) : null,
+                  onPressed: practising && li > 0 ? () => session.seekToLine(li - 1) : null,
                 ),
                 IconButton(
                   tooltip: '重唱这一句',
@@ -552,7 +579,7 @@ class _Transport extends StatelessWidget {
                 IconButton(
                   tooltip: '下一句',
                   icon: const Icon(Icons.skip_next_rounded, size: 30),
-                  onPressed: practising ? () => session.seekToLine(li + 1) : null,
+                  onPressed: practising && li + 1 < lineCount ? () => session.seekToLine(li + 1) : null,
                 ),
                 IconButton(
                   tooltip: looping ? '取消单句循环' : '单句循环',
