@@ -929,7 +929,18 @@ class _MixSheet extends StatefulWidget {
 
 class _MixSheetState extends State<_MixSheet> {
   @override
+  void initState() {
+    super.initState();
+    widget.session.addListener(_sessionChanged);
+  }
+
+  void _sessionChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
+    widget.session.removeListener(_sessionChanged);
     // A slider that was still being dragged when the sheet closed.
     widget.session.settings.save();
     super.dispose();
@@ -940,6 +951,7 @@ class _MixSheetState extends State<_MixSheet> {
     final s = widget.session.settings;
     Future<void> set(void Function() change) async {
       await s.update((_) => change());
+      if (!mounted) return;
       widget.session.applyMix();
       setState(() {});
     }
@@ -997,6 +1009,26 @@ class _MixSheetState extends State<_MixSheet> {
                   s.guideVocalVolume = v;
                   s.guideVocalOn = true;
                 }),
+                onChangeEnd: dragEnd,
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('耳返（有线耳机）'),
+              subtitle: Text(
+                widget.session.monitorAvailable
+                    ? '练习播放时实时听见自己；暂停、听原唱或回听时静音'
+                    : '请连接有线耳机、耳机转接头或 USB 耳机；蓝牙和外放不可用',
+              ),
+              value: widget.session.monitorEnabled,
+              onChanged: widget.session.monitorAvailable ? widget.session.setMonitorEnabled : null,
+            ),
+            slider(
+              '耳返音量',
+              '${(s.monitorVolume * 100).round()}%',
+              Slider(
+                value: s.monitorVolume,
+                onChanged: widget.session.monitorEnabled ? (v) => drag(() => s.monitorVolume = v) : null,
                 onChangeEnd: dragEnd,
               ),
             ),

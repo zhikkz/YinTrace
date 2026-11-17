@@ -32,6 +32,10 @@ class AppSettings extends ChangeNotifier {
   double accompanimentVolume = 0.9;
   double guideVocalVolume = 0.35;
 
+  /// Live microphone monitoring level. Enabling it belongs to each practice
+  /// session, so a new session never opens the live microphone to output.
+  double monitorVolume = 0.5;
+
   /// The original singer plays quietly along while practising (导唱), at
   /// [guideVocalVolume]. Off: the accompaniment alone, the volume kept for
   /// when it is turned on again.
@@ -65,6 +69,8 @@ class AppSettings extends ChangeNotifier {
     micGateDb = (j['micGateDb'] as num?)?.toDouble() ?? micGateDb;
     accompanimentVolume = (j['accompanimentVolume'] as num?)?.toDouble() ?? accompanimentVolume;
     guideVocalVolume = (j['guideVocalVolume'] as num?)?.toDouble() ?? guideVocalVolume;
+    final monitor = (j['monitorVolume'] as num?)?.toDouble();
+    if (monitor != null && monitor.isFinite) monitorVolume = monitor.clamp(0.0, 1.0);
     guideVocalOn = j['guideVocalOn'] as bool? ?? guideVocalOn;
     headphoneTipSeen = j['headphoneTipSeen'] as bool? ?? headphoneTipSeen;
     measurementMode = j['measurementMode'] as bool? ?? measurementMode;
@@ -78,6 +84,7 @@ class AppSettings extends ChangeNotifier {
     'micGateDb': micGateDb,
     'accompanimentVolume': accompanimentVolume,
     'guideVocalVolume': guideVocalVolume,
+    'monitorVolume': monitorVolume,
     'guideVocalOn': guideVocalOn,
     'headphoneTipSeen': headphoneTipSeen,
     'measurementMode': measurementMode,

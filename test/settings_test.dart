@@ -79,6 +79,19 @@ void main() {
     expect(file.readAsStringSync(), '51', reason: 'a save after the queue ran dry starts a new write');
   });
 
+  test('monitor level persists with safe defaults for old or out-of-range settings', () async {
+    final file = File('${tmp.path}/monitor.json')..writeAsStringSync('{}');
+    final settings = await AppSettings.load(file);
+    expect(settings.monitorVolume, 0.5);
+    await settings.update((s) => s.monitorVolume = 0.3);
+    expect((await AppSettings.load(file)).monitorVolume, 0.3);
+    expect(settings.toJson().containsKey('monitorEnabled'), isFalse);
+    for (final (stored, expected) in [(2, 1.0), (-1, 0.0)]) {
+      file.writeAsStringSync(jsonEncode({'monitorVolume': stored}));
+      expect((await AppSettings.load(file)).monitorVolume, expected);
+    }
+  });
+
   test('a failed write is reported and the next one works', () async {
     final blocker = File('${tmp.path}/dir')..writeAsStringSync('a file where the directory should be');
     final writer = LatestStateWriter(File('${blocker.path}/state.txt'), () => 'x');
