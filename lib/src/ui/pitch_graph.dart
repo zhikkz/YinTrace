@@ -142,25 +142,14 @@ class PitchGraphPainter extends CustomPainter {
     // The original singer's real contour, as a hairline.
     final c = contour;
     if (c != null && c.length > 0) {
-      final path = Path();
-      var open = false;
       final f0 = math.max(0, (t0 / c.hopSeconds).floor());
       final f1 = math.min(c.length, (t1 / c.hopSeconds).ceil() + 1);
       final step = math.max(1, ((f1 - f0) / (plotW * 1.5)).floor());
-      for (var f = f0; f < f1; f += step) {
-        final m = c.midi[f];
-        if (m <= 0) {
-          open = false;
-          continue;
-        }
-        final pt = Offset(x(f * c.hopSeconds), y(m + transpose));
-        if (open) {
-          path.lineTo(pt.dx, pt.dy);
-        } else {
-          path.moveTo(pt.dx, pt.dy);
-          open = true;
-        }
-      }
+      final path = pitchContourPath(c,
+          startFrame: f0,
+          endFrame: f1,
+          step: step,
+          position: (f, m) => Offset(x(f * c.hopSeconds), y(m + transpose)));
       canvas.drawPath(
           path,
           Paint()
@@ -313,11 +302,61 @@ class PitchGraphPainter extends CustomPainter {
       old.user != user ||
       old.user.length != user.length ||
       old.reference != reference ||
+      old.contour != contour ||
       old.tokenScores != tokenScores ||
       old.transpose != transpose ||
       old.highlight != highlight ||
       old.revision != revision ||
       old.style.palette != style.palette;
+}
+
+/// Decimates a contour only after checking every frame for discontinuities.
+/// A gap or abrupt pitch jump starts a new stroke even when it lies between
+/// sampled vertices. Keep each stroke's endpoints so zooming out does not
+/// extend it into a pause or truncate its last samples.
+Path pitchContourPath(PitchTrack track, {
+  required int startFrame,
+  required int endFrame,
+  required int step,
+  required Offset Function(int frame, double midi) position,
+}) {
+  assert(step > 0);
+  final path = Path();
+  var previous = -1, emitted = -1;
+  // Allow vibrato and continuous slides, but do not draw a steep connector
+  // for an instantaneous note change or a pitch-estimator octave error.
+  final maxJump = math.max(1.5, 100 * track.hopSeconds);
+  void finishStroke() {
+    if (previous >= 0 && previous != emitted) {
+      final p = position(previous, track.midi[previous]);
+      path.lineTo(p.dx, p.dy);
+    }
+  }
+
+  for (var f = math.max(0, startFrame); f < math.min(track.length, endFrame); f++) {
+    final m = track.midi[f];
+    if (!m.isFinite || m <= 0) {
+      finishStroke();
+      previous = -1;
+      continue;
+    }
+    if (previous >= 0 && (m - track.midi[previous]).abs() > maxJump) {
+      finishStroke();
+      previous = -1;
+    }
+    if (previous < 0) {
+      final p = position(f, m);
+      path.moveTo(p.dx, p.dy);
+      emitted = f;
+    } else if (f - emitted >= step) {
+      final p = position(f, m);
+      path.lineTo(p.dx, p.dy);
+      emitted = f;
+    }
+    previous = f;
+  }
+  finishStroke();
+  return path;
 }
 
 /// Picks a comfortable vertical range around [lo]..[hi].

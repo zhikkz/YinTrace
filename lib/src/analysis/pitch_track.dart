@@ -86,7 +86,7 @@ class PitchAnalysisOptions {
 /// [mono] is sampled at [sampleRate]. The result is resampled to
 /// `options.analysisRate` first, analysed with YIN, then post-processed:
 /// level gate, octave-jump correction, median smoothing and removal of very
-/// short voiced blips.
+/// short voiced blips. Unvoiced frames are kept as gaps throughout cleanup.
 PitchTrack analyzePitch(Float32List mono, int sampleRate,
     {PitchAnalysisOptions options = const PitchAnalysisOptions(),
     void Function(double)? onProgress}) {
@@ -139,7 +139,6 @@ PitchTrack analyzePitch(Float32List mono, int sampleRate,
   _fixOctaveJumps(midi);
   _medianSmooth(midi, 2);
   _removeShortRuns(midi, minFrames: math.max(3, (0.03 * o.analysisRate / o.hop).round()));
-  _bridgeShortGaps(midi, maxFrames: math.max(1, (0.02 * o.analysisRate / o.hop).round()));
   final change = spectralChange(x, o.analysisRate, frames, hop: o.hop, size: o.frameSize);
   onProgress?.call(1);
   return PitchTrack(
@@ -152,12 +151,20 @@ void _fixOctaveJumps(Float32List midi) {
   final n = midi.length;
   final fixed = Float32List.fromList(midi);
   final window = <double>[];
+  var runStart = 0, runEnd = 0;
   for (var i = 0; i < n; i++) {
     final v = midi[i];
     if (v <= 0) continue;
+    if (i >= runEnd) {
+      runStart = i;
+      runEnd = i + 1;
+      while (runEnd < n && midi[runEnd] > 0) {
+        runEnd++;
+      }
+    }
     window.clear();
-    for (var k = math.max(0, i - radius); k < math.min(n, i + radius + 1); k++) {
-      if (midi[k] > 0) window.add(midi[k]);
+    for (var k = math.max(runStart, i - radius); k < math.min(runEnd, i + radius + 1); k++) {
+      window.add(midi[k]);
     }
     if (window.length < 5) continue;
     final med = median(window);
@@ -173,16 +180,24 @@ void _fixOctaveJumps(Float32List midi) {
   midi.setAll(0, fixed);
 }
 
-/// Median filter over voiced frames only (unvoiced frames stay unvoiced).
+/// Median filter within each voiced run; never mix notes across a pause.
 void _medianSmooth(Float32List midi, int radius) {
   final n = midi.length;
   final out = Float32List.fromList(midi);
   final w = <double>[];
+  var runStart = 0, runEnd = 0;
   for (var i = 0; i < n; i++) {
     if (midi[i] <= 0) continue;
+    if (i >= runEnd) {
+      runStart = i;
+      runEnd = i + 1;
+      while (runEnd < n && midi[runEnd] > 0) {
+        runEnd++;
+      }
+    }
     w.clear();
-    for (var k = math.max(0, i - radius); k < math.min(n, i + radius + 1); k++) {
-      if (midi[k] > 0) w.add(midi[k]);
+    for (var k = math.max(runStart, i - radius); k < math.min(runEnd, i + radius + 1); k++) {
+      w.add(midi[k]);
     }
     out[i] = median(w);
   }
@@ -204,29 +219,6 @@ void _removeShortRuns(Float32List midi, {required int minFrames}) {
     if (j - i < minFrames) {
       for (var k = i; k < j; k++) {
         midi[k] = 0;
-      }
-    }
-    i = j;
-  }
-}
-
-/// Fills tiny unvoiced holes when the pitch on both sides agrees.
-void _bridgeShortGaps(Float32List midi, {required int maxFrames}) {
-  final n = midi.length;
-  var i = 1;
-  while (i < n) {
-    if (midi[i] > 0 || midi[i - 1] <= 0) {
-      i++;
-      continue;
-    }
-    var j = i;
-    while (j < n && midi[j] <= 0) {
-      j++;
-    }
-    if (j < n && j - i <= maxFrames && (midi[j] - midi[i - 1]).abs() < 1.0) {
-      final a = midi[i - 1], b = midi[j];
-      for (var k = i; k < j; k++) {
-        midi[k] = a + (b - a) * (k - i + 1) / (j - i + 1);
       }
     }
     i = j;
