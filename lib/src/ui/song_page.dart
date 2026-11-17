@@ -171,8 +171,22 @@ class _SongPageState extends State<SongPage> {
     for (final r in _history) {
       lastLineScores.addAll(r.lineScores);
     }
+    // The lines sung least well the last time, worst first.
+    final weak = [
+      for (final line in ref.lines)
+        if (lastLineScores[line.index] case final s? when s < 80) (line, s),
+    ]..sort((a, b) => a.$2.compareTo(b.$2));
     final p = context.yt;
     return Scaffold(
+      // Always at hand, however far down the lines go.
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+        child: FilledButton.icon(
+          onPressed: () => _practice(),
+          icon: const Icon(Icons.mic_rounded),
+          label: const Text('整首练习'),
+        ),
+      ),
       body: CustomScrollView(
         slivers: [
           SliverAppBar.large(
@@ -235,16 +249,36 @@ class _SongPageState extends State<SongPage> {
                 child: ScoreTrend(history: _history),
               ),
             ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-              child: FilledButton.icon(
-                onPressed: () => _practice(),
-                icon: const Icon(Icons.mic_rounded),
-                label: const Text('整首练习'),
+          if (weak.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('先练这几句', style: context.type.titleLarge),
+                    const SizedBox(height: 2),
+                    Text('上次唱得最不准的几句，点一下单独循环练。', style: context.type.bodySmall),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final (line, score) in weak.take(3))
+                          ActionChip(
+                            avatar: Icon(Icons.repeat_one_rounded, size: 18, color: p.ink),
+                            label: Text(
+                              '${_excerpt(line.text)}  ${score.round()} 分',
+                              style: lyricsStyle(context.type.bodyMedium?.copyWith(color: p.ink), ref.language),
+                            ),
+                            onPressed: () => _practice(line: line.index),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
           if (_recordings.isNotEmpty)
             SliverToBoxAdapter(
               child: Padding(
@@ -356,6 +390,12 @@ class _SongPageState extends State<SongPage> {
       ),
     );
   }
+}
+
+/// The start of a lyric line, short enough for a chip.
+String _excerpt(String text, {int length = 7}) {
+  final chars = text.characters;
+  return chars.length <= length ? text : '${chars.take(length)}…';
 }
 
 String _recordingTitle(Recording r) {
