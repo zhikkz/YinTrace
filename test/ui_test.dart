@@ -177,10 +177,28 @@ void main() {
     await settleIo(tester);
     expect(find.text('夜航（示例）'), findsOneWidget);
     expect(find.text('82'), findsOneWidget);
+    expect(find.textContaining('今天练过'), findsOneWidget);
     // The separation models are not installed: the library offers them.
     expect(find.textContaining('人声分离模型（67 MB）'), findsOneWidget);
     expect(find.widgetWithText(TextButton, '下载'), findsOneWidget);
     await screenshot(tester, '1_library');
+  });
+
+  testWidgets('an empty library says what a song needs, and offers free practice', (tester) async {
+    phone(tester);
+    final empty = AppServices(
+      settings: AppSettings(null),
+      songs: SongRepository(Directory('${tmp.path}/no-songs')),
+      models: services.models,
+    );
+    await tester.pumpWidget(host(empty, const LibraryPage()));
+    await settleIo(tester);
+    expect(find.text('从第一首歌开始'), findsOneWidget);
+    expect(find.text('准备一首歌'), findsOneWidget);
+    expect(find.text('跟着唱'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '导入歌曲'), findsOneWidget);
+    expect(find.textContaining('试试自由练习'), findsOneWidget);
+    await screenshot(tester, '1b_library_empty');
   });
 
   testWidgets('song page shows the per-character pitch map', (tester) async {
@@ -197,6 +215,11 @@ void main() {
     expect(find.byType(LineScoreSparkline), findsNWidgets(2));
     // Every line can be corrected.
     expect(find.byTooltip('校正这一句'), findsNWidgets(2));
+    // The line under 80 the last time is suggested first; the whole song
+    // is one tap away at the bottom.
+    expect(find.text('先练这几句'), findsOneWidget);
+    expect(find.widgetWithText(ActionChip, '下雨了 记得带…  71 分'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '整首练习'), findsOneWidget);
   });
 
   testWidgets('pitch editor moves a character, leaves it out of the score and restores it', (tester) async {
@@ -584,15 +607,20 @@ void main() {
     await tester.pump();
     final start = find.widgetWithText(FilledButton, '分离人声，生成音高图');
     expect(tester.widget<FilledButton>(start).onPressed, isNull);
+    // ...and says why.
+    expect(find.text('还差：选择音频；粘贴带时间的歌词'), findsOneWidget);
     // Removing the harmony is slow, so it is off unless asked for.
     final harmony = find.widgetWithText(SwitchListTile, '去和声');
     expect(tester.widget<SwitchListTile>(harmony).value, isFalse);
     expect(find.text('这一步耗时较长，和声明显时再打开'), findsOneWidget);
     await screenshot(tester, '5a_import_start');
+    await tester.scrollUntilVisible(find.text('从文件读取 .lrc'), 200, scrollable: find.byType(Scrollable).first);
+    await tester.pump(); // builds the lyrics field below it
     await tester.enterText(find.byType(TextField).last, lyrics);
     await tester.pump();
     await tester.scrollUntilVisible(find.text('2 句，17 个字（中文）'), 200, scrollable: find.byType(Scrollable).first);
     expect(find.text('2 句，17 个字（中文）'), findsOneWidget);
+    expect(find.text('还差：选择音频'), findsOneWidget);
     // Bilingual lyrics: the page says what it did with the translation lines.
     await tester.enterText(
       find.byType(TextField).last,
@@ -621,12 +649,66 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('导入 YinTrace 歌曲文件'), findsNothing);
+    await tester.scrollUntilVisible(find.text('从文件读取 .lrc'), 200, scrollable: find.byType(Scrollable).first);
+    await tester.pump(); // builds the lyrics field below it
     expect(tester.widget<TextField>(find.byType(TextField).last).controller!.text, lyrics);
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
+    await tester.pump(const Duration(milliseconds: 500));
     // Then switch to "already separated vocals".
     await tester.tap(find.text('这是已经分离好的纯人声'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('生成逐字音高图'), findsOneWidget);
     await screenshot(tester, '5_import');
+  });
+
+  testWidgets('lyrics come from the clipboard or a .lrc file, and their tags name the song', (tester) async {
+    phone(tester);
+    final lrc = File('${tmp.path}/song.lrc')
+      ..writeAsBytesSync([0xEF, 0xBB, 0xBF, ...utf8.encode('[ti:夜航]\n[ar:演示]\n$lyrics')]);
+    // "[00:01.00]夜里" saved as GBK.
+    final gbk = File('${tmp.path}/gbk.lrc')..writeAsBytesSync([...'[00:01.00]'.codeUnits, 0xD2, 0xB9, 0xC0, 0xEF]);
+    var picked = gbk.path;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.getData') return <String, dynamic>{'text': '$lyrics\n'};
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    await tester.pumpWidget(host(services, ImportPage(pickLyricsFile: () async => picked)));
+    await tester.pump();
+    final scrollable = find.byType(Scrollable).first;
+    String lyricsField() => tester.widget<TextField>(find.byType(TextField).last).controller!.text;
+
+    // Another encoding is refused, with what to do instead.
+    await tester.scrollUntilVisible(find.text('从文件读取 .lrc'), 200, scrollable: scrollable);
+    await tester.pump(); // builds the lyrics field below it
+    await tester.tap(find.text('从文件读取 .lrc'));
+    await settleIo(tester, rounds: 10);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.textContaining('另存为 UTF-8'), findsOneWidget);
+    expect(lyricsField(), isEmpty);
+    expect(gbk.existsSync(), isTrue, reason: 'only the picker\'s own copies are deleted');
+
+    await tester.tap(find.text('粘贴'));
+    await settleIo(tester, rounds: 10);
+    expect(lyricsField(), lyrics.trim());
+    expect(find.text('还差：选择音频'), findsOneWidget);
+
+    // A .lrc file (UTF-8 with a byte order mark) replaces what was there,
+    // which can be had back; its tags name the song.
+    picked = lrc.path;
+    await tester.tap(find.text('从文件读取 .lrc'));
+    await settleIo(tester, rounds: 10);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(lyricsField(), startsWith('[ti:夜航]'));
+    expect(find.text('已替换原来的歌词'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('歌曲信息'), -200, scrollable: scrollable);
+    expect(find.text('夜航'), findsOneWidget);
+    expect(find.text('演示'), findsOneWidget);
+    await screenshot(tester, '5c_import_lyrics_file');
+    tester.widget<SnackBarAction>(find.byType(SnackBarAction)).onPressed(); // 撤销
+    await tester.pump();
+    expect(lyricsField(), lyrics.trim());
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('a song goes to someone else as one file, and comes into a library from it', (tester) async {
@@ -1009,8 +1091,11 @@ void main() {
     // again does not store the same run a second time.
     await tester.tap(find.byTooltip('查看评分'));
     await settleIo(tester, rounds: 20);
+    await tester.pump(const Duration(milliseconds: 500)); // the sheet's entrance
     expect((await tester.runAsync(() => services.songs.loadHistory(song.id)))!.length, 3);
     expect((await tester.runAsync(() => services.songs.load(song.id)))!.practiceCount, 3);
+    await tester.ensureVisible(find.text('制作成品'));
+    await tester.pump();
     await tester.tap(find.text('制作成品'));
     await settleIo(tester, rounds: 20);
     final kept = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!;
@@ -1024,6 +1109,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600)); // the page's exit
     await tester.tap(find.byTooltip('查看评分'));
     await settleIo(tester, rounds: 20);
+    await tester.pump(const Duration(milliseconds: 500)); // the sheet's entrance
     final tile = find.descendant(of: find.byType(BottomSheet), matching: find.text('记'));
     await tester.ensureVisible(tile);
     await tester.pump();

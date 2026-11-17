@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../analysis/lrc.dart';
 import '../analysis/lyrics_language.dart';
@@ -29,6 +32,35 @@ String importRemainingText(Duration? left) {
   return '预计还需约 ${(left.inSeconds / 60).ceil()} 分钟';
 }
 
+/// The text of a lyrics file as text editors and lyrics sites save them:
+/// UTF-8 (with or without a byte order mark) or UTF-16 with one. Null for
+/// anything else, legacy encodings such as GBK included, and for files
+/// too big to be lyrics.
+String? decodeLyricsFile(List<int> bytes) {
+  if (bytes.length > 2 * 1024 * 1024) return null;
+  String? text;
+  if (bytes.length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+    text = _utf8OrNull(bytes.sublist(3));
+  } else if (bytes.length >= 2 && (bytes[0] == 0xFF && bytes[1] == 0xFE || bytes[0] == 0xFE && bytes[1] == 0xFF)) {
+    final little = bytes[0] == 0xFF;
+    text = String.fromCharCodes([
+      for (var i = 2; i + 1 < bytes.length; i += 2) little ? bytes[i] | bytes[i + 1] << 8 : bytes[i] << 8 | bytes[i + 1],
+    ]);
+  } else {
+    text = _utf8OrNull(bytes);
+  }
+  // Text has no NUL characters: this was some other kind of file.
+  return text == null || text.contains('\u0000') ? null : text;
+}
+
+String? _utf8OrNull(List<int> bytes) {
+  try {
+    return utf8.decode(bytes);
+  } on FormatException {
+    return null;
+  }
+}
+
 /// The two ways a song comes into the library; the page offers one at a time.
 enum _ImportSource {
   /// Audio + timed lyrics, separated and measured on this device.
@@ -41,11 +73,12 @@ enum _ImportSource {
 /// Import a song: audio file + timed lyrics -> separated vocal, per
 /// character pitch map, stored locally. Or a song file someone sent.
 class ImportPage extends StatefulWidget {
-  const ImportPage({super.key, this.pickSongFile, this.background = true});
+  const ImportPage({super.key, this.pickSongFile, this.pickLyricsFile, this.background = true});
 
-  /// For tests: picks the song file someone sent, and whether it is read in
-  /// a background isolate.
+  /// For tests: picks the song file someone sent, picks a lyrics file, and
+  /// whether a song file is read in a background isolate.
   final Future<String?> Function()? pickSongFile;
+  final Future<String?> Function()? pickLyricsFile;
   final bool background;
 
   @override
@@ -70,6 +103,12 @@ class _ImportPageState extends State<ImportPage> {
   /// A song file someone sent is being added to the library.
   bool _addingSongFile = false;
 
+  /// What was filled in by the app (from the audio file's name, or the
+  /// lyrics' [ti:] / [ar:] tags): a better guess replaces it, until it is
+  /// edited by hand.
+  String? _autoTitle;
+  String? _autoArtist;
+
   ImportJob? _job;
   StreamSubscription<ImportEvent>? _sub;
   ImportProgress? _progress;
@@ -83,7 +122,21 @@ class _ImportPageState extends State<ImportPage> {
   @override
   void initState() {
     super.initState();
-    _lyrics.addListener(() => setState(() {}));
+    _lyrics.addListener(_onLyricsChanged);
+  }
+
+  /// Lyrics from a player or a lyrics site often name the song and the
+  /// singer ([ti:...], [ar:...]): those fill the fields the user left alone.
+  void _onLyricsChanged() {
+    final tags = _parsed.metadata;
+    final title = tags['ti']?.trim() ?? '', artist = tags['ar']?.trim() ?? '';
+    if (title.isNotEmpty && (_title.text.isEmpty || _title.text == _autoTitle)) {
+      _title.text = _autoTitle = title;
+    }
+    if (artist.isNotEmpty && (_artist.text.isEmpty || _artist.text == _autoArtist)) {
+      _artist.text = _autoArtist = artist;
+    }
+    setState(() {});
   }
 
   @override
@@ -113,12 +166,68 @@ class _ImportPageState extends State<ImportPage> {
       } else {
         _audioPath = path;
         _audioName = f.name;
-        if (_title.text.isEmpty) {
+        // The file's name, unless the user or the lyrics named the song.
+        if (_title.text.isEmpty || (_title.text == _autoTitle && _parsed.metadata['ti'] == null)) {
           final dot = f.name.lastIndexOf('.');
-          _title.text = dot > 0 ? f.name.substring(0, dot) : f.name;
+          _title.text = _autoTitle = dot > 0 ? f.name.substring(0, dot) : f.name;
         }
       }
     });
+  }
+
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// Puts [text] in the lyrics field; lyrics that were there can be had
+  /// back.
+  void _setLyrics(String text, {String done = '已替换原来的歌词'}) {
+    final before = _lyrics.text;
+    _lyrics.text = text;
+    if (before.trim().isEmpty || before == text) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(done),
+          action: SnackBarAction(label: '撤销', onPressed: () => _lyrics.text = before),
+        ),
+      );
+  }
+
+  Future<void> _pasteLyrics() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (!mounted) return;
+    if (text.isEmpty) {
+      _snack('剪贴板里没有文字。先在别的 App 里复制带时间的歌词。');
+      return;
+    }
+    _setLyrics(text);
+  }
+
+  /// Reads a .lrc (or .txt) file picked from Files.
+  Future<void> _readLyricsFile() async {
+    // Any file can be picked: .lrc has no type the picker knows.
+    final path = await (widget.pickLyricsFile ?? () async => (await FilePicker.pickFile(type: FileType.any))?.path)();
+    if (path == null || !mounted) return;
+    String? text;
+    try {
+      text = decodeLyricsFile(await File(path).readAsBytes());
+    } catch (_) {
+      text = null;
+    } finally {
+      discardPickedCopy(path); // read: the picker's copy is not needed
+    }
+    if (!mounted) return;
+    if (text == null || text.trim().isEmpty) {
+      _snack('读不出这个文件里的歌词。请把它另存为 UTF-8 编码的文本，或者复制歌词后点“粘贴”。');
+      return;
+    }
+    _setLyrics(text.trim());
   }
 
   /// A song someone exported from their YinTrace (see `song_package.dart`):
@@ -153,7 +262,18 @@ class _ImportPageState extends State<ImportPage> {
     await Navigator.of(context).pushReplacement(MaterialPageRoute<void>(builder: (_) => SongPage(songId: song.id)));
   }
 
-  LrcParseResult get _parsed => parseLrc(_lyrics.text);
+  /// The lyrics as parsed, once per change of the text.
+  LrcParseResult get _parsed {
+    final text = _lyrics.text;
+    if (_parsedOf != text || _parsedLyrics == null) {
+      _parsedLyrics = parseLrc(text);
+      _parsedOf = text;
+    }
+    return _parsedLyrics!;
+  }
+
+  LrcParseResult? _parsedLyrics;
+  String? _parsedOf;
 
   /// Deletes the picker's copies of the chosen files: the song is in the
   /// library (or will not be imported from this page).
@@ -215,6 +335,9 @@ class _ImportPageState extends State<ImportPage> {
           _discardPicked();
           await services.acceleration.afterImport(song.modelInfo);
           if (!mounted) return;
+          // Done while 取消导入？ was being asked: the question goes.
+          final page = ModalRoute.of(context);
+          if (page != null && !page.isCurrent) Navigator.of(context).popUntil((r) => r == page);
           await Navigator.of(context)
               .pushReplacement(MaterialPageRoute<void>(builder: (_) => SongPage(songId: song.id)));
         case ImportFailedEvent(:final message, :final cancelled):
@@ -237,8 +360,47 @@ class _ImportPageState extends State<ImportPage> {
     _job = null;
   }
 
+  /// Whether to stop the import running: minutes of work are lost.
+  Future<bool> _confirmCancel() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('取消导入？'),
+        content: const Text('已经处理的部分不会保存，下次要从头开始。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('继续导入')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('取消导入', style: TextStyle(color: ctx.yt.cinnabar)),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _cancel() async {
+    if (!await _confirmCancel()) return;
     await _job?.cancel();
+  }
+
+  /// What the start button still waits for, or null when it can start.
+  String? _missing(LrcParseResult parsed) {
+    final missing = [
+      if (_audioPath == null) '选择音频',
+      if (_lyrics.text.trim().isEmpty)
+        '粘贴带时间的歌词'
+      else if (parsed.lines.isEmpty)
+        '歌词每一行前面要有时间，如 [00:12.40]',
+    ];
+    return missing.isEmpty ? null : '还差：${missing.join('；')}';
+  }
+
+  /// Going back while a song is being separated asks first; leaving then
+  /// cancels it (see [dispose]).
+  Future<void> _onBack(bool didPop) async {
+    if (didPop || _progress == null) return;
+    if (await _confirmCancel() && mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -246,8 +408,10 @@ class _ImportPageState extends State<ImportPage> {
     final busy = _progress != null || _addingSongFile;
     final parsed = _parsed;
     final canStart = !busy && _audioPath != null && parsed.lines.isNotEmpty;
+    final missing = _missing(parsed);
     return PopScope(
       canPop: !busy,
+      onPopInvokedWithResult: (didPop, _) => _onBack(didPop),
       child: Scaffold(
         appBar: AppBar(title: Text(busy ? '' : '导入歌曲')),
         body: _addingSongFile
@@ -270,9 +434,21 @@ class _ImportPageState extends State<ImportPage> {
                 minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
                 child: _source == _ImportSource.songFile
                     ? FilledButton(onPressed: _importSongFile, child: const Text('选择 YinTrace 文件'))
-                    : FilledButton(
-                        onPressed: canStart ? _start : null,
-                        child: Text(_vocalsOnly ? '生成逐字音高图' : '分离人声，生成音高图'),
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // A button that does nothing says why.
+                          if (missing != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(missing, textAlign: TextAlign.center, style: context.type.bodySmall),
+                            ),
+                          FilledButton(
+                            onPressed: canStart ? _start : null,
+                            child: Text(_vocalsOnly ? '生成逐字音高图' : '分离人声，生成音高图'),
+                          ),
+                        ],
                       ),
               ),
       ),
@@ -447,9 +623,35 @@ class _ImportPageState extends State<ImportPage> {
         context,
         3,
         '带时间的歌词',
-        hint: '每行写成 [分:秒.百分秒]歌词，时间是这句开始唱的时刻。中文、英文、日文都可以；'
-            '中文的空格表示停顿。日文汉字后面可以用括号写读音，比如 心(こころ)，对得更准。',
+        hint: '每行写成 [分:秒.百分秒]歌词，时间是这句开始唱的时刻，音乐软件和歌词网站下载的 .lrc 歌词就是这样。'
+            '中文、英文、日文都可以；中文的空格表示停顿。日文汉字后面可以用括号写读音，比如 心(こころ)，对得更准。',
       ),
+      // Lyrics come from somewhere else: the clipboard, or a .lrc file.
+      Wrap(
+        spacing: 4,
+        children: [
+          TextButton.icon(
+            onPressed: _pasteLyrics,
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.content_paste_rounded, size: 18),
+            label: const Text('粘贴'),
+          ),
+          TextButton.icon(
+            onPressed: _readLyricsFile,
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.description_outlined, size: 18),
+            label: const Text('从文件读取 .lrc'),
+          ),
+          if (_lyrics.text.isNotEmpty)
+            TextButton.icon(
+              onPressed: () => _setLyrics('', done: '已清空歌词'),
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact, foregroundColor: p.inkSoft),
+              icon: const Icon(Icons.clear_rounded, size: 18),
+              label: const Text('清空'),
+            ),
+        ],
+      ),
+      const SizedBox(height: 6),
       TextField(
         controller: _lyrics,
         minLines: 9,

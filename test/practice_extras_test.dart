@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:yintrace/src/practice/live_pitch.dart';
 import 'package:yintrace/src/practice/scoring.dart';
 import 'package:yintrace/src/practice/take_recorder.dart';
 import 'package:yintrace/src/ui/import_page.dart';
+import 'package:yintrace/src/ui/library_page.dart';
 import 'package:yintrace/src/ui/results_sheet.dart';
 import 'package:yintrace/src/ui/score_trend.dart';
 import 'package:yintrace/src/ui/theme.dart';
@@ -213,6 +215,30 @@ void main() {
       await tester.tap(find.text('不循环了，回到整首'));
       await tester.pumpAndSettle();
       expect(closedWith, isA<WholeSongAction>());
+    });
+  });
+
+  group('pages', () {
+    test('a lyrics file reads as UTF-8 or UTF-16; other encodings are refused, not garbled', () {
+      const lrc = '[ti:夜航]\n[00:01.00]夜里的风';
+      final utf16le = [0xFF, 0xFE, for (final u in lrc.codeUnits) ...[u & 0xFF, u >> 8]];
+      final utf16be = [0xFE, 0xFF, for (final u in lrc.codeUnits) ...[u >> 8, u & 0xFF]];
+      expect(decodeLyricsFile(utf8.encode(lrc)), lrc);
+      expect(decodeLyricsFile([0xEF, 0xBB, 0xBF, ...utf8.encode(lrc)]), lrc);
+      expect(decodeLyricsFile(utf16le), lrc);
+      expect(decodeLyricsFile(utf16be), lrc);
+      // "[00:01.00]夜里" in GBK.
+      expect(decodeLyricsFile([...'[00:01.00]'.codeUnits, 0xD2, 0xB9, 0xC0, 0xEF]), isNull);
+      expect(decodeLyricsFile([0x49, 0x44, 0x33, 0x00, 0x00]), isNull, reason: 'an mp3, not text');
+    });
+
+    test('when a song was last practised reads the way people say it', () {
+      final now = DateTime(2026, 11, 17, 9, 30);
+      expect(practicedWhen(DateTime(2026, 11, 17, 0, 5), now), '今天练过');
+      expect(practicedWhen(DateTime(2026, 11, 16, 23, 50), now), '昨天练过');
+      expect(practicedWhen(DateTime(2026, 11, 13, 12), now), '4 天前练过');
+      expect(practicedWhen(DateTime(2026, 10, 2), now), '10 月 2 日练过');
+      expect(practicedWhen(DateTime(2025, 12, 30), now), '2025 年 12 月练过');
     });
   });
 
