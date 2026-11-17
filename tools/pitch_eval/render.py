@@ -15,10 +15,14 @@ The clips are taken in name order, at most 16 per singer (spread over the
 singer's clips), or every N-th of those. Each becomes 16 kHz mono float32
 files, peak at -6 dBFS:
 
-- clean: the voice alone (a separated vocal at its best);
-- mix+5, mix+0: the voice with the accompaniment 5 dB and 0 dB below it
-  in energy (bleed through the separation, or a phone speaker into the
-  microphone);
+- clean: the voice alone (a separated vocal at its best, or the singer
+  through headphones);
+- mix+5, mix+0: the voice with the accompaniment 5 dB below it and at the
+  same energy. mix+0 is MIR-1K's usual mix: `separate.dart` separates it
+  the way an import does (sep+0), which is what the app measures. As
+  conditions of their own they are stress tests: accompaniment left in a
+  poorly separated vocal, or a phone speaker heard by the microphone
+  while practising. The app never measures the pitch of a mix;
 - reverb: the voice with a room (RT60 0.9 s) added at -3 dB (most
   commercial vocals).
 """
