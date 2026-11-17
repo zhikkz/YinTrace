@@ -31,6 +31,15 @@ class TakeRecorder {
 
   bool get isEmpty => _samples == null;
 
+  /// How long a voice was heard in the take (the points with a pitch, one
+  /// per [hopSeconds]); the audio itself is recorded whether anyone sings
+  /// or not.
+  double voicedSeconds({double hopSeconds = 0.01}) => _voiced * hopSeconds;
+
+  /// How many of [points] have a pitch, kept up to date as they come and
+  /// are replaced (asked for on every frame).
+  int _voiced = 0;
+
   /// Mono samples of the whole song (silent where nothing was sung).
   Float32List? get samples => _samples;
 
@@ -70,10 +79,12 @@ class TakeRecorder {
     // Points of an earlier take between this pass's previous point and p.
     var j = i + 1;
     while (j < points.length && points[j].time <= p.time + same) {
+      if (points[j].midi > 0) _voiced--;
       j++;
     }
     points.removeRange(i + 1, j);
     points.insert(i + 1, p);
+    if (p.midi > 0) _voiced++;
     _cursor = i + 1;
   }
 

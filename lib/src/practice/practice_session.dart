@@ -529,26 +529,34 @@ class PracticeSession extends ChangeNotifier {
     play();
   }
 
-  /// The line in focus: the one shown, and the one 上一句, 下一句,
-  /// 重唱这一句 and 单句循环 move from. While looping, the looped line,
-  /// from its lead-in to its end; while hearing the original singer, the
-  /// line heard; in the lead-in after jumping to a line, that line, though
-  /// the line before may still be sounding. Otherwise the line playing,
-  /// and once it is over (an interlude), the line coming up.
+  /// The line 上一句, 下一句, 重唱这一句 and 单句循环 move from. While
+  /// looping, the looped line, from its lead-in to its end; while hearing
+  /// the original singer, the line heard; in the lead-in after jumping to a
+  /// line, that line, though the line before may still be sounding.
+  /// Otherwise the line last begun (the first one before it): right after
+  /// singing a line, 重唱这一句 is that line again.
   int get currentLine {
-    final lines = reference.lines;
-    if (lines.isEmpty) return -1;
+    if (reference.lines.isEmpty) return -1;
     final original = originalLine;
     if (original != null) return original;
-    final t = position;
-    final at = reference.lineIndexAt(t);
+    final at = reference.lineIndexAt(position);
     if (reviewing) return at; // listening back to the take
     final loop = loopLine;
     if (loop != null) return loop;
     final aim = _aimLine;
-    if (aim != null && aim > at) return aim;
-    if (at + 1 < lines.length && t >= lines[at].start && t > lines[at].end + lineOverSeconds) return at + 1;
-    return at;
+    return aim != null && aim > at ? aim : at;
+  }
+
+  /// The line shown with its lyrics: [currentLine], except that once it is
+  /// over (an interlude), the line coming up, which the countdown, 跳过间奏
+  /// and 听这句原唱 are about.
+  int get shownLine {
+    final li = currentLine;
+    if (li < 0 || reviewing || loopLine != null) return li;
+    final lines = reference.lines;
+    final t = position;
+    if (li + 1 < lines.length && t >= lines[li].start && t > lines[li].end + lineOverSeconds) return li + 1;
+    return li;
   }
 
   /// How long after its last character a line gives way to the next one.
@@ -662,6 +670,10 @@ class PracticeSession extends ChangeNotifier {
     ];
     if (lines.isEmpty) return null;
     final sung = [for (final i in lines) results[i]];
+    // Played is not sung: the scorer takes a line as attempted once it has
+    // played. A run in which no voice was heard on its notes (listening,
+    // a silent microphone) is not a practice run to keep.
+    if (!sung.any((r) => r.tokens.any((t) => t.attempted && t.coverage > 0))) return null;
     var at = _runAt;
     if (at == null) {
       // The time identifies the record: no two runs share one.

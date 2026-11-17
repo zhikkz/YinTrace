@@ -42,6 +42,7 @@ import 'package:yintrace/src/ui/pitch_editor_page.dart';
 import 'package:yintrace/src/ui/pitch_graph.dart';
 import 'package:yintrace/src/ui/settings_page.dart';
 import 'package:yintrace/src/ui/practice_page.dart';
+import 'package:yintrace/src/ui/results_sheet.dart';
 import 'package:yintrace/src/ui/score_trend.dart';
 import 'package:yintrace/src/ui/song_page.dart';
 import 'package:yintrace/src/ui/song_share.dart';
@@ -279,7 +280,12 @@ void main() {
       await tester.tap(find.text('升半音'));
       await tester.pump();
     }
+    // The writes are queued one after another: wait for the last one
+    // (a busy machine takes longer than the 10 rounds that used to be here).
     await settleIo(tester, rounds: 10);
+    for (var i = 0; i < 40 && (await stored()).shift != 14; i++) {
+      await settleIo(tester, rounds: 2);
+    }
     expect((await stored()).shift, 14);
     expect(find.textContaining('调高了 14 个半音'), findsOneWidget);
 
@@ -909,6 +915,17 @@ void main() {
     await screenshot(tester, '9b_benchmark_start');
   });
 
+  /// Opens the scores the way the singer does; the sheet comes up once the
+  /// run is saved, which takes a while on a busy machine.
+  Future<void> openScores(WidgetTester tester) async {
+    await tester.tap(find.byTooltip('查看评分'));
+    for (var i = 0; i < 80 && find.byType(ResultsSheet).evaluate().isEmpty; i++) {
+      await settleIo(tester, rounds: 2);
+    }
+    expect(find.byType(ResultsSheet), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 600)); // the sheet's entrance
+  }
+
   final lib = Platform.environment['YINTRACE_AUDIO_LIB'];
   testWidgets('practice page scores a singer through the native engine', (tester) async {
     phone(tester);
@@ -1016,9 +1033,7 @@ void main() {
     final overall = session.scorer.overallScore();
     expect(overall, inInclusiveRange(55, 92));
 
-    await tester.tap(find.byTooltip('查看评分'));
-    await settleIo(tester, rounds: 40);
-    await tester.pump(const Duration(seconds: 1));
+    await openScores(tester);
     expect(find.text('先练这几个字'), findsOneWidget);
     await screenshot(tester, '4_results');
     final history = await tester.runAsync(() => services.songs.loadHistory(song.id));
@@ -1089,9 +1104,7 @@ void main() {
 
     // Keep the take and make a finished track of it. Looking at the scores
     // again does not store the same run a second time.
-    await tester.tap(find.byTooltip('查看评分'));
-    await settleIo(tester, rounds: 20);
-    await tester.pump(const Duration(milliseconds: 500)); // the sheet's entrance
+    await openScores(tester);
     expect((await tester.runAsync(() => services.songs.loadHistory(song.id)))!.length, 3);
     expect((await tester.runAsync(() => services.songs.load(song.id)))!.practiceCount, 3);
     await tester.ensureVisible(find.text('制作成品'));
@@ -1107,9 +1120,7 @@ void main() {
     Navigator.of(tester.element(find.text('成品 ${kept.first.id}'))).pop();
     await settleIo(tester, rounds: 5);
     await tester.pump(const Duration(milliseconds: 600)); // the page's exit
-    await tester.tap(find.byTooltip('查看评分'));
-    await settleIo(tester, rounds: 20);
-    await tester.pump(const Duration(milliseconds: 500)); // the sheet's entrance
+    await openScores(tester);
     final tile = find.descendant(of: find.byType(BottomSheet), matching: find.text('记'));
     await tester.ensureVisible(tile);
     await tester.pump();
@@ -1220,6 +1231,40 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);
 
+  testWidgets('listening without singing and going back keeps nothing and asks nothing', (tester) async {
+    phone(tester);
+    final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    final before = (await tester.runAsync(() => services.songs.loadHistory(song.id)))!.length;
+    final count = (await tester.runAsync(() => services.songs.load(song.id)))!.practiceCount;
+    late PracticeSession session;
+    Future<void>? saved;
+    await tester.pumpWidget(practiceLauncher(ref, onSession: (s) => session = s, onLeave: (f) => saved = f));
+    await tester.tap(find.text('练习'));
+    await settleIo(tester, rounds: 10);
+    session.play();
+    final engine = session.engine!;
+    while (engine.positionSeconds < ref.lines[0].end + 0.5) {
+      engine.render(512, input: Float32List(512)); // the song plays; nobody sings
+      await tester.pump(const Duration(milliseconds: 11));
+    }
+    await tester.tap(find.byType(BackButton));
+    await tester.pump();
+    expect(find.text('保存刚才唱的录音？'), findsNothing);
+    expect(saved, isNotNull);
+    var done = false;
+    saved!.then((_) => done = true);
+    for (var i = 0; i < 60 && !done; i++) {
+      await settleIo(tester, rounds: 1);
+    }
+    expect(done, isTrue);
+    expect((await tester.runAsync(() => services.songs.loadHistory(song.id)))!, hasLength(before));
+    expect((await tester.runAsync(() => services.songs.load(song.id)))!.practiceCount, count);
+    await settleIo(tester, rounds: 5);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.byType(PracticePage), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  }, skip: lib == null || lib.isEmpty);
+
   testWidgets('practice: 导唱 on and off, and keeping the recording on the way out', (tester) async {
     phone(tester);
     final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
@@ -1263,8 +1308,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400)); // the question's entrance
     await tester.tap(find.text('保存'));
-    await settleIo(tester, rounds: 20);
-    await tester.pump(const Duration(milliseconds: 600));
+    // Kept (the encoding takes its time), then the page goes.
+    for (var i = 0; i < 80 && find.byType(PracticePage).evaluate().isNotEmpty; i++) {
+      await settleIo(tester, rounds: 2);
+      await tester.pump(const Duration(milliseconds: 100));
+    }
     expect(find.byType(PracticePage), findsNothing);
     final kept = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!;
     expect(kept, hasLength(recordings + 1));

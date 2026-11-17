@@ -258,20 +258,61 @@ void main() {
     expect([session.loopLine, session.currentLine], [0, 0]);
   }, skip: lib == null);
 
-  test('an interlude leads in to the next line; skipping it leaves time to get ready', () async {
+  test('an interlude shows the line coming up; skipping it leaves time to get ready', () async {
     await open(gap: 7);
     final lines = session.reference.lines;
     session.play();
     run(lines[0].end + 0.2);
-    expect(session.currentLine, 0, reason: 'its last character just ended');
+    expect(session.shownLine, 0, reason: 'its last character just ended');
     run(PracticeSession.lineOverSeconds);
-    expect(session.currentLine, 1, reason: 'the interlude belongs to the line coming up');
-    // 跳过间奏: to three seconds before it, the line in focus.
-    session.seekToLine(1, leadIn: 3);
+    expect(session.shownLine, 1, reason: 'the interlude leads in to the line coming up');
+    expect(session.currentLine, 0, reason: '重唱这一句 is still the line just sung');
+    // 跳过间奏: to three seconds before the line shown.
+    session.seekToLine(session.shownLine, leadIn: 3);
     expect(session.engine!.positionSeconds, closeTo(lines[1].start - 3, 0.02));
-    expect(session.currentLine, 1);
+    expect([session.currentLine, session.shownLine], [1, 1]);
     run(3.6, from: lines[1].start - 0.1, to: lines[1].end + 0.1);
     expect(session.scorer.lineResult(1).attempted, isTrue);
+  }, skip: lib == null);
+
+  test('right after singing a line, the buttons are about that line', () async {
+    await open(gap: 2);
+    final lines = session.reference.lines;
+    session.play();
+    run(lines[0].end + 1.0); // a second into the gap after line 0
+    expect(session.shownLine, 1, reason: 'the lyrics show the line coming up');
+    session.pause();
+    // 重唱这一句: line 0 again.
+    session.seekToLine(session.currentLine);
+    expect(session.engine!.positionSeconds, closeTo(math.max(0, lines[0].start - 1.0), 0.02));
+    // From the gap again: 单句循环 loops line 0, 下一句 goes to line 1.
+    session.seek(lines[0].end + 1.0);
+    session.setLoopLine(session.currentLine);
+    expect(session.loopLine, 0);
+    session.setLoopLine(null);
+    session.seek(lines[0].end + 1.0);
+    session.seekToLine(session.currentLine + 1);
+    expect(session.engine!.positionSeconds, closeTo(lines[1].start - 1.0, 0.02));
+    expect(session.currentLine, 1);
+  }, skip: lib == null);
+
+  test('a run nobody sang in is not kept', () async {
+    await open();
+    final lines = session.reference.lines;
+    session.play();
+    run(lines[1].end + 0.3, to: 0); // the song plays, the microphone is silent
+    expect(session.scorer.lineResult(0).attempted, isTrue, reason: 'played counts as attempted for the scores');
+    expect(await session.save(), isNull);
+    expect(await repo.loadHistory(meta.id), isEmpty);
+    expect((await repo.load(meta.id)).practiceCount, 0);
+    expect(session.take!.voicedSeconds(), 0);
+    // Singing after that is a run like any other.
+    session.seekToLine(0);
+    run(lines[0].end - lines[0].start + 1.3, from: lines[0].start - 0.1);
+    expect(session.take!.voicedSeconds(), greaterThan(2));
+    final record = (await session.save())!;
+    expect(record.lineScores.keys, contains(0));
+    expect(await repo.loadHistory(meta.id), hasLength(1));
   }, skip: lib == null);
 
   test('从头再唱 starts another run from the top, playing', () async {
