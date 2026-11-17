@@ -87,7 +87,6 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
           repository: services.songs,
           settings: services.settings,
           loopLine: widget.loopLine,
-          pitchSource: services.livePitch,
         );
     _session.addListener(_onSession);
     _awake.hold();

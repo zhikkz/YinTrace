@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:isolate';
 import 'dart:math' as math;
 
@@ -43,7 +42,6 @@ class PracticeSession extends ChangeNotifier {
     this.loopLine,
     PracticeEngine Function()? engineFactory,
     this.decodeInBackground = true,
-    this.pitchSource,
   }) : _engineFactory = engineFactory ?? (() => PracticeEngine.create(mode: EngineMode.duplex)) {
     scorer = PracticeScorer(reference, options: _scoringOptions())..onlyLine = loopLine;
   }
@@ -58,18 +56,12 @@ class PracticeSession extends ChangeNotifier {
   /// Decode the tracks in a background isolate (keeps the UI responsive).
   final bool decodeInBackground;
 
-  /// Measures the singer's pitch (the app: the pitch model); null: YIN.
-  final LivePitchFactory? pitchSource;
-
   /// When set, the run loops this line.
   int? loopLine;
 
   late PracticeScorer scorer;
   PracticeEngine? _engine;
-  LivePitchSource? _tracker;
-
-  /// What measures the singer's pitch ('SwiftF0' or 'YIN'), once started.
-  String? get pitchDetector => _tracker?.detector;
+  LivePitchTracker? _tracker;
   int _endCount = 0;
   double _latency = 0;
   double _clock = 0;
@@ -218,18 +210,10 @@ class PracticeSession extends ChangeNotifier {
       applyMix();
       final period = e.periodFrames / e.sampleRate;
       _latency = NativeAudio.sessionLatency + period + settings.latencyOffsetMs / 1000.0;
-      final options = LivePitchOptions(gateDb: settings.micGateDb, latencySeconds: _latency);
-      final source = pitchSource;
-      final tracker = source == null
-          ? LivePitchTracker(sampleRate: e.sampleRate, options: options)
-          : await source(sampleRate: e.sampleRate, options: options);
-      if (_engine != e) {
-        // Disposed while the model was loading.
-        unawaited(tracker.close());
-        return;
-      }
-      _tracker = tracker;
-      scorer.sampleInterval = tracker.frameSeconds;
+      _tracker = LivePitchTracker(
+        sampleRate: e.sampleRate,
+        options: LivePitchOptions(gateDb: settings.micGateDb, latencySeconds: _latency),
+      );
       take = TakeRecorder(
         sampleRate: e.sampleRate,
         lengthFrames: math.max(e.lengthFrames, (meta.duration * e.sampleRate).ceil()),
@@ -656,10 +640,12 @@ class PracticeSession extends ChangeNotifier {
     final (from, to) = _recordSpan;
     final fromFrame = (from * e.sampleRate).round();
     final toFrame = to.isFinite ? (to * e.sampleRate).round() : null;
-    // YIN takes over when the model fails, with samples closer together.
-    scorer.sampleInterval = tr.frameSeconds;
-    void measured(List<LivePitch> samples) {
-      for (final p in samples) {
+    for (final block in e.readCapture()) {
+      if (block.playing) {
+        t?.addAudio(block.samples, block.songFrame, latencyFrames, fromFrame: fromFrame, toFrame: toFrame);
+        _runSeconds += block.samples.length / e.sampleRate;
+      }
+      for (final p in tr.addBlock(block.samples, block.songFrame, block.clockFrame, block.playing)) {
         final s = scorer.add(p);
         lastSample = s;
         if (p.voiced) lastVoiced = s;
@@ -672,16 +658,6 @@ class PracticeSession extends ChangeNotifier {
         changed = true;
       }
     }
-
-    for (final block in e.readCapture()) {
-      if (block.playing) {
-        t?.addAudio(block.samples, block.songFrame, latencyFrames, fromFrame: fromFrame, toFrame: toFrame);
-        _runSeconds += block.samples.length / e.sampleRate;
-      }
-      measured(tr.addBlock(block.samples, block.songFrame, block.clockFrame, block.playing));
-    }
-    // The pitch model measures in the background: what it finished since.
-    measured(tr.takeReady());
     if (points.length > 4000) {
       final cut = points.indexWhere((p) => p.time > position - _keepSeconds);
       if (cut > 0) points.removeRange(0, cut);
@@ -782,9 +758,6 @@ class PracticeSession extends ChangeNotifier {
       } catch (_) {}
       e.dispose();
     }
-    final tracker = _tracker;
-    _tracker = null;
-    if (tracker != null) unawaited(tracker.close().catchError((_) {}));
     super.dispose();
   }
 }

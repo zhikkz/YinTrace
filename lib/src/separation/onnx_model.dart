@@ -21,17 +21,12 @@ class OnnxTensorModel implements TensorModel {
   /// with ONNX Runtime's Core ML options (e.g. `{'ModelFormat':
   /// 'MLProgram', 'MLComputeUnits': 'CPUAndGPU'}`). The app uses it for the
   /// vocal model (see VocalAcceleration); the karaoke model stays on the CPU.
-  ///
-  /// [sessionConfigs] are ONNX Runtime session config entries, e.g.
-  /// `{'session.intra_op.allow_spinning': '0'}` so that the threads of a
-  /// model run many times a second sleep between the runs.
   static Future<OnnxTensorModel> load(
     String path, {
     String? inputName,
     String? outputName,
     int? threads,
     Map<String, String>? coreML,
-    Map<String, String>? sessionConfigs,
   }) async {
     final ort = OnnxRuntime();
     final providers = <OrtProvider>[if (coreML != null) OrtProvider.CORE_ML, OrtProvider.CPU];
@@ -42,7 +37,6 @@ class OnnxTensorModel implements TensorModel {
         intraOpNumThreads: threads ?? 4,
         useArena: false,
         coreMLOptions: coreML,
-        sessionConfigs: sessionConfigs,
       ),
     );
     final inName = inputName != null && session.inputNames.contains(inputName)

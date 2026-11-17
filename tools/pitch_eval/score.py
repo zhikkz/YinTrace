@@ -3,7 +3,7 @@
 
     python tools/pitch_eval/score.py <rendered dir> <tracks dir> [conditions...]
 
-Reads what `yin_eval.dart` and `model_eval.dart` wrote. The labels are MIDI
+Reads what `run_app.dart` wrote. The labels are MIDI
 notes every 20 ms, the first at 20 ms (0 = unvoiced); every track is read at
 the label times (nearest frame). The metrics are the usual ones of melody
 extraction (Salamon et al.), with 50 cents for a correct pitch:
@@ -80,18 +80,19 @@ def main():
         'YIN, import': ('yin_offline', 'grid'),
         'SwiftF0, import': ('model_offline', 'grid'),
         'YIN, practice': ('yin_live', 'pairs'),
-        'SwiftF0, practice': ('model_live', 'pairs'),
     }
     for cond in conds:
         scores = {k: Score() for k in kinds}
         clips = 0
         for clip in meta['clips']:
             paths = {k: os.path.join(tracks, f"{clip['name']}.{cond}.{suffix}.f32") for k, (suffix, _) in kinds.items()}
-            if not all(os.path.exists(p) for p in paths.values()):
+            if not any(os.path.exists(p) for p in paths.values()):
                 continue
             clips += 1
             t, gt = labels(clip)
             for k, (_, layout) in kinds.items():
+                if not os.path.exists(paths[k]):
+                    continue
                 y = read(paths[k])
                 if layout == 'grid':  # hop, then midi per frame
                     times, midi = np.arange(len(y) - 1) * y[0], y[1:]

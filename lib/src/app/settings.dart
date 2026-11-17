@@ -50,8 +50,9 @@ class AppSettings extends ChangeNotifier {
   /// Seconds of the pitch graph visible during practice.
   double practiceWindowSeconds = 6;
 
-  /// Test builds: measure the pitch with YIN instead of the pitch model,
-  /// to compare the two (practice, free practice and new imports).
+  /// Test builds: imports measure the original singer's pitch with YIN
+  /// instead of the pitch model, to compare the two. (The singer's own
+  /// pitch is measured with YIN either way.)
   bool yinPitch = false;
 
   static Future<AppSettings> load(File file) async {

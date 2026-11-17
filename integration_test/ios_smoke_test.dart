@@ -17,7 +17,6 @@ import 'package:yintrace/src/dsp/resampler.dart';
 import 'package:yintrace/src/dsp/swift_f0.dart';
 import 'package:yintrace/src/models/model_catalog.dart';
 import 'package:yintrace/src/models/pitch_model.dart';
-import 'package:yintrace/src/practice/live_pitch.dart';
 import 'package:yintrace/src/separation/model_config.dart';
 import 'package:yintrace/src/separation/onnx_model.dart';
 import 'package:yintrace/src/ui/app.dart';
@@ -60,47 +59,31 @@ void main() {
       expect(entries.any((e) => e.packages.contains('Ultimate Vocal Remover GUI')), isTrue);
       expect(entries.any((e) => e.packages.contains('SwiftF0')), isTrue);
 
-      // The bundled pitch model through the real plugin: for live use (one
-      // thread, no spinning) and for imports (the pipeline's loader).
+      // The bundled pitch model through the real plugin, loaded the way the
+      // import pipeline loads it: it measures the original singer.
       final pitchPath = services.pitchModelPath;
       expect(pitchPath, isNotNull, reason: 'the bundled pitch model is installed at start-up');
       final tone = Float32List(16000);
       for (var i = 0; i < tone.length; i++) {
         tone[i] = 0.2 * (math.sin(2 * math.pi * 220 * i / 16000) + 0.5 * math.sin(2 * math.pi * 440 * i / 16000));
       }
-      final live = SwiftF0(await loadLivePitchModel(pitchPath!));
+      final pitch = SwiftF0(await OnnxTensorModel.load(
+        pitchPath!,
+        inputName: PitchModel.inputName,
+        outputName: PitchModel.outputName,
+      ));
       try {
         final watch = Stopwatch()..start();
-        final frames = await live.run(tone);
+        final frames = await pitch.run(tone);
         final mid = [for (var i = 8; i < frames.length - 8; i++) i];
         expect(mid.every((i) => frames.confidence[i] >= SwiftF0.voicedConfidence), isTrue);
         expect(mid.every((i) => (frames.hz[i] - 220).abs() < 3), isTrue, reason: '${frames.hz.sublist(8, 12)}');
         // ignore: avoid_print
         print('iOS simulator: pitch model 1 s of audio in ${watch.elapsedMilliseconds} ms');
-      } finally {
-        await live.model.close();
-      }
-      final tracker = await services.livePitch(sampleRate: 48000, options: const LivePitchOptions());
-      expect(tracker.detector, 'SwiftF0', reason: '${services.pitchModelFailure}');
-      final up = Float32List.fromList(resample(tone, 16000, 48000));
-      final measured = <LivePitch>[];
-      for (var i = 0; i + 480 <= up.length; i += 480) {
-        measured.addAll(tracker.addBlock(Float32List.sublistView(up, i, i + 480), i, i, true));
-        await (tracker as ModelPitchTracker).settle();
-        measured.addAll(tracker.takeReady());
-      }
-      await tracker.close();
-      expect(measured.where((p) => p.voiced && (p.frequency - 220).abs() < 3).length, greaterThan(40));
-      final offline = SwiftF0(await OnnxTensorModel.load(
-        pitchPath,
-        inputName: PitchModel.inputName,
-        outputName: PitchModel.outputName,
-      ));
-      try {
-        final track = await analyzePitchWithModel(Float32List.fromList(resample(tone, 16000, 44100)), 44100, offline);
+        final track = await analyzePitchWithModel(Float32List.fromList(resample(tone, 16000, 44100)), 44100, pitch);
         expect(track.midiAt(0.5), closeTo(hzToMidi(220), 0.1));
       } finally {
-        await offline.model.close();
+        await pitch.model.close();
       }
       // ignore: avoid_print
       print('iOS simulator: native audio, AAC, bundled AGPL and pitch model OK; downloading models');

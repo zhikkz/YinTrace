@@ -7,10 +7,12 @@ import 'package:crypto/crypto.dart' as crypto;
 /// the official model with its interface adapted for the app's ONNX Runtime
 /// plugin by `tools/build_pitch_model.py` (see `assets/models/README.md`).
 ///
-/// Unlike the two separation models it is small (135 KB) and needed for
-/// every practice session, so it ships with the app instead of being
-/// downloaded. ONNX Runtime loads models from files: [install] copies it
-/// out of the app's assets once per version of the model.
+/// It measures the original singer's pitch when a song is imported (the
+/// singer's own pitch, live, is measured with YIN). Unlike the two
+/// separation models it is small (135 KB) and needed for every import, also
+/// of a vocal-only file that needs no download, so it ships with the app.
+/// ONNX Runtime loads models from files: [install] copies it out of the
+/// app's assets once per version of the model.
 abstract final class PitchModel {
   static const asset = 'assets/models/swift_f0.onnx';
 

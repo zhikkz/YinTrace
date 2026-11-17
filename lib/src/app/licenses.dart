@@ -73,7 +73,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
       LicenseEntryWithLineBreaks(
         const ['SwiftF0'],
         '''
-YinTrace measures pitch with SwiftF0 (https://github.com/lars76/swift-f0), a pitch estimation network by Lars Nieradzik: "SwiftF0: Fast and Accurate Monophonic Pitch Detection", arXiv:2508.18440, 2025.
+YinTrace measures the original singer's pitch, when a song is imported, with SwiftF0 (https://github.com/lars76/swift-f0), a pitch estimation network by Lars Nieradzik: "SwiftF0: Fast and Accurate Monophonic Pitch Detection", arXiv:2508.18440, 2025.
 
 The app bundles the model of swift-f0 0.3.0. Its weights are unchanged; its interface was adapted for the app (the pitch range fixed at 60 to 1400 Hz, the pitch output cast to 32-bit floats, the two outputs joined into one) by tools/build_pitch_model.py.
 
