@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
@@ -22,7 +24,7 @@ class TunerPage extends StatefulWidget {
 
 class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   PracticeEngine? _engine;
-  LivePitchTracker? _tracker;
+  LivePitchSource? _tracker;
   late final Ticker _ticker;
   final _points = <UserPoint>[];
   LivePitch? _last;
@@ -47,7 +49,8 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
   Future<void> _start() async {
     if (_starting || !mounted) return;
     _starting = true;
-    final settings = AppScope.of(context).settings;
+    final services = AppScope.of(context);
+    final settings = services.settings;
     try {
       final permission = await NativeAudio.requestMicPermission();
       if (!mounted) return;
@@ -58,10 +61,16 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
       NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
       final e = PracticeEngine.create(mode: EngineMode.capture);
       _engine = e;
-      _tracker = LivePitchTracker(
+      final tracker = await services.livePitch(
         sampleRate: e.sampleRate,
         options: LivePitchOptions(gateDb: settings.micGateDb),
       );
+      if (!mounted || _engine != e) {
+        // Left while the model was loading.
+        unawaited(tracker.close());
+        return;
+      }
+      _tracker = tracker;
       if (!_paused) {
         e.start();
         _awake.hold();
@@ -121,8 +130,8 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
       return;
     }
     var changed = false;
-    for (final b in e.readCapture()) {
-      for (final p in tr.addBlock(b.samples, b.songFrame, b.clockFrame, false)) {
+    void measured(List<LivePitch> samples) {
+      for (final p in samples) {
         final cents = p.voiced ? (p.midi - p.midi.roundToDouble()) * 100 : null;
         _points.add(UserPoint(p.clockTime, p.midi, PitchVerdict.noReference, cents));
         _now = p.clockTime;
@@ -134,6 +143,12 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
         changed = true;
       }
     }
+
+    for (final b in e.readCapture()) {
+      measured(tr.addBlock(b.samples, b.songFrame, b.clockFrame, false));
+    }
+    // The pitch model measures in the background: what it finished since.
+    measured(tr.takeReady());
     if (_points.length > 2000) _points.removeRange(0, _points.length - 1500);
     if (_hi - _lo > 30) {
       final c = _last?.midi ?? (_lo + _hi) / 2;
@@ -149,10 +164,14 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     _ticker.dispose();
     _awake.release();
     final e = _engine;
+    _engine = null;
     if (e != null) {
       e.stop();
       e.dispose();
     }
+    final tracker = _tracker;
+    _tracker = null;
+    if (tracker != null) unawaited(tracker.close().catchError((_) {}));
     super.dispose();
   }
 

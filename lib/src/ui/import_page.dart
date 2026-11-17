@@ -311,6 +311,7 @@ class _ImportPageState extends State<ImportPage> {
       coreMLMarker: accel.marker,
       verifyCoreML: accel.verify,
       speed: accel.speed,
+      pitchModelPath: services.activePitchModel,
     );
     setState(() {
       _error = null;
