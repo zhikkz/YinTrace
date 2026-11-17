@@ -135,6 +135,7 @@ class YtBindings {
       engineUnloadTrack = library.lookupFunction<_EngSlotC, _EngSlotD>('yt_engine_unload_track'),
       engineSetTrackOffset = library.lookupFunction<_EngSlotI64C, _EngSlotI64D>('yt_engine_set_track_offset'),
       engineSetTrackGain = library.lookupFunction<_EngSlotGainC, _EngSlotGainD>('yt_engine_set_track_gain'),
+      engineMonitorAvailable = library.lookupFunction<_EngIntC, _EngIntD>('yt_engine_monitor_available'),
       engineSetMonitorGain = library.lookupFunction<_EngFloatC, _EngFloatD>('yt_engine_set_monitor_gain'),
       engineSetPlaying = library.lookupFunction<_EngSetIntC, _EngSetIntD>('yt_engine_set_playing'),
       engineIsPlaying = library.lookupFunction<_EngIntC, _EngIntD>('yt_engine_is_playing'),
@@ -179,6 +180,7 @@ class YtBindings {
   final _EngSlotD engineUnloadTrack;
   final _EngSlotI64D engineSetTrackOffset;
   final _EngSlotGainD engineSetTrackGain;
+  final _EngIntD engineMonitorAvailable;
   final _EngFloatD engineSetMonitorGain;
   final _EngSetIntD engineSetPlaying;
   final _EngIntD engineIsPlaying;

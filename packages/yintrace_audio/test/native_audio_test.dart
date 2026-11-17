@@ -82,6 +82,34 @@ void main() {
     expect(looped[1].songFrame, 22050);
   }, skip: skip);
 
+  test('monitor bindings mix the dry mic to both ears only during playback', () {
+    final e = PracticeEngine.create(mode: EngineMode.offline);
+    addTearDown(e.dispose);
+    expect(e.monitorAvailable, isTrue);
+    e.loadTrackPcm(0, Float32List(512), 1);
+    final mic = Float32List(64)..[7] = 0.4;
+    e.setMonitorGain(0.5);
+    expect(e.render(64, input: mic)[14], 0);
+    e.flushCapture();
+    e.play();
+    final out = e.render(64, input: mic);
+    expect(out[14], closeTo(0.2, 1e-6));
+    expect(out[15], out[14]);
+    expect(e.readCapture().single.samples[7], closeTo(0.4, 1e-6));
+    e.pause();
+    expect(e.render(64, input: mic)[14], 0);
+  }, skip: skip);
+
+  test('an unknown device cannot enable monitoring', () {
+    final e = PracticeEngine.create(mode: EngineMode.duplex, nullBackend: true);
+    addTearDown(e.dispose);
+    expect(e.monitorAvailable, isFalse);
+    e.loadTrackPcm(0, Float32List(512), 1);
+    e.setMonitorGain(1);
+    e.play();
+    expect(e.render(64, input: Float32List(64)..[7] = 0.4)[14], 0);
+  }, skip: skip);
+
   test('decode wav written by ffmpeg', () {
     final path = Platform.environment['YINTRACE_TEST_WAV'];
     if (path == null) return;

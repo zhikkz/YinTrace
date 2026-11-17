@@ -79,6 +79,77 @@ void main() {
     }
   }
 
+  /// Mute the file tracks so that only the live microphone can be heard.
+  double monitorSample() {
+    final e = session.engine!;
+    for (var slot = 0; slot < 3; slot++) {
+      e.setTrackGain(slot, 0);
+    }
+    return e.render(64, input: Float32List(64)..fillRange(0, 64, 0.4))[0];
+  }
+
+  test('live monitoring follows practice, pause and listening without changing the level', () {
+    expect(session.monitorAvailable, isTrue); // offline test route
+    expect(session.monitorEnabled, isFalse);
+    session.play();
+    expect(monitorSample(), 0);
+    session.settings.monitorVolume = 0.25;
+    session.setMonitorEnabled(true);
+    expect(monitorSample(), closeTo(0.1, 1e-6));
+    session.pause();
+    expect(monitorSample(), 0);
+    session.play();
+    expect(monitorSample(), closeTo(0.1, 1e-6));
+    // Capture an actual take, then check both listening modes with a live mic.
+    session.applyMix();
+    run(5.5);
+    expect(session.canListenBack(), isTrue);
+    session.listenOriginal(line: 0);
+    expect(monitorSample(), 0);
+    session.listenBack(line: 0);
+    expect(monitorSample(), 0);
+    session.stopListening();
+    expect(monitorSample(), 0); // still paused
+    session.play();
+    expect(monitorSample(), closeTo(0.1, 1e-6));
+    session.setMonitorEnabled(false);
+    expect(monitorSample(), 0);
+    expect(session.settings.monitorVolume, 0.25);
+  }, skip: lib == null);
+
+  test('monitoring is silenced on backgrounding and disarmed when headphones are lost', () {
+    session.play();
+    session.setMonitorEnabled(true);
+    expect(monitorSample(), closeTo(0.2, 1e-6));
+    session.suspend();
+    expect(monitorSample(), 0);
+    session.resume();
+    expect(monitorSample(), 0);
+    session.play();
+    expect(monitorSample(), closeTo(0.2, 1e-6));
+    final e = session.engine!;
+    e.signalAudioEvent(AudioEvents.routeChanged);
+    expect(monitorSample(), 0); // native mute, before the app sees the event
+    session.tick();
+    expect(session.monitorEnabled, isTrue); // a safe route reconfiguration
+    expect(monitorSample(), closeTo(0.2, 1e-6));
+    e.signalAudioEvent(AudioEvents.routeChanged | AudioEvents.deviceLost);
+    expect(monitorSample(), 0);
+    session.tick();
+    expect(session.monitorEnabled, isFalse);
+    e.signalAudioEvent(AudioEvents.routeChanged); // headphones reconnected
+    session.tick();
+    session.play();
+    expect(monitorSample(), 0);
+    session.setMonitorEnabled(true);
+    expect(monitorSample(), closeTo(0.2, 1e-6));
+    // A quick resume before tick() must also consume the pending loss.
+    e.signalAudioEvent(AudioEvents.deviceLost);
+    session.play();
+    expect(session.monitorEnabled, isFalse);
+    expect(monitorSample(), 0);
+  }, skip: lib == null);
+
   test('the original singer is heard loud, then practice waits at that line', () {
     session.setLoopLine(0);
     session.play();
