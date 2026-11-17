@@ -8,9 +8,10 @@ texts are kept below, as those licenses require. The app shows the same credits
 under 设置 → 致谢与开源许可, together with the licenses of every Flutter
 package it links.
 
-What this repository does **not** contain: no model weights, no audio, and no
-lyrics of published songs (the lyrics in the tests and examples were written
-for this project).
+What this repository does **not** contain: no weights of the separation
+models, no audio, and no lyrics of published songs (the lyrics in the tests
+and examples were written for this project). The one model it does contain
+is the small pitch model SwiftF0 (MIT, see below).
 
 ## Models: UVR-MDX-NET-Voc_FT and 6_HP-Karaoke-UVR
 
@@ -212,12 +213,54 @@ https://github.com/mozillazg/pinyin-data — `lib/src/analysis/pinyin_initials.d
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+## Model: SwiftF0 (MIT License)
+
+https://github.com/lars76/swift-f0 — L. Nieradzik, "SwiftF0: Fast and
+Accurate Monophonic Pitch Detection", arXiv:2508.18440, 2025.
+
+- `assets/models/swift_f0.onnx` is the model of the official swift-f0 0.3.0
+  release on PyPI (`swift_f0/model.onnx`, SHA-256
+  `6385e8c2ebc3872e82c9ff5946228de44cd3be77a750ea53698b7dbfe94b0a22`) with its
+  interface adapted for the app by `tools/build_pitch_model.py`: the inputs
+  `fmin` and `fmax` became constants (60 and 1400 Hz), the `pitch` output is
+  cast to float32, and `pitch` and `confidence` are joined into one output.
+  The weights and all other nodes are unchanged; the script checks that the
+  result computes the same pitch and confidence as the original.
+- `lib/src/dsp/swift_f0.dart` follows the package's own use of the model
+  (`swift_f0/core.py`): 30 s runs with 11 frames of history and 10 of
+  look-ahead, and frames of digital silence treated as unvoiced.
+
+The license file of the release reads:
+
+    MIT License
+
+    Copyright (c) 2025-2026 Lars Nieradzik
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
 ## YIN
 
-The pitch detector implements the algorithm published in A. de Cheveigné and
-H. Kawahara, "YIN, a fundamental frequency estimator for speech and music",
-J. Acoust. Soc. Am. 111 (4), 2002. The implementation in `lib/src/dsp/yin.dart`
-was written for this project from the paper.
+When the pitch model cannot run, the app falls back to the algorithm
+published in A. de Cheveigné and H. Kawahara, "YIN, a fundamental frequency
+estimator for speech and music", J. Acoust. Soc. Am. 111 (4), 2002. The
+implementation in `lib/src/dsp/yin.dart` was written for this project from the
+paper.
 
 ## Flutter packages
 
