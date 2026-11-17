@@ -162,10 +162,10 @@ class _SettingsPageState extends State<SettingsPage> {
                           .push(MaterialPageRoute<void>(builder: (_) => const BenchmarkPage())),
                     ),
                     SwitchListTile(
-                      title: const Text('音高检测改用 YIN 算法'),
+                      title: const Text('原唱音高改用 YIN 算法测'),
                       subtitle: Text(services.pitchModelPath == null
                           ? '音高模型没能装上，现在用的就是 YIN'
-                          : '和 AI 音高模型（SwiftF0）对比：练习、自由练习和之后导入的歌都用 YIN'),
+                          : '和 AI 音高模型（SwiftF0）对比：之后导入的歌用 YIN 测原唱。你唱的一直用 YIN 测'),
                       value: s.yinPitch || services.pitchModelPath == null,
                       onChanged: services.pitchModelPath == null ? null : (v) => set(() => s.yinPitch = v),
                     ),

@@ -3,7 +3,8 @@
 ## 音高模型 `swift_f0.onnx`（随 App 附带）
 
 测音高用的是 [SwiftF0](https://github.com/lars76/swift-f0)（Lars Nieradzik，MIT 许可）：一个只有 14 386 个参数的卷积网络，
-从 16 kHz 音频的频谱里读出每 16 ms 一帧的音高和“这一帧有人声、音高可信”的置信度。它很小（135 KB），每次练习都要用，
+从 16 kHz 音频的频谱里读出每 16 ms 一帧的音高和“这一帧有人声、音高可信”的置信度。App 在导入时用它测原唱的音高
+（练习时测你唱的仍用 YIN）。它很小（135 KB），每次导入都要用，包括不需要下载分离模型的纯人声导入，
 所以和 App 一起打包，不需要下载；这是仓库里唯一的模型文件（`.gitignore` 里单独放行）。
 
 `swift_f0.onnx` 由 `tools/build_pitch_model.py` 从 PyPI 上 swift-f0 0.3.0 的官方 wheel 生成（wheel 和其中 `model.onnx`

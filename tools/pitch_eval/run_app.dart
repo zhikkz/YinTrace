@@ -9,14 +9,12 @@
 //
 //   <name>.<cond>.<yin|model>_offline.f32  hop (s), then MIDI per frame:
 //                                          analyzePitch / analyzePitchWithModel,
-//                                          as an import measures a vocal;
-//   <name>.<cond>.<yin|model>_live.f32     (song time, MIDI) per sample:
-//                                          LivePitchTracker / ModelPitchTracker
-//                                          at 44.1 kHz in 512-sample blocks,
-//                                          as practice measures the singer.
-//
-// Live, each model run finishes before the next block, as on a phone that
-// keeps up with real time.
+//                                          as an import measures the original
+//                                          singer's (separated) vocal;
+//   <name>.<cond>.yin_live.f32             with `yin` only: (song time, MIDI)
+//                                          per sample from LivePitchTracker at
+//                                          44.1 kHz in 512-sample blocks, as
+//                                          practice measures the singer.
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -54,31 +52,24 @@ Future<void> main(List<String> args) async {
     final grid = Float32List(track.length + 1)..[0] = track.hopSeconds;
     grid.setRange(1, grid.length, track.midi);
     File('${out.path}/$base.${kind}_offline.f32').writeAsBytesSync(grid.buffer.asUint8List());
+    if (model != null) continue;
 
     final up = Float32List.fromList(resample(x, 16000, 44100));
     final t1 = watch.elapsed;
-    final LivePitchSource tracker =
-        model == null ? LivePitchTracker(sampleRate: 44100) : ModelPitchTracker(sampleRate: 44100, model: SwiftF0(model));
+    final tracker = LivePitchTracker(sampleRate: 44100);
     final points = <double>[];
-    void take(List<LivePitch> ps) {
-      for (final p in ps) {
+    for (var i = 0; i < up.length; i += 512) {
+      final end = i + 512 < up.length ? i + 512 : up.length;
+      for (final p in tracker.addBlock(Float32List.sublistView(up, i, end), i, i, true)) {
         points
           ..add(p.songTime)
           ..add(p.midi);
       }
     }
-
-    for (var i = 0; i < up.length; i += 512) {
-      final end = i + 512 < up.length ? i + 512 : up.length;
-      take(tracker.addBlock(Float32List.sublistView(up, i, end), i, i, true));
-      if (tracker is ModelPitchTracker) await tracker.settle();
-      take(tracker.takeReady());
-    }
     live += watch.elapsed - t1;
-    if (tracker.failure != null) stderr.writeln('$base: the model failed: ${tracker.failure}');
-    File('${out.path}/$base.${kind}_live.f32').writeAsBytesSync(Float32List.fromList(points).buffer.asUint8List());
+    File('${out.path}/$base.yin_live.f32').writeAsBytesSync(Float32List.fromList(points).buffer.asUint8List());
   }
   await model?.close();
-  stdout.writeln('$kind: ${seconds.toStringAsFixed(0)} s of audio; import path ${offline.inMilliseconds / 1000} s, '
-      'practice path ${live.inMilliseconds / 1000} s');
+  stdout.writeln('$kind: ${seconds.toStringAsFixed(0)} s of audio; import path ${offline.inMilliseconds / 1000} s'
+      '${model == null ? ', practice path ${live.inMilliseconds / 1000} s' : ''}');
 }

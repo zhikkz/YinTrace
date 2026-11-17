@@ -6,12 +6,12 @@
 lib/
   main.dart
   src/
-    dsp/          实数 FFT、STFT/iSTFT、多相重采样（也有边采集边做的）、SwiftF0 音高模型的输入输出、YIN、音高换算
+    dsp/          实数 FFT、STFT/iSTFT、多相重采样、SwiftF0 音高模型的输入输出、YIN、音高换算
     separation/   MDX-Net 与 VR 推理流程（UVR 移植）、模型配置、ONNX Runtime 封装
     analysis/     LRC 解析、语言识别（中/英/日）、离线音高跟踪、逐字对齐、参考旋律与校正
     import/       导入流水线（后台 isolate）
     library/      本地曲库（每首歌一个目录）、练习记录、我的录音、发给别人的歌曲文件
-    practice/     实时音高跟踪（SwiftF0，备用 YIN）、评分、练习会话、校正页的片段播放
+    practice/     实时音高跟踪（YIN）、评分、练习会话、校正页的片段播放
     export/       制作成品：混音、后台导出、保存录音
     models/       两个分离模型的下载、校验、动态时间轴配方与 .pth → ONNX 组装；随 App 附带的音高模型
     app/          设置、全局服务、第三方许可登记

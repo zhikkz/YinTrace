@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -12,13 +11,11 @@ import 'package:yintrace/src/analysis/reference.dart';
 import 'package:yintrace/src/audio/audio_backend.dart';
 import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace/src/dsp/pitch.dart';
-import 'package:yintrace/src/dsp/resampler.dart';
 import 'package:yintrace/src/dsp/swift_f0.dart';
 import 'package:yintrace/src/import/import_pipeline.dart';
 import 'package:yintrace/src/library/song.dart';
 import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/models/pitch_model.dart';
-import 'package:yintrace/src/practice/live_pitch.dart';
 import 'package:yintrace/src/separation/tensor_model.dart';
 
 import 'support/python_ort_model.dart';
@@ -64,34 +61,6 @@ class _FakePitchModel implements TensorModel {
 
   @override
   Future<void> close() async => closed = true;
-}
-
-/// A model whose runs finish when the test says so.
-class _ManualModel implements TensorModel {
-  final pending = <(Float32List, Completer<Float32List>)>[];
-  bool fail = false;
-
-  @override
-  Future<Float32List> run(Float32List input, List<int> shape) {
-    final c = Completer<Float32List>();
-    pending.add((input, c));
-    return c.future;
-  }
-
-  void finishAll() {
-    final now = List.of(pending);
-    pending.clear();
-    for (final (x, c) in now) {
-      if (fail) {
-        c.completeError(StateError('model broke'));
-      } else {
-        c.complete(_FakePitchModel.compute(x));
-      }
-    }
-  }
-
-  @override
-  Future<void> close() async {}
 }
 
 Float32List _tone(double hz, double seconds, int sr, {double amp = 0.3, int harmonics = 8}) {
@@ -186,116 +155,6 @@ void main() {
         expect(parts.hz[i], closeTo(whole.hz[i], 1e-3), reason: 'frame $i');
         expect(parts.confidence[i], whole.confidence[i]);
       }
-    });
-  });
-
-  group('StreamingResampler', () {
-    test('gives the samples of resampling the whole signal, block by block', () {
-      final rng = math.Random(2);
-      for (final rate in [44100, 48000, 16000]) {
-        final x = Float64List.fromList([for (var i = 0; i < 20000; i++) rng.nextDouble() * 2 - 1]);
-        final whole = resample(x, rate, 16000);
-        final s = StreamingResampler(rate, 16000);
-        final got = <double>[];
-        for (var i = 0; i < x.length;) {
-          final n = math.min(x.length - i, 1 + rng.nextInt(900));
-          got.addAll(s.add(Float64List.sublistView(x, i, i + n)));
-          i += n;
-        }
-        expect(got.length, greaterThan(whole.length - 12), reason: '$rate Hz: only the last samples wait');
-        expect(s.produced, got.length);
-        for (var j = 0; j < got.length; j++) {
-          expect(got[j], closeTo(whole[j], 1e-6), reason: '$rate Hz, sample $j');
-        }
-        s.reset();
-        expect(s.add(Float64List.sublistView(x, 0, 5000)), hasLength(lessThan(5000 * 16000 ~/ rate + 1)));
-      }
-    });
-  });
-
-  group('ModelPitchTracker', () {
-    const sr = 44100;
-
-    test('gives each frame its latency-compensated song time once 4 frames follow it', () async {
-      final model = _ManualModel();
-      final tracker = ModelPitchTracker(
-        sampleRate: sr,
-        model: SwiftF0(model),
-        options: const LivePitchOptions(latencySeconds: 0.1),
-      );
-      final x = _tone(220, 1.0, sr);
-      final out = <LivePitch>[];
-      var song = 10 * sr;
-      for (var i = 0; i + 512 <= x.length; i += 512) {
-        out.addAll(tracker.addBlock(Float32List.sublistView(x, i, i + 512), song, i, true));
-        song += 512;
-        model.finishAll();
-        await Future<void>.delayed(Duration.zero);
-        out.addAll(tracker.takeReady());
-      }
-      // About 1 s of 16 ms frames, minus the 4 that wait for what follows.
-      expect(out.length, inInclusiveRange(55, 58));
-      for (var i = 0; i < out.length; i++) {
-        final center = (i * SwiftF0.hop * sr / SwiftF0.sampleRate).round();
-        expect(out[i].songTime, closeTo(10 + center / sr - 0.1, 1e-9), reason: 'frame $i');
-        expect(out[i].clockTime, closeTo(center / sr, 1e-9));
-        expect(out[i].playing, isTrue);
-      }
-      expect(out.skip(1).every((p) => p.voiced && (p.frequency - 220).abs() < 50), isTrue);
-      expect(tracker.detector, 'SwiftF0');
-    });
-
-    test('drops what was measured before a reset, and keeps time order', () async {
-      final model = _ManualModel();
-      final tracker = ModelPitchTracker(sampleRate: sr, model: SwiftF0(model));
-      final x = _tone(330, 0.5, sr);
-      for (var i = 0; i + 512 <= 8192; i += 512) {
-        tracker.addBlock(Float32List.sublistView(x, i, i + 512), 5 * sr + i, i, true);
-      }
-      expect(model.pending, hasLength(1), reason: 'one run at a time');
-      tracker.reset();
-      model.finishAll();
-      await Future<void>.delayed(Duration.zero);
-      expect(tracker.takeReady(), isEmpty, reason: 'measured before the jump');
-      final out = <LivePitch>[];
-      for (var i = 0; i + 512 <= x.length; i += 512) {
-        out.addAll(tracker.addBlock(Float32List.sublistView(x, i, i + 512), 2 * sr + i, i, true));
-        model.finishAll();
-        await Future<void>.delayed(Duration.zero);
-      }
-      out.addAll(tracker.takeReady());
-      expect(out, isNotEmpty);
-      expect(out.first.songTime, closeTo(2, 1e-9));
-      for (var i = 1; i < out.length; i++) {
-        expect(out[i].songTime, greaterThan(out[i - 1].songTime));
-      }
-    });
-
-    test('hands over to YIN when the model fails', () async {
-      final model = _ManualModel()..fail = true;
-      final tracker = ModelPitchTracker(sampleRate: sr, model: SwiftF0(model));
-      final x = _tone(220, 1.0, sr);
-      final out = <LivePitch>[];
-      for (var i = 0; i + 512 <= x.length; i += 512) {
-        out.addAll(tracker.addBlock(Float32List.sublistView(x, i, i + 512), i, i, true));
-        model.finishAll();
-        await Future<void>.delayed(Duration.zero);
-      }
-      expect(tracker.detector, 'YIN');
-      expect(tracker.failure, contains('model broke'));
-      expect(out.where((p) => p.voiced && (p.frequency - 220).abs() < 3).length, greaterThan(40));
-    });
-
-    test('close waits for the run in progress and closes the model', () async {
-      final fake = _FakePitchModel();
-      final tracker = ModelPitchTracker(sampleRate: sr, model: SwiftF0(fake));
-      final x = _tone(220, 0.3, sr);
-      for (var i = 0; i + 512 <= x.length; i += 512) {
-        tracker.addBlock(Float32List.sublistView(x, i, i + 512), i, i, true);
-      }
-      await tracker.close();
-      expect(fake.closed, isTrue);
-      expect(tracker.busy, isFalse);
     });
   });
 
@@ -474,30 +333,6 @@ void main() {
         expect(await repo.list(), isEmpty);
       });
     });
-
-    test('live: a sung tone at its pitch and song time; noise unvoiced', () async {
-      const sr = 48000;
-      final tracker = ModelPitchTracker(sampleRate: sr, model: SwiftF0(model));
-      final rng = math.Random(5);
-      final x = Float32List.fromList([
-        ..._tone(196, 1.0, sr, amp: 0.05), // quiet, as without the system's gain
-        for (var i = 0; i < sr ~/ 2; i++) (rng.nextDouble() * 2 - 1) * 0.1,
-      ]);
-      final out = <LivePitch>[];
-      for (var i = 0; i + 480 <= x.length; i += 480) {
-        out.addAll(tracker.addBlock(Float32List.sublistView(x, i, i + 480), 3 * sr + i, i, true));
-        await tracker.settle();
-        out.addAll(tracker.takeReady());
-      }
-      final tone = out.where((p) => p.songTime > 3.1 && p.songTime < 3.9).toList();
-      expect(tone.length, greaterThan(45));
-      expect(tone.where((p) => p.voiced && (p.midi - hzToMidi(196)).abs() < 0.2).length / tone.length,
-          greaterThan(0.95));
-      final noise = out.where((p) => p.songTime > 4.15).toList();
-      expect(noise, isNotEmpty);
-      expect(noise.where((p) => p.voiced).length, lessThan(3));
-      expect(tracker.failure, isNull);
-    }, skip: skipReal);
   });
 }
 

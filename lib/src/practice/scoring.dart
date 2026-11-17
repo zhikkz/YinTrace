@@ -166,9 +166,8 @@ class PracticeScorer {
   final SongReference reference;
   ScoringOptions options;
 
-  /// Seconds between live pitch samples (the hop of the pitch source: 10 ms
-  /// for YIN at 44.1 kHz, 16 ms for the pitch model).
-  double sampleInterval;
+  /// Seconds between live pitch samples (the tracker hop).
+  final double sampleInterval;
   final _notes = <(RefNote, int, int)>[];
   late final List<_Acc> _acc;
 

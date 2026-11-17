@@ -216,7 +216,8 @@ https://github.com/mozillazg/pinyin-data — `lib/src/analysis/pinyin_initials.d
 ## Model: SwiftF0 (MIT License)
 
 https://github.com/lars76/swift-f0 — L. Nieradzik, "SwiftF0: Fast and
-Accurate Monophonic Pitch Detection", arXiv:2508.18440, 2025.
+Accurate Monophonic Pitch Detection", arXiv:2508.18440, 2025. The app uses it
+to measure the original singer's pitch when a song is imported.
 
 - `assets/models/swift_f0.onnx` is the model of the official swift-f0 0.3.0
   release on PyPI (`swift_f0/model.onnx`, SHA-256
@@ -256,9 +257,10 @@ The license file of the release reads:
 
 ## YIN
 
-When the pitch model cannot run, the app falls back to the algorithm
-published in A. de Cheveigné and H. Kawahara, "YIN, a fundamental frequency
-estimator for speech and music", J. Acoust. Soc. Am. 111 (4), 2002. The
+The singer's own pitch, live in practice and free practice, is measured with
+the algorithm published in A. de Cheveigné and H. Kawahara, "YIN, a
+fundamental frequency estimator for speech and music", J. Acoust. Soc. Am. 111
+(4), 2002; imports use it too when the pitch model cannot run. The
 implementation in `lib/src/dsp/yin.dart` was written for this project from the
 paper.
 
