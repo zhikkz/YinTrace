@@ -32,6 +32,14 @@ class AppSettings extends ChangeNotifier {
   double accompanimentVolume = 0.9;
   double guideVocalVolume = 0.35;
 
+  /// The original singer plays quietly along while practising (导唱), at
+  /// [guideVocalVolume]. Off: the accompaniment alone, the volume kept for
+  /// when it is turned on again.
+  bool guideVocalOn = true;
+
+  /// The practice page told the singer once to wear headphones.
+  bool headphoneTipSeen = false;
+
   /// Disables iOS voice processing / AGC for more stable pitch readings.
   bool measurementMode = false;
 
@@ -57,6 +65,8 @@ class AppSettings extends ChangeNotifier {
     micGateDb = (j['micGateDb'] as num?)?.toDouble() ?? micGateDb;
     accompanimentVolume = (j['accompanimentVolume'] as num?)?.toDouble() ?? accompanimentVolume;
     guideVocalVolume = (j['guideVocalVolume'] as num?)?.toDouble() ?? guideVocalVolume;
+    guideVocalOn = j['guideVocalOn'] as bool? ?? guideVocalOn;
+    headphoneTipSeen = j['headphoneTipSeen'] as bool? ?? headphoneTipSeen;
     measurementMode = j['measurementMode'] as bool? ?? measurementMode;
     practiceWindowSeconds = (j['practiceWindowSeconds'] as num?)?.toDouble() ?? practiceWindowSeconds;
   }
@@ -68,6 +78,8 @@ class AppSettings extends ChangeNotifier {
     'micGateDb': micGateDb,
     'accompanimentVolume': accompanimentVolume,
     'guideVocalVolume': guideVocalVolume,
+    'guideVocalOn': guideVocalOn,
+    'headphoneTipSeen': headphoneTipSeen,
     'measurementMode': measurementMode,
     'practiceWindowSeconds': practiceWindowSeconds,
   };

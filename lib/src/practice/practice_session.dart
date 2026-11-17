@@ -220,11 +220,14 @@ class PracticeSession extends ChangeNotifier {
     }
   }
 
+  /// Whether the song has an accompaniment to practise with. Without one,
+  /// the original singer always plays (there would be nothing else to hear).
+  bool get hasAccompaniment => meta.accompanimentFile != null || meta.originalFile != null;
+
   /// Re-applies volumes and scoring settings (after the user changed them).
   void applyMix() {
     final e = _engine;
     if (e == null) return;
-    final hasAcc = meta.accompanimentFile != null || meta.originalFile != null;
     final kind = listening;
     e.setTrackGain(TrackSlot.accompaniment, settings.accompanimentVolume);
     // Listening back: your own voice instead of the original singer's.
@@ -234,7 +237,10 @@ class PracticeSession extends ChangeNotifier {
       switch (kind) {
         ListenKind.take => 0,
         ListenKind.original => 1,
-        null => hasAcc ? settings.guideVocalVolume : math.max(0.6, settings.guideVocalVolume),
+        null =>
+          hasAccompaniment
+              ? (settings.guideVocalOn ? settings.guideVocalVolume : 0)
+              : math.max(0.6, settings.guideVocalVolume),
       },
     );
     e.setTrackGain(TrackSlot.take, kind == ListenKind.take ? 1 : 0);
@@ -444,8 +450,9 @@ class PracticeSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// To one second before [line], to sing it.
-  void _seekBeforeLine(int line) => _seek(reference.lines[line].start - 1.0, toLine: line);
+  /// To [leadIn] seconds before [line] (one by default), to sing it.
+  void _seekBeforeLine(int line, {double leadIn = 1.0}) =>
+      _seek(reference.lines[line].start - leadIn, toLine: line);
 
   (double, double) _loopRange(int line) {
     final l = reference.lines[line];
@@ -501,28 +508,51 @@ class PracticeSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  void seekToLine(int line) {
+  /// To shortly before [line], to sing it; [leadIn] seconds of the music
+  /// before it play first (跳过前奏 leaves time to get ready).
+  void seekToLine(int line, {double leadIn = 1.0}) {
     if (line < 0 || line >= reference.lines.length) return;
     if (loopLine != null) setLoopLine(line);
-    _seekBeforeLine(line);
+    _seekBeforeLine(line, leadIn: leadIn);
+  }
+
+  /// 从头再唱: the whole song again from the top, as a new run.
+  void restart() {
+    if (reviewing) stopListening();
+    if (loopLine != null) {
+      setLoopLine(null); // ends the loop's run
+    } else {
+      _endRun();
+    }
+    finished = false;
+    seek(0);
+    play();
   }
 
   /// The line in focus: the one shown, and the one 上一句, 下一句,
   /// 重唱这一句 and 单句循环 move from. While looping, the looped line,
   /// from its lead-in to its end; while hearing the original singer, the
   /// line heard; in the lead-in after jumping to a line, that line, though
-  /// the line before may still be sounding. Otherwise the line playing.
+  /// the line before may still be sounding. Otherwise the line playing,
+  /// and once it is over (an interlude), the line coming up.
   int get currentLine {
-    if (reference.lines.isEmpty) return -1;
+    final lines = reference.lines;
+    if (lines.isEmpty) return -1;
     final original = originalLine;
     if (original != null) return original;
-    final at = reference.lineIndexAt(position);
+    final t = position;
+    final at = reference.lineIndexAt(t);
     if (reviewing) return at; // listening back to the take
     final loop = loopLine;
     if (loop != null) return loop;
     final aim = _aimLine;
-    return aim != null && aim > at ? aim : at;
+    if (aim != null && aim > at) return aim;
+    if (at + 1 < lines.length && t >= lines[at].start && t > lines[at].end + lineOverSeconds) return at + 1;
+    return at;
   }
+
+  /// How long after its last character a line gives way to the next one.
+  static const lineOverSeconds = 0.6;
 
   /// Pulls captured audio, updates pitch and scores. Call once per frame.
   void tick() {

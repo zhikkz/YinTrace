@@ -258,6 +258,43 @@ void main() {
     expect([session.loopLine, session.currentLine], [0, 0]);
   }, skip: lib == null);
 
+  test('an interlude leads in to the next line; skipping it leaves time to get ready', () async {
+    await open(gap: 7);
+    final lines = session.reference.lines;
+    session.play();
+    run(lines[0].end + 0.2);
+    expect(session.currentLine, 0, reason: 'its last character just ended');
+    run(PracticeSession.lineOverSeconds);
+    expect(session.currentLine, 1, reason: 'the interlude belongs to the line coming up');
+    // 跳过间奏: to three seconds before it, the line in focus.
+    session.seekToLine(1, leadIn: 3);
+    expect(session.engine!.positionSeconds, closeTo(lines[1].start - 3, 0.02));
+    expect(session.currentLine, 1);
+    run(3.6, from: lines[1].start - 0.1, to: lines[1].end + 0.1);
+    expect(session.scorer.lineResult(1).attempted, isTrue);
+  }, skip: lib == null);
+
+  test('从头再唱 starts another run from the top, playing', () async {
+    await open();
+    final lines = session.reference.lines;
+    session.play();
+    run(lines[1].end + 0.3); // lines 0 and 1
+    final first = (await session.save())!;
+    session.pause();
+    session.restart();
+    expect(session.isPlaying, isTrue);
+    expect(session.engine!.positionSeconds, lessThan(0.05));
+    run(lines[0].end + 0.3);
+    final second = (await session.save())!;
+    expect(second.at, isNot(first.at));
+    expect(second.lineScores.keys, [0]);
+    final history = await repo.loadHistory(meta.id);
+    expect(history.map((r) => r.lineScores.keys.toList()), [
+      [0, 1],
+      [0],
+    ]);
+  }, skip: lib == null);
+
   test('the line heard from the original singer is the one shown, before and after', () async {
     await open(gap: 0.26);
     final lines = session.reference.lines;
