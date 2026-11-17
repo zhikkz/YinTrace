@@ -371,6 +371,8 @@ class ImportPipeline {
       // Drop both aliases, including the pure-vocal input case.
       vocals = Float32List(0);
       mix = Float32List(0);
+      // The pitch is measured on the separated lead vocal (or the vocal-only
+      // file), never on the mix.
       report(ImportStage.analyzingPitch, 0);
       final track = await _pitchTrack(r, mono, modelInfo, (f) => report(ImportStage.analyzingPitch, f));
       report(ImportStage.aligning, 0);
@@ -453,11 +455,12 @@ class ImportPipeline {
   /// the request had one (`pitchModelError`).
   static const pitchInfo = 'pitch';
 
-  /// The vocal's pitch, measured with the pitch model, or with YIN when the
+  /// The pitch of [vocal] (mono, 44.1 kHz: the separated lead vocal, or the
+  /// vocal-only file), measured with the pitch model, or with YIN when the
   /// request has none or the model fails (the song is finished with YIN).
   Future<PitchTrack> _pitchTrack(
     ImportRequest r,
-    Float32List mono,
+    Float32List vocal,
     Map<String, String> info,
     void Function(double) onProgress,
   ) async {
@@ -466,7 +469,7 @@ class ImportPipeline {
       TensorModel? model;
       try {
         model = await loadModel(path, inputName: PitchModel.inputName, outputName: PitchModel.outputName);
-        final track = await analyzePitchWithModel(mono, 44100, SwiftF0(model), onProgress: onProgress);
+        final track = await analyzePitchWithModel(vocal, 44100, SwiftF0(model), onProgress: onProgress);
         info[pitchInfo] = PitchModel.name;
         return track;
       } on SeparationCancelled {
@@ -480,7 +483,7 @@ class ImportPipeline {
       }
     }
     info[pitchInfo] = 'YIN';
-    return analyzePitch(mono, 44100, onProgress: onProgress);
+    return analyzePitch(vocal, 44100, onProgress: onProgress);
   }
 
   static String _name(String path) => path.split(Platform.pathSeparator).last.split('/').last;
