@@ -244,14 +244,15 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     if (mounted) _session.resume();
   }
 
-  /// Whether leaving would lose a recording worth keeping: at least half
-  /// the song (or 20 seconds) sung and not kept yet. Then leaving asks.
+  /// Whether leaving would lose a recording worth keeping: 20 seconds of
+  /// singing (a quarter of a song shorter than 80 seconds) not kept yet.
+  /// Then leaving asks. What only played, nobody singing, is no recording.
   bool get _takeAtRisk {
     final take = _session.take;
     if (take == null || take.isEmpty) return false;
     final kept = _kept;
     if (kept != null && kept.$1 == take.version) return false;
-    return take.endSeconds - take.startSeconds >= math.min(20.0, widget.meta.duration / 2);
+    return take.voicedSeconds() >= math.min(20.0, widget.meta.duration / 4);
   }
 
   /// Leaving with a recording that would be lost: keep it, or leave
@@ -633,7 +634,9 @@ class _Lyrics extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ref = session.reference;
-    final li = session.currentLine;
+    // In an interlude, the line coming up (the transport still works on
+    // the line just sung).
+    final li = session.shownLine;
     if (li < 0) return const SizedBox(height: 84);
     final line = ref.lines[li];
     final count = ref.lines.length;

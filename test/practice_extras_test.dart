@@ -62,6 +62,23 @@ void main() {
       expect(take.pointAt(0.8)!.midi, 60, reason: 'the rest of the earlier take stays');
       expect(take.pointAt(5.0), isNull);
     });
+
+    test('the time a voice was heard follows passages sung again', () {
+      final take = TakeRecorder(sampleRate: 1000, lengthFrames: 1000);
+      for (var i = 0; i < 100; i++) {
+        take.addPoint(at(i * 0.01, i < 50 ? 60 : 0)); // a voice for 0 .. 0.5 s
+      }
+      expect(take.voicedSeconds(), closeTo(0.5, 1e-9));
+      for (var i = 20; i <= 40; i++) {
+        take.addPoint(at(i * 0.01 + 0.001, 0)); // 0.2 .. 0.4 s again, silent
+      }
+      expect(take.voicedSeconds(), closeTo(0.29, 1e-9));
+      for (var i = 75; i < 85; i++) {
+        take.addPoint(at(i * 0.01 + 0.001, 62)); // 0.75 .. 0.85 s again, sung
+      }
+      expect(take.voicedSeconds(), closeTo(0.39, 1e-9));
+      expect(take.points.where((p) => p.midi > 0).length, 39);
+    });
   });
 
   group('score trend', () {
