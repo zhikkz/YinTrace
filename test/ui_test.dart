@@ -1032,52 +1032,57 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300)); // the sheet's exit
     expect(session.loopLine, 1, reason: '记 is in the second line');
     expect(session.currentLine, 1);
+    // Paused in the loop's lead-in: the looped line is shown, with a way out.
+    expect(find.text('单句循环 · 第 2 / 2 句'), findsOneWidget);
+    expect(find.text('退出循环'), findsOneWidget);
+    await screenshot(tester, '3b_practice_loop');
     // Dispose the page (and with it the native engine).
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);
 
-  testWidgets('leaving the practice page keeps what was sung', (tester) async {
-    phone(tester);
-    final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
-    final before = (await tester.runAsync(() => services.songs.loadHistory(song.id)))!.length;
-    late PracticeSession session;
-    Future<void>? saved;
-    await tester.pumpWidget(
-      host(
-        services,
-        Builder(
-          builder: (context) => Scaffold(
-            body: TextButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => PracticePage(
+  /// A page that opens the practice page for [song] with the offline
+  /// engine; the session ends up in [onSession], the save on leaving in
+  /// [onLeave].
+  Widget practiceLauncher(
+    SongReference ref, {
+    required void Function(PracticeSession) onSession,
+    required void Function(Future<void>) onLeave,
+  }) => host(
+    services,
+    Builder(
+      builder: (context) => Scaffold(
+        body: TextButton(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => PracticePage(
+                meta: song,
+                reference: ref,
+                onLeave: onLeave,
+                sessionFactory: (_) {
+                  final s = PracticeSession(
                     meta: song,
                     reference: ref,
-                    onLeave: (f) => saved = f,
-                    sessionFactory: (_) => session = PracticeSession(
-                      meta: song,
-                      reference: ref,
-                      repository: services.songs,
-                      settings: services.settings,
-                      engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
-                    ),
-                    backgroundWork: false,
-                  ),
-                ),
+                    repository: services.songs,
+                    settings: services.settings,
+                    engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+                  );
+                  onSession(s);
+                  return s;
+                },
+                backgroundWork: false,
               ),
-              child: const Text('练习'),
             ),
           ),
+          child: const Text('练习'),
         ),
       ),
-    );
-    await tester.tap(find.text('练习'));
-    await settleIo(tester, rounds: 10);
-    expect(session.started, isTrue);
-    // The first line, sung; nobody looks at the scores.
-    session.play();
+    ),
+  );
+
+  /// Plays the song up to [seconds] with the singer at the microphone.
+  Future<void> singUntil(WidgetTester tester, PracticeSession session, double seconds) async {
     final engine = session.engine!;
-    while (engine.positionSeconds < ref.lines[0].end + 0.5) {
+    while (engine.positionSeconds < seconds && engine.isPlaying) {
       final pos = engine.positionFrame;
       final input = Float32List(512);
       for (var i = 0; i < 512 && pos + i < singer.length; i++) {
@@ -1086,8 +1091,32 @@ void main() {
       engine.render(512, input: input);
       await tester.pump(const Duration(milliseconds: 11));
     }
+  }
+
+  testWidgets('leaving the practice page keeps what was sung, and asks about the recording', (tester) async {
+    phone(tester);
+    final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    final before = (await tester.runAsync(() => services.songs.loadHistory(song.id)))!.length;
+    late PracticeSession session;
+    Future<void>? saved;
+    await tester.pumpWidget(practiceLauncher(ref, onSession: (s) => session = s, onLeave: (f) => saved = f));
+    await tester.tap(find.text('练习'));
+    await settleIo(tester, rounds: 10);
+    expect(session.started, isTrue);
+    expect(find.text('第 1 / 2 句'), findsOneWidget);
+    // The first line, sung; nobody looks at the scores.
+    session.play();
+    await singUntil(tester, session, ref.lines[0].end + 0.5);
     expect(session.scorer.lineResult(0).attempted, isTrue);
+    // More than half of this short song is recorded: leaving asks first,
+    // and nothing is left until it is answered.
     await tester.tap(find.byType(BackButton));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400)); // the question's entrance
+    expect(find.text('保存刚才唱的录音？'), findsOneWidget);
+    expect(find.byType(PracticePage), findsOneWidget);
+    await screenshot(tester, '3c_leave_with_take');
+    await tester.tap(find.text('不保存'));
     await tester.pump();
     expect(saved, isNotNull, reason: 'the page below gets the save to wait for');
     var done = false;
@@ -1100,6 +1129,59 @@ void main() {
     expect(history, hasLength(before + 1));
     expect(history.last.lineScores.keys, [0]);
     await settleIo(tester, rounds: 5);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.byType(PracticePage), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  }, skip: lib == null || lib.isEmpty);
+
+  testWidgets('practice: 导唱 on and off, and keeping the recording on the way out', (tester) async {
+    phone(tester);
+    final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    final recordings = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!.length;
+    late PracticeSession session;
+    await tester.pumpWidget(practiceLauncher(ref, onSession: (s) => session = s, onLeave: (_) {}));
+    await tester.tap(find.text('练习'));
+    await settleIo(tester, rounds: 10);
+    final engine = session.engine!;
+    final vocal = readWavFile(services.songs.pathFor(song.id, song.vocalsFile)).samples;
+    // The accompaniment of this song is silence: what plays is 导唱.
+    double guide() {
+      session.seek(ref.lines[0].start + 0.3);
+      final at = engine.positionFrame;
+      final out = engine.render(2048, input: Float32List(2048));
+      var level = 0.0, expected = 0.0;
+      for (var i = 0; i < 2048; i++) {
+        level = math.max(level, out[2 * i].abs());
+        expected = math.max(expected, vocal[at + i].abs());
+      }
+      return level / expected;
+    }
+
+    expect(services.settings.guideVocalOn, isTrue);
+    session.play();
+    expect(guide(), closeTo(services.settings.guideVocalVolume, 0.02));
+    await tester.tap(find.text('导唱：开'));
+    await tester.pump();
+    expect(services.settings.guideVocalOn, isFalse);
+    expect(find.text('导唱：关'), findsOneWidget);
+    expect(guide(), lessThan(1e-3), reason: 'the accompaniment alone');
+    await tester.tap(find.text('导唱：关'));
+    await tester.pump();
+    expect(services.settings.guideVocalOn, isTrue);
+    expect(guide(), closeTo(services.settings.guideVocalVolume, 0.02));
+
+    // Sung through: leaving offers to keep the recording.
+    session.seek(0);
+    await singUntil(tester, session, 9.6);
+    await tester.tap(find.byType(BackButton));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400)); // the question's entrance
+    await tester.tap(find.text('保存'));
+    await settleIo(tester, rounds: 20);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.byType(PracticePage), findsNothing);
+    final kept = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!;
+    expect(kept, hasLength(recordings + 1));
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);
 }

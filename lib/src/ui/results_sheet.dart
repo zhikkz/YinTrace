@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../analysis/lyrics_language.dart';
@@ -38,6 +40,24 @@ class ListenOriginalAction extends ResultsAction {
   final int line;
 }
 
+/// 从头再唱: the whole song again from the top, a new run, playing.
+class RestartAction extends ResultsAction {
+  const RestartAction();
+}
+
+/// Go on looping the line, playing.
+class ContinueLoopAction extends ResultsAction {
+  const ContinueLoopAction();
+}
+
+/// Stop looping the line: back to the whole song (paused there).
+class WholeSongAction extends ResultsAction {
+  const WholeSongAction();
+}
+
+/// A line scoring under this is suggested to be practised first.
+const _suggestBelow = 80.0;
+
 /// Feedback after (or during) a run: the overall score, the characters that
 /// need work, and every sung line. Pops with a [ResultsAction].
 class ResultsSheet extends StatelessWidget {
@@ -62,6 +82,17 @@ class ResultsSheet extends StatelessWidget {
       for (final r in attempted)
         for (final t in r.problems) (r.line.index, t),
     ]..sort((a, b) => a.$2.score.compareTo(b.$2.score));
+    // What to do next: go on with the looped line, or practise the weakest
+    // line sung.
+    final loop = scorer.onlyLine;
+    final passes = loop == null ? const <double>[] : scorer.linePasses[loop] ?? const <double>[];
+    LineResult? weakest;
+    if (loop == null) {
+      for (final r in attempted) {
+        if (r.score < _suggestBelow && (weakest == null || r.score < weakest.score)) weakest = r;
+      }
+    }
+    final suggest = weakest;
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.8,
@@ -84,12 +115,23 @@ class ResultsSheet extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Text(
-                  attempted.isEmpty ? '还没唱到有音高的句子' : '唱了 ${attempted.length} 句',
+                  loop != null
+                      ? '单句循环 · 第 ${loop + 1} 句'
+                      : (attempted.isEmpty ? '还没唱到有音高的句子' : '唱了 ${attempted.length} 句'),
                   style: context.type.bodyMedium,
                 ),
               ),
             ],
           ),
+          if (passes.length >= 2)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '这一句唱了 ${passes.length} 遍：${passes.length > 8 ? '… ' : ''}'
+                '${passes.skip(math.max(0, passes.length - 8)).map((s) => s.round()).join(' → ')}',
+                style: context.type.bodyMedium?.copyWith(fontFeatures: tabular),
+              ),
+            ),
           if (!overall.isNaN)
             Padding(
               padding: const EdgeInsets.only(top: 6),
@@ -105,9 +147,28 @@ class ResultsSheet extends StatelessWidget {
                 style: context.type.labelSmall,
               ),
             ),
-          if (canListen?.call(null) ?? false)
+          // The next step, one tap away.
+          if (loop != null)
             Padding(
               padding: const EdgeInsets.only(top: 16),
+              child: FilledButton.icon(
+                onPressed: () => Navigator.of(context).pop(const ContinueLoopAction()),
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: const Text('继续练这一句'),
+              ),
+            )
+          else if (suggest != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: FilledButton.icon(
+                onPressed: () => Navigator.of(context).pop(LoopLineAction(suggest.line.index)),
+                icon: const Icon(Icons.repeat_one_rounded),
+                label: Text('先练第 ${suggest.line.index + 1} 句（${suggest.score.round()} 分）'),
+              ),
+            ),
+          if (canListen?.call(null) ?? false)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
               child: Row(
                 children: [
                   Expanded(
@@ -128,6 +189,23 @@ class ResultsSheet extends StatelessWidget {
                 ],
               ),
             ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: loop != null
+                  ? TextButton.icon(
+                      onPressed: () => Navigator.of(context).pop(const WholeSongAction()),
+                      icon: const Icon(Icons.queue_music_rounded),
+                      label: const Text('不循环了，回到整首'),
+                    )
+                  : TextButton.icon(
+                      onPressed: () => Navigator.of(context).pop(const RestartAction()),
+                      icon: const Icon(Icons.replay_rounded),
+                      label: const Text('从头再唱一遍'),
+                    ),
+            ),
+          ),
           if (problems.isNotEmpty) ...[
             const SizedBox(height: 28),
             Text('先练这几个${scorer.reference.language.unit}', style: context.type.titleLarge),

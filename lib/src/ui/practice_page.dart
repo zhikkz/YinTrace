@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -168,8 +169,58 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
         _session.listenOriginal(line: line);
       case ExportTakeAction():
         await _makeTrack();
+      case RestartAction():
+        _session.restart();
+      case ContinueLoopAction():
+        _session.stopListening();
+        _session.play();
+      case WholeSongAction():
+        _session.stopListening();
+        _session.setLoopLine(null);
       case null:
         break;
+    }
+  }
+
+  /// Keeps the take as one of the song's recordings, once per version of
+  /// it. Returns the recording's id, or null when that failed.
+  Future<String?> _keepTake() async {
+    final take = _session.take;
+    if (take == null || take.isEmpty) return null;
+    final kept = _kept;
+    if (kept != null && kept.$1 == take.version) return kept.$2;
+    final songs = AppScope.of(context).songs;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(
+          content: Row(
+            children: [
+              SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
+              SizedBox(width: 16),
+              Text('正在保存录音…'),
+            ],
+          ),
+        ),
+      ),
+    );
+    try {
+      final score = _session.scorer.overallScore();
+      final r = await keepTake(
+        songs,
+        widget.meta.id,
+        take,
+        score: score.isNaN ? null : score,
+        background: widget.backgroundWork,
+      );
+      _kept = (take.version, r.id);
+      return r.id;
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('没能保存录音：$e')));
+      return null;
+    } finally {
+      if (mounted) Navigator.of(context).pop();
     }
   }
 
@@ -180,48 +231,12 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     _session.stopListening();
     // The preview needs the audio device: practice waits until it is back.
     _session.suspend(reason: '练习已暂停，点播放继续');
-    var id = _kept != null && _kept!.$1 == take.version ? _kept!.$2 : null;
-    if (id == null) {
-      final songs = AppScope.of(context).songs;
-      unawaited(
-        showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => const AlertDialog(
-            content: Row(
-              children: [
-                SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
-                SizedBox(width: 16),
-                Text('正在保存录音…'),
-              ],
-            ),
-          ),
-        ),
-      );
-      try {
-        final score = _session.scorer.overallScore();
-        final r = await keepTake(
-          songs,
-          widget.meta.id,
-          take,
-          score: score.isNaN ? null : score,
-          background: widget.backgroundWork,
-        );
-        id = r.id;
-        _kept = (take.version, r.id);
-      } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('没能保存录音：$e')));
-      } finally {
-        if (mounted) Navigator.of(context).pop();
-      }
-    }
+    final id = await _keepTake();
     if (id != null && mounted) {
-      final recordingId = id;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) =>
-              widget.exportPageBuilder?.call(widget.meta.id, recordingId) ??
-              ExportPage(songId: widget.meta.id, recordingId: recordingId),
+              widget.exportPageBuilder?.call(widget.meta.id, id) ?? ExportPage(songId: widget.meta.id, recordingId: id),
         ),
       );
     }
@@ -229,19 +244,64 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     if (mounted) _session.resume();
   }
 
+  /// Whether leaving would lose a recording worth keeping: at least half
+  /// the song (or 20 seconds) sung and not kept yet. Then leaving asks.
+  bool get _takeAtRisk {
+    final take = _session.take;
+    if (take == null || take.isEmpty) return false;
+    final kept = _kept;
+    if (kept != null && kept.$1 == take.version) return false;
+    return take.endSeconds - take.startSeconds >= math.min(20.0, widget.meta.duration / 2);
+  }
+
+  /// Leaving with a recording that would be lost: keep it, or leave
+  /// without it. Dismissing the question stays on the page.
+  Future<void> _confirmLeave() async {
+    _session.pause();
+    final keep = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('保存刚才唱的录音？'),
+        content: const Text('录音只在这次练习里，离开就没有了。保存后在歌曲页的“我的录音”里，随时可以做成成品。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('不保存')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('保存')),
+        ],
+      ),
+    );
+    if (keep == null || !mounted) return;
+    if (keep && await _keepTake() == null) return; // not kept: stay
+    if (mounted) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Runs as the page is popped (back button or swipe), before the page
-    // below continues: it gets the save to wait for.
-    return PopScope(
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) widget.onLeave?.call(_saveOnLeave());
+    // Rebuilt with the session: leaving asks first only while a recording
+    // would be lost; otherwise the page goes back (and swipes back) as usual.
+    return ListenableBuilder(
+      listenable: _session,
+      builder: (context, child) {
+        final ask = _takeAtRisk;
+        return PopScope(
+          canPop: !ask,
+          // Runs as the page is popped, before the page below continues:
+          // it gets the save to wait for.
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) {
+              widget.onLeave?.call(_saveOnLeave());
+            } else if (ask) {
+              _confirmLeave();
+            }
+          },
+          child: child!,
+        );
       },
       child: _scaffold(context),
     );
   }
 
   Widget _scaffold(BuildContext context) {
+    final settings = AppScope.of(context).settings;
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.meta.title, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -255,16 +315,19 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
               builder: (_) => _MixSheet(session: _session),
             ),
           ),
-          IconButton(
-            tooltip: '查看评分',
-            icon: const Icon(Icons.insights_rounded),
-            onPressed: () => _showResults(saveRecord: true),
+          Tooltip(
+            message: '查看评分',
+            child: TextButton.icon(
+              onPressed: () => _showResults(saveRecord: true),
+              icon: const Icon(Icons.insights_rounded, size: 20),
+              label: const Text('评分'),
+            ),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 8),
         ],
       ),
       body: ListenableBuilder(
-        listenable: _session,
+        listenable: Listenable.merge([_session, settings]),
         builder: (context, _) {
           if (_session.error != null) {
             return Padding(
@@ -287,10 +350,14 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
           return Column(
             children: [
               if (_session.reviewing) _ReviewBar(session: _session),
-              if (_session.pauseReason != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-                  child: Text(_session.pauseReason!, style: context.type.bodySmall),
+              if (_session.pauseReason case final reason?)
+                _Notice(icon: Icons.pause_circle_outline_rounded, text: reason)
+              else if (!settings.headphoneTipSeen)
+                _Notice(
+                  icon: Icons.headphones_rounded,
+                  text: '戴上耳机再唱：外放时麦克风会录到伴奏，音准会测不准。',
+                  action: '知道了',
+                  onAction: () => settings.update((s) => s.headphoneTipSeen = true),
                 ),
               _LiveMeter(session: _session),
               Expanded(
@@ -301,6 +368,41 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// A short notice at the top: why practice paused, or a tip.
+class _Notice extends StatelessWidget {
+  const _Notice({required this.icon, required this.text, this.action, this.onAction});
+  final IconData icon;
+  final String text;
+  final String? action;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.yt;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      padding: EdgeInsets.fromLTRB(12, 8, action == null ? 12 : 4, 8),
+      decoration: BoxDecoration(
+        color: p.gamboge.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: p.ink),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: context.type.bodySmall?.copyWith(color: p.ink))),
+          if (action != null)
+            TextButton(
+              onPressed: onAction,
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              child: Text(action!),
+            ),
+        ],
       ),
     );
   }
@@ -457,6 +559,73 @@ class _Stage extends StatelessWidget {
   }
 }
 
+/// The last seconds before a line are counted down; 跳过前奏 / 跳过间奏
+/// lands there.
+const _countdownSeconds = 3.0;
+
+/// A line further away than this can be skipped to.
+const _skipFrom = 5.0;
+
+/// Three dots that go out one per second before a line begins.
+class _Countdown extends StatelessWidget {
+  const _Countdown({required this.seconds});
+  final double seconds;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.yt;
+    final lit = seconds.ceil().clamp(1, 3);
+    return Semantics(
+      label: '还有 ${seconds.ceil()} 秒开始唱',
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < 3; i++)
+            Container(
+              width: 8,
+              height: 8,
+              margin: const EdgeInsets.only(right: 5),
+              decoration: BoxDecoration(shape: BoxShape.circle, color: i < lit ? p.ink : p.staffStrong),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 导唱 on or off: the original singer quietly along, or the accompaniment
+/// alone. The volume is in 练习设置.
+class _GuideToggle extends StatelessWidget {
+  const _GuideToggle({required this.session});
+  final PracticeSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.yt;
+    final s = session.settings;
+    final on = s.guideVocalOn;
+    return Tooltip(
+      message: on ? '原唱小声跟着放，帮你找音；点一下只放伴奏' : '现在只放伴奏；点一下让原唱小声跟着放',
+      child: TextButton.icon(
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          visualDensity: VisualDensity.compact,
+          foregroundColor: on ? p.ink : p.inkSoft,
+        ),
+        onPressed: session.reviewing
+            ? null
+            : () {
+                s.update((s) => s.guideVocalOn = !on);
+                session.applyMix();
+              },
+        icon: Icon(on ? Icons.music_note_rounded : Icons.music_off_rounded, size: 18),
+        label: Text(on ? '导唱：开' : '导唱：关'),
+      ),
+    );
+  }
+}
+
 class _Lyrics extends StatelessWidget {
   const _Lyrics({required this.session});
   final PracticeSession session;
@@ -467,17 +636,56 @@ class _Lyrics extends StatelessWidget {
     final li = session.currentLine;
     if (li < 0) return const SizedBox(height: 84);
     final line = ref.lines[li];
-    final next = li + 1 < ref.lines.length ? ref.lines[li + 1] : null;
+    final count = ref.lines.length;
+    final next = li + 1 < count ? ref.lines[li + 1] : null;
     final ph = session.position;
     final p = context.yt;
     final scores = session.tokenScores();
     final language = ref.language;
+    final practising = !session.reviewing;
+    final looping = practising && session.loopLine != null;
+    // Until the line in focus begins: the intro, an interlude, a lead-in.
+    final wait = line.start - ph;
+    final passes = looping ? session.scorer.linePasses[li] ?? const <double>[] : const <double>[];
     final base = lyricsStyle(context.type.headlineSmall!.copyWith(fontWeight: FontWeight.w500, height: 1.2), language)!;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Where in the song, and what comes next: a countdown to the
+          // line, a way past a long intro, or out of the loop.
+          SizedBox(
+            height: 34,
+            child: Row(
+              children: [
+                if (looping) ...[
+                  Icon(Icons.repeat_one_rounded, size: 16, color: p.ink),
+                  const SizedBox(width: 4),
+                ],
+                Text(
+                  looping ? '单句循环 · 第 ${li + 1} / $count 句' : '第 ${li + 1} / $count 句',
+                  style: context.type.labelMedium?.copyWith(fontFeatures: tabular, color: looping ? p.ink : null),
+                ),
+                const SizedBox(width: 10),
+                if (practising && session.isPlaying && wait > 0 && wait <= _countdownSeconds) _Countdown(seconds: wait),
+                const Spacer(),
+                if (looping)
+                  TextButton(
+                    onPressed: () => session.setLoopLine(null),
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    child: const Text('退出循环'),
+                  )
+                else if (practising && wait > _skipFrom)
+                  TextButton.icon(
+                    onPressed: () => session.seekToLine(li, leadIn: _countdownSeconds),
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    icon: const Icon(Icons.fast_forward_rounded, size: 18),
+                    label: Text(li == 0 ? '跳过前奏' : '跳过间奏'),
+                  ),
+              ],
+            ),
+          ),
           Text.rich(
             TextSpan(
               children: [
@@ -498,20 +706,41 @@ class _Lyrics extends StatelessWidget {
               child: Text(translation, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.type.bodySmall),
             ),
           const SizedBox(height: 6),
-          Text(next?.text ?? ' ', style: lyricsStyle(context.type.bodyMedium?.copyWith(color: p.inkFaint), language)),
-          const SizedBox(height: 4),
-          // How does this line go? The original singer, then sing it.
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                visualDensity: VisualDensity.compact,
-              ),
-              onPressed: session.reviewing ? null : () => session.listenOriginal(line: li),
-              icon: const Icon(Icons.record_voice_over_rounded, size: 18),
-              label: const Text('听这句原唱'),
+          // Looping, the line's own progress replaces the line after it.
+          if (looping)
+            Text(
+              passes.isEmpty
+                  ? '每唱完一遍，这里记下这一句的得分'
+                  : '这一句唱了 ${passes.length} 遍：${passes.length > 5 ? '… ' : ''}'
+                        '${passes.skip(math.max(0, passes.length - 5)).map((s) => s.round()).join(' → ')}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: context.type.bodyMedium?.copyWith(fontFeatures: tabular),
+            )
+          else
+            Text(
+              next?.text ?? ' ',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: lyricsStyle(context.type.bodyMedium?.copyWith(color: p.inkFaint), language),
             ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              // How does this line go? The original singer, then sing it.
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: session.reviewing ? null : () => session.listenOriginal(line: li),
+                icon: const Icon(Icons.record_voice_over_rounded, size: 18),
+                label: const Text('听这句原唱'),
+              ),
+              const Spacer(),
+              // Without an accompaniment the original singer is all there is.
+              if (session.hasAccompaniment) _GuideToggle(session: session),
+            ],
           ),
         ],
       ),
@@ -757,10 +986,14 @@ class _MixSheetState extends State<_MixSheet> {
             ),
             slider(
               '原唱导唱',
-              '${(s.guideVocalVolume * 100).round()}%',
+              s.guideVocalOn || !widget.session.hasAccompaniment ? '${(s.guideVocalVolume * 100).round()}%' : '关',
+              // Dragging it turns 导唱 on again.
               Slider(
                 value: s.guideVocalVolume,
-                onChanged: (v) => drag(() => s.guideVocalVolume = v),
+                onChanged: (v) => drag(() {
+                  s.guideVocalVolume = v;
+                  s.guideVocalOn = true;
+                }),
                 onChangeEnd: dragEnd,
               ),
             ),

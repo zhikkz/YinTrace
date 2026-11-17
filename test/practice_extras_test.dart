@@ -2,11 +2,14 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yintrace/src/analysis/reference.dart';
 import 'package:yintrace/src/import/import_pipeline.dart';
 import 'package:yintrace/src/library/song.dart';
+import 'package:yintrace/src/practice/live_pitch.dart';
 import 'package:yintrace/src/practice/scoring.dart';
 import 'package:yintrace/src/practice/take_recorder.dart';
 import 'package:yintrace/src/ui/import_page.dart';
+import 'package:yintrace/src/ui/results_sheet.dart';
 import 'package:yintrace/src/ui/score_trend.dart';
 import 'package:yintrace/src/ui/theme.dart';
 
@@ -95,6 +98,121 @@ void main() {
       expect(find.text('得分趋势'), findsOneWidget);
       expect(find.text('最近 78 分，比第一次高 16 分'), findsOneWidget);
       expect(find.textContaining('另有 1 次单句循环'), findsOneWidget);
+    });
+  });
+
+  group('results', () {
+    // Two lines, one note per character.
+    SongReference twoLines() {
+      RefLine line(int index, String text, double start, List<double> midis) {
+        final tokens = [
+          for (var k = 0; k < midis.length; k++)
+            RefToken(
+              text: text[k],
+              start: start + k * 0.5,
+              end: start + k * 0.5 + 0.4,
+              notes: [RefNote(start: start + k * 0.5, end: start + k * 0.5 + 0.4, midi: midis[k])],
+            ),
+        ];
+        return RefLine(index: index, text: text, lrcStart: start, tokens: tokens);
+      }
+
+      return SongReference(
+        lines: [line(0, '夜里的风', 1, [60, 62, 64, 65]), line(1, '下雨了', 4, [67, 65, 64])],
+        duration: 8,
+      );
+    }
+
+    /// Sings [ref] from [from] to [to] seconds: in tune, except [flat]
+    /// semitones low in line 1.
+    void sing(PracticeScorer scorer, SongReference ref, {double from = 0.5, double to = 6, double flat = 0.8}) {
+      for (var t = from; t < to; t += 0.01) {
+        final note = ref.noteAt(t);
+        final inLine1 = t >= ref.lines[1].start - 0.2;
+        final midi = note == null ? 0.0 : note.midi - (inLine1 ? flat : 0);
+        scorer.add(LivePitch(songTime: t, clockTime: t, midi: midi, levelDb: -20, playing: true, aperiodicity: 0.05));
+      }
+    }
+
+    /// Opens the results of [scorer] the way the practice page does; what
+    /// the sheet closes with ends up in [closedWith].
+    ResultsAction? closedWith;
+    Future<void> open(WidgetTester tester, PracticeScorer scorer) async {
+      closedWith = null;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(Brightness.light),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async => closedWith = await showModalBottomSheet<ResultsAction>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (_) => ResultsSheet(scorer: scorer),
+                ),
+                child: const Text('评分'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('评分'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the weakest line sung is the next step; a tapped character opens its line', (tester) async {
+      final ref = twoLines();
+      final scorer = PracticeScorer(ref);
+      sing(scorer, ref);
+      final weak = scorer.lineResult(1).score;
+      expect(weak, lessThan(80));
+      expect(scorer.lineResult(0).score, greaterThan(80));
+
+      ResultsAction? popped;
+      Future<void> tapAndClose(Finder f) async {
+        await tester.tap(f);
+        await tester.pumpAndSettle();
+        popped = closedWith;
+      }
+
+      await open(tester, scorer);
+      expect(find.text('先练第 2 句（${weak.round()} 分）'), findsOneWidget);
+      expect(find.text('从头再唱一遍'), findsOneWidget);
+      await tapAndClose(find.text('先练第 2 句（${weak.round()} 分）'));
+      expect(popped, isA<LoopLineAction>().having((a) => a.line, 'line', 1));
+
+      await open(tester, scorer);
+      await tapAndClose(find.text('从头再唱一遍'));
+      expect(popped, isA<RestartAction>());
+
+      // A flat character: the tile opens its line.
+      await open(tester, scorer);
+      await tester.ensureVisible(find.text('下').last);
+      await tapAndClose(find.text('下').last);
+      expect(popped, isA<LoopLineAction>().having((a) => a.line, 'line', 1));
+    });
+
+    testWidgets('while looping a line: its passes, go on, or back to the whole song', (tester) async {
+      final ref = twoLines();
+      final scorer = PracticeScorer(ref)..onlyLine = 1;
+      sing(scorer, ref, from: 3.2, to: 5.8, flat: 0.8);
+      scorer.startPass(3.2, fromLine: 1);
+      sing(scorer, ref, from: 3.2, to: 5.8, flat: 0.1);
+      expect(scorer.linePasses[1], hasLength(2));
+
+      await open(tester, scorer);
+      expect(find.text('单句循环 · 第 2 句'), findsOneWidget);
+      expect(find.textContaining('这一句唱了 2 遍：'), findsOneWidget);
+      expect(find.text('继续练这一句'), findsOneWidget);
+      expect(find.text('不循环了，回到整首'), findsOneWidget);
+      expect(find.textContaining('先练第'), findsNothing, reason: 'the line being looped is the one to practise');
+      await tester.tap(find.text('继续练这一句'));
+      await tester.pumpAndSettle();
+      expect(closedWith, isA<ContinueLoopAction>());
+      await open(tester, scorer);
+      await tester.tap(find.text('不循环了，回到整首'));
+      await tester.pumpAndSettle();
+      expect(closedWith, isA<WholeSongAction>());
     });
   });
 
