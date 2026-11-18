@@ -535,6 +535,13 @@ class _Stage extends StatelessWidget {
       lo = r.$1;
       hi = r.$2;
     }
+    final user = session.displayPoints;
+    // Keep both voices on the same pitch axis, even when sung an octave apart.
+    for (final point in user) {
+      if (point.midi <= 0 || point.time < t0 || point.time > t1) continue;
+      lo = math.min(lo, point.midi);
+      hi = math.max(hi, point.midi);
+    }
     final (a, b) = paddedRange(lo, hi, minSpan: 14);
     return CustomPaint(
       size: Size.infinite,
@@ -550,11 +557,11 @@ class _Stage extends StatelessWidget {
           tolerance: session.settings.toleranceCents.toDouble(),
           language: session.reference.language,
         ),
-        user: session.displayPoints,
+        user: user,
         playhead: ph,
         tokenScores: session.tokenScores(),
         glyphSize: 16,
-        live: true,
+        live: session.isPlaying,
       ),
     );
   }

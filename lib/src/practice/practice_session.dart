@@ -152,9 +152,12 @@ class PracticeSession extends ChangeNotifier {
     return t.covers(a, b);
   }
 
-  /// The singer's pitch trail to draw: live while practising, the recorded
-  /// one while listening back to it.
-  List<UserPoint> get displayPoints => listening == ListenKind.take ? take!.points : points;
+  /// The singer's pitch trail while practising or listening back to a take.
+  List<UserPoint> get displayPoints => switch (listening) {
+    ListenKind.take => take!.points,
+    ListenKind.original => const [],
+    null => points,
+  };
 
   /// While listening back: what the singer sang at the current position.
   UserPoint? get reviewPoint => listening == ListenKind.take ? take?.pointAt(position) : null;
@@ -651,6 +654,10 @@ class PracticeSession extends ChangeNotifier {
         if (p.voiced) lastVoiced = s;
         _clock = p.clockTime;
         if (p.playing) {
+          // When a loop wraps, drop the old trail from the new pass's start.
+          if (points.isNotEmpty && p.songTime < points.last.time - 0.25) {
+            points.removeWhere((point) => point.time >= p.songTime);
+          }
           final point = UserPoint(p.songTime, p.midi, s.verdict, s.deviationCents);
           points.add(point);
           if (p.songTime >= from && p.songTime < to) t?.addPoint(point);

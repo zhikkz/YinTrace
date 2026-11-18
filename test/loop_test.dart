@@ -107,6 +107,12 @@ void main() {
       session.setLoopLine(1);
       session.play();
       run(2.5 * (line.end - line.start + 1.8), from: line.start - 0.1, to: line.end + 0.1);
+      expect(session.displayPoints.any((p) => p.midi > 0), isTrue);
+      expect(
+        session.displayPoints.map((p) => p.time),
+        everyElement(lessThanOrEqualTo(session.position)),
+        reason: 'the previous pass should not leave pitch points ahead of playback',
+      );
       final r = session.scorer.results();
       expect(r[1].score, greaterThan(90));
       expect(r[0].attempted, isFalse, reason: 'line 0 was not sung: ${r[0].tokens.map((t) => t.summary).toList()}');

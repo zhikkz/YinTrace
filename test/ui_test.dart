@@ -1027,18 +1027,41 @@ void main() {
     expect(session.isPlaying, isTrue);
     // Render the song in 512 frame blocks with the singer as mic input,
     // pumping frames so the page's ticker pulls and scores the capture.
-    Future<void> runUntil(double seconds) async {
+    Future<void> runUntil(double seconds, {Float32List? voice}) async {
+      final samples = voice ?? singer;
       while (engine.positionSeconds < seconds) {
         final pos = engine.positionFrame;
         final n = 512;
         final input = Float32List(n);
-        for (var i = 0; i < n && pos + i < singer.length; i++) {
-          input[i] = singer[pos + i];
+        for (var i = 0; i < n && pos + i < samples.length; i++) {
+          input[i] = samples[pos + i];
         }
         engine.render(n, input: input);
         await tester.pump(const Duration(milliseconds: 11));
       }
     }
+
+    PitchGraphPainter graph() {
+      final finder = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
+      return tester.widget<CustomPaint>(finder).painter! as PitchGraphPainter;
+    }
+
+    // A low voice in the lead-in must be visible alongside the upcoming
+    // original melody, even outside the original singer's pitch range.
+    final lowVoice = synthVoice([const Syl(0.1, 0.6, 48, unvoicedOnset: false)], 0.6);
+    await runUntil(0.5, voice: lowVoice);
+    final liveGraph = graph();
+    final sungPitch = liveGraph.user.last;
+    expect(sungPitch.midi, closeTo(48, 0.5));
+    expect(liveGraph.midiLo, lessThan(sungPitch.midi));
+    final originalPitch = ref.lines.first.notes.first.midi;
+    expect(liveGraph.midiHi, greaterThan(originalPitch));
+    expect(liveGraph.playhead! - sungPitch.time, closeTo(0, 0.1));
+    expect(liveGraph.live, isTrue);
+    session.pause();
+    await tester.pump();
+    expect(graph().live, isFalse);
+    session.play();
 
     await runUntil(7.9);
     expect(find.textContaining('记得带伞'), findsWidgets);
@@ -1098,6 +1121,7 @@ void main() {
     await tester.pump();
     expect(session.listening, ListenKind.original);
     expect(find.text('正在听原唱，听完回到这一句开头'), findsOneWidget);
+    expect(graph().user, isEmpty);
     final heardLine = ref.lines[session.originalLine!];
     session.seek(heardLine.start + 0.2);
     final vocalTrack = readWavFile(services.songs.pathFor(song.id, song.vocalsFile)).samples;
