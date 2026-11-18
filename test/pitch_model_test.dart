@@ -119,6 +119,26 @@ void main() {
         throwsStateError,
       );
     });
+
+    test('a copy that was changed is written again, also one of the right length', () async {
+      final dir = Directory.systemTemp.createTempSync('pitch_model');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final model = File(PitchModel.asset).readAsBytesSync();
+      final copy = File('${dir.path}/${PitchModel.fileName}')
+        ..writeAsBytesSync(Uint8List.fromList(model)..[model.length ~/ 2] ^= 0xff);
+      expect(copy.lengthSync(), PitchModel.bytes);
+      var loads = 0;
+      Future<ByteData> load(String asset) async {
+        loads++;
+        return ByteData.sublistView(File(asset).readAsBytesSync());
+      }
+
+      expect(await PitchModel.install(dir, load), copy.path);
+      expect(loads, 1, reason: 'the copy is not the model');
+      expect(copy.readAsBytesSync(), model);
+      expect(await PitchModel.install(dir, load), copy.path);
+      expect(loads, 1, reason: 'now it is');
+    });
   });
 
   group('SwiftF0', () {
