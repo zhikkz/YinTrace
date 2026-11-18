@@ -8,6 +8,7 @@ import '../import/import_pipeline.dart';
 import '../library/recording.dart';
 import '../library/song.dart';
 import '../models/model_catalog.dart';
+import '../separation/tensor_model.dart';
 import 'export_page.dart';
 import 'import_page.dart' show lyricsHint;
 import 'lyrics_style.dart';
@@ -39,6 +40,9 @@ class _SongPageState extends State<SongPage> {
   String? _error;
   bool _loaded = false;
   bool _realigning = false;
+  bool _cancelAlignment = false;
+  bool _savingAlignment = false;
+  int _aligned = 0, _total = 0;
 
   @override
   void didChangeDependencies() {
@@ -135,13 +139,29 @@ class _SongPageState extends State<SongPage> {
     if (edited == null || !mounted) return;
     final services = AppScope.of(context);
     if (!await ensureModels(context, requiredModels: [hubertFaModel]) || !mounted) return;
-    setState(() => _realigning = true);
+    setState(() {
+      _realigning = true;
+      _cancelAlignment = false;
+      _savingAlignment = false;
+      _aligned = _total = 0;
+    });
     final awake = ScreenAwake()..hold();
     try {
       await realignSong(
         services.songs, widget.songId, edited, hubertFaPath: services.models.pathFor(hubertFaModel)!,
+        onProgress: (done, total) {
+          if (!mounted) return;
+          setState(() {
+            _aligned = done;
+            _total = total;
+          });
+        },
+        isCancelled: () => !mounted || _cancelAlignment,
+        onSaving: () => setState(() => _savingAlignment = true),
       );
       if (mounted) await _load();
+    } on SeparationCancelled {
+      // The worker closes its session before returning here.
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     } finally {
@@ -183,13 +203,25 @@ class _SongPageState extends State<SongPage> {
     }
     if (_realigning) {
       return PopScope(
-        canPop: false,
+        canPop: !_savingAlignment,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) _cancelAlignment = true;
+        },
         child: Scaffold(
-          appBar: AppBar(title: Text(meta.title), automaticallyImplyLeading: false),
-          body: const Center(
+          appBar: AppBar(title: Text(meta.title), automaticallyImplyLeading: !_savingAlignment),
+          body: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: [CircularProgressIndicator(), SizedBox(height: 16), Text('正在逐句对齐歌词…')],
+              children: [
+                CircularProgressIndicator(value: _total == 0 ? null : _aligned / _total),
+                const SizedBox(height: 16),
+                Text(_savingAlignment ? '正在保存…' : _total == 0 ? '正在准备对齐…' : '已对齐 $_aligned / $_total 句'),
+                if (!_savingAlignment)
+                  TextButton(
+                    onPressed: _cancelAlignment ? null : () => setState(() => _cancelAlignment = true),
+                    child: Text(_cancelAlignment ? '正在取消…' : '取消'),
+                  ),
+              ],
             ),
           ),
         ),

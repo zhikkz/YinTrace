@@ -134,6 +134,58 @@ void main() {
     expect(carriedPinyin(saved, moved), {(2, 0): 'le'});
   });
 
+  test('editing and restoring the first line preserves the quiet tail and corrections of the second', () async {
+    final lines = parseLrc(_lyrics).lines;
+    final lexicon = await HubertFaLexicon.load(modelPath, lines);
+    final vocal = Float32List(3 * 44100), track = _track(quietTail: true);
+    var calls = 0;
+    final aligner = HubertFaAligner(lexicon, (clip) async =>
+        _scores(clip.length ~/ 441 + 1, calls++ == 1 ? 1.7 : 0.4, _pronounced));
+    final original = await aligner.alignSong(vocal, track, lines, readings: {(0, 0): 'chang'});
+    original.lines.last.tokens.single.transpose(2);
+    final untouched = original.lines.last.toJson();
+    expect(original.lines.first.tokens.first.corrected, isTrue);
+    final pin = original.lines.first.start + 0.020;
+    final edited = await aligner.editLine(vocal, track, lines.first, original, 0,
+        pins: {0: pin}, readings: {0: 'chang'});
+    expect(edited.lines.first.tokens.first.pinned, pin);
+    expect(edited.lines.last.toJson(), untouched);
+    final restored = await aligner.editLine(vocal, track, lines.first, edited, 0,
+        pins: {}, readings: {}, restore: {0, 1});
+    expect(restored.lines.first.tokens.any((t) => t.corrected), isFalse);
+    expect(restored.lines.first.start, original.lines.first.start);
+    expect(restored.lines.last.toJson(), untouched);
+    expect(calls, 4);
+  });
+
+  test('second line keeps its exact first pin between model frames', () async {
+    final lines = parseLrc(_lyrics).lines;
+    final lexicon = await HubertFaLexicon.load(modelPath, lines);
+    for (final pin in [2.111, 2.115, 2.119, 2.123]) {
+      var calls = 0;
+      final aligner = HubertFaAligner(lexicon, (clip) async =>
+          _scores(clip.length ~/ 441 + 1, calls++ == 0 ? 0.4 : 1.7, _pronounced));
+      final ref = await aligner.alignSong(Float32List(3 * 44100), _track(), lines, pins: {(1, 0): pin});
+      expect(ref.lines.last.start, pin);
+      expect(ref.lines.last.tokens.first.pinned, pin);
+      expect(ref.lines.first.end, lessThanOrEqualTo(pin));
+    }
+  });
+
+  test('an unavailable alignment model falls back and saves the processed vocal', () async {
+    final audioPath = '${tmp.path}/vocal.wav';
+    writeWavFile(audioPath, Float32List(3 * 44100), 1, 44100);
+    final repo = SongRepository(Directory('${tmp.path}/songs'));
+    final song = await ImportPipeline(audio: const WavAudioBackend(), repository: repo,
+      loadModel: (_, {required inputName, required outputName, coreML}) => throw StateError('unused'),
+    ).run(ImportRequest(audioPath: audioPath, lyrics: _lyrics, title: 'test', vocalsOnly: true,
+        hubertFaPath: '${tmp.path}/missing/model.onnx'));
+    expect(song.modelInfo['alignment'], '音高轨迹');
+    expect(song.modelInfo['alignmentModelError'], isNotEmpty);
+    expect(File(repo.pathFor(song.id, song.vocalsFile)).existsSync(), isTrue);
+    expect((await repo.loadReference(song.id)).lines, hasLength(2));
+  });
+
   test('only the edited occurrence uses the override and pins keep their exact start', () async {
     final line = parseLrc('[00:00.40]长啊\n[00:01.60]').lines.single;
     final lexicon = await HubertFaLexicon.load(modelPath, [line]);

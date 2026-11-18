@@ -280,7 +280,8 @@ Linked into the app, each under the license published with the package:
 |---|---|
 | Flutter SDK, `flutter_localizations` | BSD 3-Clause |
 | `flutter_onnxruntime` | MIT |
-| `file_picker` | MIT |
+| `file_picker`, `archive`, `kana_kit` | MIT |
+| `pinyin` | BSD 2-Clause |
 | `fftea` | Apache 2.0 |
 | `crypto`, `ffi`, `path_provider` | BSD 3-Clause |
 | `wakelock_plus` (and `package_info_plus`) | BSD 3-Clause |

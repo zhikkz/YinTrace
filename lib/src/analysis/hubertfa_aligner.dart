@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -79,7 +80,7 @@ class HubertFaAligner {
     List<LyricLine> lines, {
     Map<(int, int), double> pins = const {},
     Map<(int, int), String> readings = const {},
-    void Function(int done, int total)? onProgress,
+    FutureOr<void> Function(int done, int total)? onProgress,
   }) async {
     final duration = _duration(vocal, track);
     final language = detectLyricsLanguage(lines);
@@ -90,7 +91,7 @@ class HubertFaAligner {
     };
     for (final (i, line) in lines.indexed) {
       matches.add(await _align(vocal, track, duration, line, language, forLine(pins, i), forLine(readings, i)));
-      onProgress?.call(i + 1, lines.length);
+      await onProgress?.call(i + 1, lines.length);
     }
 
     // The padded clips overlap. Give the next line its detected onset,
@@ -99,7 +100,9 @@ class HubertFaAligner {
     for (var i = 1; i < matches.length; i++) {
       final next = matches[i], previous = matches[i - 1];
       var cut = lines[i].start.clamp(0.0, duration);
-      if (next.hasAlignment) {
+      if (next.pins[0] case final pin?) {
+        cut = pin;
+      } else if (next.hasAlignment) {
         final first = next.spans.first;
         cut = first.start;
         if (previous.hasAlignment) {
@@ -121,6 +124,32 @@ class HubertFaAligner {
         for (final (i, line) in lines.indexed)
           _referenceLine(track, line, i, matches[i], cuts[i], cuts[i + 1], forLine(readings, i)),
       ],
+    );
+  }
+
+  /// Replaces one line after a timing or reading edit, keeping pitch edits
+  /// except on tokens explicitly restored to automatic recognition.
+  Future<SongReference> editLine(
+    Float32List vocal,
+    PitchTrack track,
+    LyricLine line,
+    SongReference current,
+    int index, {
+    required Map<int, double> pins,
+    required Map<int, String> readings,
+    Set<int> restore = const {},
+  }) async {
+    final updated = await alignEditedLine(
+      vocal, track, line, index, current.language,
+      lower: index > 0 ? current.lines[index - 1].end : 0,
+      upper: index + 1 < current.lines.length ? current.lines[index + 1].start : current.duration,
+      pins: pins, readings: readings,
+    );
+    for (final (i, token) in updated.tokens.indexed) {
+      if (!restore.contains(i)) token.applyCorrections(current.lines[index].tokens[i]);
+    }
+    return SongReference(
+      lines: [...current.lines]..[index] = updated, duration: current.duration, language: current.language,
     );
   }
 
@@ -284,6 +313,7 @@ class HubertFaAligner {
     }
     return RefLine(
       index: index,
+      hubertFa: true,
       text: line.text,
       lrcStart: line.start,
       lrcEnd: line.end,
