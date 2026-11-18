@@ -25,6 +25,12 @@ jobs:
           cache: true
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg cmake fonts-wqy-zenhei
+      # The tests run the bundled pitch model in ONNX Runtime for Python
+      # (`flutter test` cannot load the plugin).
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install onnxruntime numpy
       - name: Native audio core tests (C)
         run: packages/yintrace_audio/tool/run_native_tests.sh
       - name: Build native core for host
@@ -55,6 +61,7 @@ jobs:
         run: >
           YINTRACE_AUDIO_LIB=$GITHUB_WORKSPACE/build/host/libyintrace_audio.so
           MODELS_DIR=$GITHUB_WORKSPACE/build/uvr-models
+          PYTHON=python
           SCREENSHOT_DIR=build/screenshots flutter test
       - uses: actions/upload-artifact@v6
         with:
@@ -75,6 +82,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install onnx onnxscript onnxruntime numpy
+      # Downloads the official swift-f0 wheel from PyPI, checks its SHA-256,
+      # rebuilds the bundled pitch model from it and compares.
+      - name: The bundled pitch model is the official SwiftF0 with the app's interface
+        run: python tools/build_pitch_model.py verify
       - name: Round trip with random weights
         run: python tools/build_karaoke_graph.py selftest
       - name: Cache the UVR models

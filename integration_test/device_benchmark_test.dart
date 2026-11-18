@@ -41,6 +41,7 @@ void main() {
       // The vocal model with Core ML, checked against the CPU on its first
       // chunk, as on a device the first time.
       acceleration: const ImportAcceleration(coreML: vocalCoreMLOptions, verify: true),
+      pitchModelPath: services.pitchModelPath,
       onLog: log,
     );
     try {

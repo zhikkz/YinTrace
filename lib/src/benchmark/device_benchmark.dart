@@ -102,6 +102,7 @@ class DeviceBenchmark extends ChangeNotifier {
     required this.vrPath,
     this.options = const BenchmarkOptions(),
     this.acceleration = const ImportAcceleration(),
+    this.pitchModelPath,
     this.onImported,
     this.onLog,
   });
@@ -116,6 +117,7 @@ class DeviceBenchmark extends ChangeNotifier {
     required String mdxPath,
     required String vrPath,
     ImportAcceleration acceleration = const ImportAcceleration(),
+    String? pitchModelPath,
     void Function(Map<String, String> modelInfo)? onImported,
     void Function(String line)? onLog,
   }) {
@@ -125,6 +127,7 @@ class DeviceBenchmark extends ChangeNotifier {
       vrPath: vrPath,
       options: BenchmarkOptions(songSeconds: (o['song_seconds'] as num?)?.toInt() ?? 60, quick: o['quick'] == true),
       acceleration: acceleration,
+      pitchModelPath: pitchModelPath,
       onImported: onImported,
       onLog: onLog,
     );
@@ -140,6 +143,10 @@ class DeviceBenchmark extends ChangeNotifier {
   /// How the complete import runs its models: as the app's own imports do
   /// (VocalAcceleration.beforeImport).
   final ImportAcceleration acceleration;
+
+  /// The pitch model the complete import measures the pitch with, as the
+  /// app's imports do (null: YIN).
+  final String? pitchModelPath;
 
   /// Gets what the import reported (for VocalAcceleration.afterImport).
   final void Function(Map<String, String> modelInfo)? onImported;
@@ -343,6 +350,7 @@ class DeviceBenchmark extends ChangeNotifier {
           coreMLMarker: acceleration.marker,
           verifyCoreML: acceleration.verify,
           speed: acceleration.speed,
+          pitchModelPath: pitchModelPath,
         ),
         '${_tmp.path}/songs',
       );
@@ -371,6 +379,8 @@ class DeviceBenchmark extends ChangeNotifier {
             r['coreml_check'] = info[ImportPipeline.coreMLInfo];
             r['mdx_run_s'] = double.tryParse(info['mdxRunSeconds'] ?? '');
             r['vr_run_s'] = double.tryParse(info['vrRunSeconds'] ?? '');
+            r['pitch'] = info[ImportPipeline.pitchInfo];
+            if (info['pitchModelError'] != null) r['pitch_error'] = info['pitchModelError'];
             onImported?.call(info);
           case ImportFailedEvent(:final message, :final cancelled):
             if (cancelled) completed = false;

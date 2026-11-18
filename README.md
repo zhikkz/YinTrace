@@ -14,6 +14,9 @@ YinTrace 是一个练唱歌的 App。导入一首歌，它在手机上把人声�
   去掉和声，只留主唱（较慢，默认不做）。全部在手机本地完成。
 - **逐字音高图**：根据带时间的歌词（`[00:12.40]夜里的风慢慢吹过窗台`），测量纯人声里每一句、
   每一个字的音高，画成一段一段的线条，保存在本地曲库。
+- **AI 测原唱音高**：导入时用神经网络音高模型 [SwiftF0](https://github.com/lars76/swift-f0)
+  （135 KB，随 App 附带，不用下载）测分离出的原唱人声，比以前的 YIN 算法准（整体准确率 92.4% 对 90.2%，
+  混响下 84.1% 对 80.0%，[验证记录](docs/pitch-model.md)），结果存在本地，每次练习直接用；模型用不了时自动改用 YIN。
 - **演唱练习**（主打功能）：用 **YIN 算法**实时分析你唱的音高，和逐字音高图对齐显示；
   唱完告诉你哪个字唱高了、唱低了、没唱出来、不稳、抢拍或进晚了。可以单句循环练到唱准，
   不会唱的先“听这句原唱”，唱完回听自己，看每一句的得分趋势。
@@ -67,7 +70,8 @@ flutter run --release            # 连接 iPhone 后运行（人声分离很吃�
 - 部署目标是 iOS 16.0（ONNX Runtime 插件的要求）。
 - 第一次练习时系统会请求**麦克风权限**。
 - 上面构建的是正式版。加上 `--dart-define=YINTRACE_TEST_BUILD=true` 是测试版（CI 产出的 `.ipa` 就是）：
-  设置里多一组“测试版”（性能测试、只用备用线路重新下载模型），下载模型时显示用的是哪条线路。
+  设置里多一组“测试版”（性能测试、只用备用线路重新下载模型、原唱音高改用 YIN 算法测来对比），
+  下载模型时显示用的是哪条线路。
   正式版里没有这些代码。
 - 所有插件都通过 CocoaPods 集成（`pubspec.yaml` 里关闭了 Swift Package Manager）。
 
@@ -246,8 +250,10 @@ YinTrace 只用 Ultimate Vocal Remover 的两个模型，**不需要你手动准
   并且只安装下载窗口里列出的模型。
 - 模型保存在 App 的 Application Support 目录，不参与 iCloud 备份；可以在设置里删除以腾出空间，
   已经导入的歌不受影响。
-- 只有纯人声、不需要分离的歌，完全不需要模型（导入时打开“这是已经分离好的纯人声”）。
-- 权重文件不在这个仓库里，也不打包进 App。人声模型安装时只改 6 个字节，把时间轴改为动态；
+- 只有纯人声、不需要分离的歌，完全不需要下载模型（导入时打开“这是已经分离好的纯人声”）。
+- 测音高的 SwiftF0 模型（135 KB，MIT 许可）不在上面的表里：它随 App 附带，不需要下载，
+  [做法和验证](docs/pitch-model.md)。
+- 分离模型的权重文件不在这个仓库里，也不打包进 App。人声模型安装时只改 6 个字节，把时间轴改为动态；
   去和声模型是 PyTorch 权重，App 按内置的配方在手机上拼成 ONNX 模型，不需要 PyTorch。
   做法见 [assets/models/README.md](assets/models/README.md)，分段大小、内存和与 UVR 的对照见
   [推理速度、内存与验证记录](docs/inference-memory.md)。
@@ -255,6 +261,7 @@ YinTrace 只用 Ultimate Vocal Remover 的两个模型，**不需要你手动准
 ## 更多文档
 
 - [工作原理与界面设计](docs/how-it-works.md)：分离、音高分析、逐字对齐、评分的做法，配色和排版。
+- [AI 音高模型：选型、接入与验证](docs/pitch-model.md)：为什么测原唱用 SwiftF0、练习为什么仍用 YIN、和 YIN 的对比。
 - [开发：项目结构、测试与移植](docs/development.md)：目录结构、本地数据、怎么跑测试、其他平台还缺什么。
 - [已知限制](docs/known-limitations.md)
 - [只用 iPhone 测试](docs/phone-testing.md)、[真机测速](docs/device-benchmark.md)、[iOS 验收清单](docs/ios-validation.md)、[推理内存验证记录](docs/inference-memory.md)
@@ -285,7 +292,9 @@ details.
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，App 里在“设置 → 致谢与开源许可”也能看到。
 - **模型不属于本项目，也不受这份许可约束**：`UVR-MDX-NET-Voc_FT` 和 `6_HP-Karaoke-UVR` 由
   Ultimate Vocal Remover 的开发者（Anjok07、aufr33）训练并发布，App 下载它们的原版文件（见上面的“分离模型”），
-  仓库和安装包里都没有权重。UVR 要求使用其模型的第三方应用注明 UVR 及其开发者。
+  仓库和安装包里都没有这两个模型的权重。UVR 要求使用其模型的第三方应用注明 UVR 及其开发者。
+  音高模型 SwiftF0 由 Lars Nieradzik 训练，按 MIT 许可发布；App 附带它（只改了接口，权重没动），
+  许可全文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - 你导入的歌曲、歌词归各自的权利人所有，只保存在你的设备上；仓库里的示例歌词是为本项目写的。
 
 ## 致谢
@@ -294,5 +303,6 @@ details.
 [Ultimate Vocal Remover GUI](https://github.com/Anjok07/ultimatevocalremovergui)（MIT），
 其中 VR 架构来自 [tsurumeso/vocal-remover](https://github.com/tsurumeso/vocal-remover)，
 MDX-Net 来自 [Kuielab / Woosung Choi](https://github.com/kuielab/mdx-net)。
-音高检测是 YIN 算法（de Cheveigné & Kawahara, 2002）。完整列表见
+原唱的音高用 [SwiftF0](https://github.com/lars76/swift-f0)（Lars Nieradzik, 2025）测，你唱的音高用
+YIN 算法（de Cheveigné & Kawahara, 2002）测。完整列表见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -127,6 +127,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
             mdxPath: mdx,
             vrPath: vr,
             acceleration: accel,
+            pitchModelPath: services.activePitchModel,
             onImported: services.acceleration.afterImport,
           )
         : DeviceBenchmark(
@@ -134,6 +135,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
             vrPath: vr,
             options: BenchmarkOptions(songSeconds: _songSeconds),
             acceleration: accel,
+            pitchModelPath: services.activePitchModel,
             onImported: services.acceleration.afterImport,
           );
     _bench?.removeListener(_changed);

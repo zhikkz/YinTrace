@@ -9,9 +9,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:yintrace/src/analysis/pitch_track.dart';
 import 'package:yintrace/src/app/licenses.dart';
 import 'package:yintrace/src/app/services.dart';
+import 'package:yintrace/src/dsp/pitch.dart';
+import 'package:yintrace/src/dsp/resampler.dart';
+import 'package:yintrace/src/dsp/swift_f0.dart';
 import 'package:yintrace/src/models/model_catalog.dart';
+import 'package:yintrace/src/models/pitch_model.dart';
 import 'package:yintrace/src/separation/model_config.dart';
 import 'package:yintrace/src/separation/onnx_model.dart';
 import 'package:yintrace/src/ui/app.dart';
@@ -52,8 +57,36 @@ void main() {
       expect(licenseText, contains('Version 3, 19 November 2007'));
       final entries = await LicenseRegistry.licenses.toList();
       expect(entries.any((e) => e.packages.contains('Ultimate Vocal Remover GUI')), isTrue);
+      expect(entries.any((e) => e.packages.contains('SwiftF0')), isTrue);
+
+      // The bundled pitch model through the real plugin, loaded the way the
+      // import pipeline loads it: it measures the original singer.
+      final pitchPath = services.pitchModelPath;
+      expect(pitchPath, isNotNull, reason: 'the bundled pitch model is installed at start-up');
+      final tone = Float32List(16000);
+      for (var i = 0; i < tone.length; i++) {
+        tone[i] = 0.2 * (math.sin(2 * math.pi * 220 * i / 16000) + 0.5 * math.sin(2 * math.pi * 440 * i / 16000));
+      }
+      final pitch = SwiftF0(await OnnxTensorModel.load(
+        pitchPath!,
+        inputName: PitchModel.inputName,
+        outputName: PitchModel.outputName,
+      ));
+      try {
+        final watch = Stopwatch()..start();
+        final frames = await pitch.run(tone);
+        final mid = [for (var i = 8; i < frames.length - 8; i++) i];
+        expect(mid.every((i) => frames.confidence[i] >= SwiftF0.voicedConfidence), isTrue);
+        expect(mid.every((i) => (frames.hz[i] - 220).abs() < 3), isTrue, reason: '${frames.hz.sublist(8, 12)}');
+        // ignore: avoid_print
+        print('iOS simulator: pitch model 1 s of audio in ${watch.elapsedMilliseconds} ms');
+        final track = await analyzePitchWithModel(Float32List.fromList(resample(tone, 16000, 44100)), 44100, pitch);
+        expect(track.midiAt(0.5), closeTo(hzToMidi(220), 0.1));
+      } finally {
+        await pitch.model.close();
+      }
       // ignore: avoid_print
-      print('iOS simulator: native audio, AAC and bundled AGPL OK; downloading models');
+      print('iOS simulator: native audio, AAC, bundled AGPL and pitch model OK; downloading models');
 
       await services.models.install();
       expect(services.models.error, isNull);

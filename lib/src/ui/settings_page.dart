@@ -161,6 +161,14 @@ class _SettingsPageState extends State<SettingsPage> {
                       onTap: () => Navigator.of(context)
                           .push(MaterialPageRoute<void>(builder: (_) => const BenchmarkPage())),
                     ),
+                    SwitchListTile(
+                      title: const Text('原唱音高改用 YIN 算法测'),
+                      subtitle: Text(services.pitchModelPath == null
+                          ? '音高模型没能装上，现在用的就是 YIN'
+                          : '和 AI 音高模型（SwiftF0）对比：之后导入的歌用 YIN 测原唱。你唱的一直用 YIN 测'),
+                      value: s.yinPitch || services.pitchModelPath == null,
+                      onChanged: services.pitchModelPath == null ? null : (v) => set(() => s.yinPitch = v),
+                    ),
                     ListTile(
                       title: const Text('只用备用线路重新下载模型'),
                       subtitle: Text('删掉已下载的模型，再从 ${_backupRoute(services.models)} 下载一遍'
