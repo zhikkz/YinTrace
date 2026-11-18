@@ -285,9 +285,11 @@ class _ImportPageState extends State<ImportPage> {
   Future<void> _start() async {
     final services = AppScope.of(context);
     if (_audioPath == null) return;
-    // Only ask for the harmony model when this import will use it.
-    if (!_vocalsOnly &&
-        !await ensureModels(context, requiredModels: [vocalModel, if (_removeHarmony) karaokeModel])) {
+    if (!await ensureModels(context, requiredModels: [
+      if (!_vocalsOnly) vocalModel,
+      if (!_vocalsOnly && _removeHarmony) karaokeModel,
+      hubertFaModel,
+    ])) {
       return;
     }
     if (!mounted) return;
@@ -312,6 +314,7 @@ class _ImportPageState extends State<ImportPage> {
       verifyCoreML: accel.verify,
       speed: accel.speed,
       pitchModelPath: services.activePitchModel,
+      hubertFaPath: services.models.pathFor(hubertFaModel)!,
     );
     setState(() {
       _error = null;
@@ -749,7 +752,7 @@ class _ImportPageState extends State<ImportPage> {
                   if (s == pr.stage && pr.total != null) ...[
                     const Spacer(),
                     Text(
-                      '${pr.done ?? 0} / ${pr.total} 段',
+                      '${pr.done ?? 0} / ${pr.total} ${s == ImportStage.aligning ? '句' : '段'}',
                       style: context.type.bodyMedium?.copyWith(color: p.inkSoft, fontFeatures: tabular),
                     ),
                   ],

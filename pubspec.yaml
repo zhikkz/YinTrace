@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  archive: ^4.7.1
   crypto: ^3.0.6
   cupertino_icons: ^1.0.8
   fftea: ^1.5.0
@@ -18,7 +19,9 @@ dependencies:
   file_picker: ^13.3.3
   flutter_onnxruntime:
     path: packages/flutter_onnxruntime
+  kana_kit: ^2.1.1
   path_provider: ^2.1.6
+  pinyin: ^3.3.0
   wakelock_plus: ^1.8.2
   yintrace_audio:
     path: packages/yintrace_audio
@@ -44,6 +47,7 @@ flutter:
     - assets/models/karaoke_graph.bin
     - assets/models/karaoke_graph.json
     - assets/models/swift_f0.onnx
+    - assets/models/hubertfa-LICENSE.txt
   config:
     # All plugins are integrated through CocoaPods (the native audio core
     # ships a podspec only).

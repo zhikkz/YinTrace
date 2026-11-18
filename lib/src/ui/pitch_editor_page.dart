@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../analysis/corrections.dart';
+import '../analysis/hubertfa_lexicon.dart';
 import '../analysis/lrc.dart';
 import '../analysis/lyrics_language.dart';
 import '../analysis/manual_timing.dart';
@@ -13,9 +14,12 @@ import '../analysis/reference.dart';
 import '../app/services.dart';
 import '../audio/audio_backend.dart';
 import '../dsp/guide_tone.dart';
+import '../import/hubertfa_job.dart';
 import '../library/song.dart';
+import '../models/model_catalog.dart';
 import '../practice/segment_player.dart';
 import 'lyrics_style.dart';
+import 'model_setup.dart';
 import 'pitch_graph.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -83,6 +87,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
   final Map<int, Map<int, double>> _wanted = {};
   Future<void>? _retimeQueue;
   int _retimesQueued = 0;
+  bool _editingPinyin = false;
   late final SegmentPlayer _player = widget.playerFactory?.call() ?? SegmentPlayer();
   Future<Float32List?>? _vocal;
   bool _loaded = false;
@@ -258,6 +263,84 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
 
   Map<int, double> _pinsOfLine(int line) => {for (final (i, t) in _ref!.lines[line].tokens.indexed) i: ?t.pinned};
 
+  Future<void> _editPinyin(int tokenIndex) async {
+    final ref = _ref!, track = _track!, meta = _meta!;
+    final lineIndex = _line;
+    final tokens = ref.lines[lineIndex].tokens;
+    final token = tokens[tokenIndex];
+    final line = (_lyricLines ??= linesOfReference(ref, meta.lyrics))[lineIndex];
+    final automatic = mandarinPinyin(line.tokens)[tokenIndex];
+    var input = token.pinyinOverride ?? automatic ?? '';
+    final answer = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('修改「${token.text}」的拼音'),
+        content: TextFormField(
+          initialValue: input,
+          onChanged: (text) => input = text,
+          onFieldSubmitted: (text) => Navigator.pop(context, text),
+          autofocus: true,
+          autocorrect: false,
+          textInputAction: TextInputAction.done,
+          decoration: InputDecoration(
+            labelText: '拼音',
+            helperText: automatic == null ? '例如 zhang 或 zhang3' : '自动读音：$automatic',
+          ),
+        ),
+        actions: [
+          if (token.pinyinOverride != null)
+            TextButton(onPressed: () => Navigator.pop(context, ''), child: const Text('用自动读音')),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(context, input), child: const Text('重新对齐这一句')),
+        ],
+      ),
+    );
+    if (answer == null || !mounted) return;
+    final pinyin = normalizePinyin(answer);
+    final override = pinyin.isEmpty ? null : pinyin;
+    if (override == token.pinyinOverride) return;
+    final services = AppScope.of(context);
+    if (!await ensureModels(context, requiredModels: [hubertFaModel]) || !mounted) return;
+    _player.stop();
+    setState(() => _editingPinyin = true);
+    try {
+      await _saving;
+      final readings = {for (final (i, t) in tokens.indexed) i: ?t.pinyinOverride};
+      if (override == null) {
+        readings.remove(tokenIndex);
+      } else {
+        readings[tokenIndex] = override;
+      }
+      final updated = await alignStoredLine(
+        services.models.pathFor(hubertFaModel)!,
+        services.songs.pathFor(widget.songId, meta.vocalsFile),
+        track, line, lineIndex, ref.language,
+        lower: lineIndex > 0 ? ref.lines[lineIndex - 1].end : 0,
+        upper: lineIndex + 1 < ref.lines.length ? ref.lines[lineIndex + 1].start : ref.duration,
+        pins: _pinsOfLine(lineIndex),
+        readings: readings,
+      );
+      if (!mounted) return;
+      for (final (i, t) in updated.tokens.indexed) {
+        t.applyCorrections(tokens[i]);
+      }
+      final fresh = SongReference(
+        lines: [...ref.lines]..[lineIndex] = updated, duration: ref.duration, language: ref.language,
+      );
+      await services.songs.saveReference(widget.songId, fresh);
+      if (mounted) {
+        setState(() {
+          _ref = fresh;
+          _revision++;
+        });
+      }
+    } catch (e) {
+      _snack('没能重新对齐：$e');
+    } finally {
+      if (mounted) setState(() => _editingPinyin = false);
+    }
+  }
+
   /// Where token [k] of the current line starts, counting a change that is
   /// still being aligned (so that quick taps add up).
   double _startOf(int k) => _wanted[_line]?[k] ?? _ref!.lines[_line].tokens[k].slotStart;
@@ -371,60 +454,66 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     return Scaffold(
       appBar: AppBar(
         title: const Text('校正'),
+        bottom: _editingPinyin
+            ? const PreferredSize(preferredSize: Size.fromHeight(4), child: LinearProgressIndicator())
+            : null,
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_horiz_rounded),
-            enabled: lineCorrected,
+            enabled: lineCorrected && !_editingPinyin,
             onSelected: (_) => _restoreLine(),
             itemBuilder: (_) => const [PopupMenuItem(value: 'restore', child: Text('这一句全部恢复自动识别'))],
           ),
           const SizedBox(width: 8),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-        children: [
-          Text(
-            '听一听原唱和目标音。哪个${ref.language.unit}的位置不对，调它开始的时间；音不对，就把目标音调到和原唱一样。'
-            '改动马上保存，练习和打分都用改过的。',
-            style: context.type.bodySmall,
-          ),
-          const SizedBox(height: 14),
-          Text('第 ${_line + 1} 句，共 ${ref.lines.length} 句', style: context.type.labelMedium),
-          const SizedBox(height: 8),
-          _TokenChips(
-            line: line,
-            selected: _token,
-            language: ref.language,
-            onSelect: (k) => setState(() => _token = k),
-          ),
-          const SizedBox(height: 12),
-          _graph(context, ref, line),
-          const SizedBox(height: 6),
-          Text('细灰线是原唱实际唱出的音高，粗线是练习时的目标音。', style: context.type.labelSmall),
-          const SizedBox(height: 18),
-          if (_selected != null) _panel(context, ref, line, _selected!),
-          const SizedBox(height: 22),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _line > 0 ? () => _goToLine(_line - 1) : null,
-                  icon: const Icon(Icons.chevron_left_rounded),
-                  label: const Text('上一句'),
+      body: AbsorbPointer(
+        absorbing: _editingPinyin,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+          children: [
+            Text(
+              '听一听原唱和目标音。哪个${ref.language.unit}的位置不对，调它开始的时间；音不对，就把目标音调到和原唱一样。'
+              '改动马上保存，练习和打分都用改过的。',
+              style: context.type.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            Text('第 ${_line + 1} 句，共 ${ref.lines.length} 句', style: context.type.labelMedium),
+            const SizedBox(height: 8),
+            _TokenChips(
+              line: line,
+              selected: _token,
+              language: ref.language,
+              onSelect: (k) => setState(() => _token = k),
+            ),
+            const SizedBox(height: 12),
+            _graph(context, ref, line),
+            const SizedBox(height: 6),
+            Text('细灰线是原唱实际唱出的音高，粗线是练习时的目标音。', style: context.type.labelSmall),
+            const SizedBox(height: 18),
+            if (_selected != null) _panel(context, ref, line, _selected!),
+            const SizedBox(height: 22),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _line > 0 ? () => _goToLine(_line - 1) : null,
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    label: const Text('上一句'),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _line + 1 < ref.lines.length ? () => _goToLine(_line + 1) : null,
-                  icon: const Icon(Icons.chevron_right_rounded),
-                  label: const Text('下一句'),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _line + 1 < ref.lines.length ? () => _goToLine(_line + 1) : null,
+                    icon: const Icon(Icons.chevron_right_rounded),
+                    label: const Text('下一句'),
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -597,6 +686,16 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
                 style: context.type.titleMedium?.copyWith(color: tok.skip || !has ? p.inkFaint : p.ink),
               ),
             ),
+            if (ref.language != LyricsLanguage.japanese && isMandarinToken(tok.text) && _track != null)
+              TextButton(
+                onPressed: _retimesQueued == 0 ? () => _editPinyin(_token!) : null,
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(0, 36),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('修改拼音'),
+              ),
           ],
         ),
         const SizedBox(height: 4),

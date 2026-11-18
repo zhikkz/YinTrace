@@ -1,8 +1,4 @@
-/// The two separation models YinTrace uses. Both come from the Ultimate
-/// Vocal Remover project and are downloaded on first use: from a copy of
-/// its public models on Hugging Face through hf-mirror.com or, when that
-/// does not work, from its official model repository on GitHub. They are
-/// not part of the app or of this repository.
+/// A model downloaded and verified on first use.
 class ModelSpec {
   const ModelSpec({
     required this.id,
@@ -15,6 +11,7 @@ class ModelSpec {
     required this.installedName,
     required this.installedBytes,
     this.mirrors = const [],
+    this.archive,
   });
 
   final String id;
@@ -23,13 +20,13 @@ class ModelSpec {
   final String title;
   final String purpose;
 
-  /// Name of the file as published by UVR.
+  /// Name of the file as published upstream.
   final String fileName;
   final String url;
   final int bytes;
   final String sha256;
 
-  /// Name of the file the app loads (the ONNX model).
+  /// Path relative to the model store of the ONNX file the app loads.
   final String installedName;
   final int installedBytes;
 
@@ -37,11 +34,23 @@ class ModelSpec {
   /// cannot be downloaded. Whatever the route, the file must have [sha256].
   final List<String> mirrors;
 
+  /// Files to extract together into the directory of [installedName].
+  final ModelArchive? archive;
+
   /// [url] and then the [mirrors].
   List<String> get sources => [url, ...mirrors];
 
   /// The download has to be turned into an ONNX model on the device.
-  bool get needsAssembly => installedName != fileName;
+  bool get needsAssembly => archive == null && installedName != fileName;
+}
+
+class ModelArchive {
+  const ModelArchive(this.folder, this.files);
+
+  final String folder;
+
+  /// Basenames and uncompressed sizes of the required entries.
+  final Map<String, int> files;
 }
 
 /// The main route: a copy of UVR's public models on Hugging Face
@@ -87,6 +96,28 @@ const karaokeModel = ModelSpec(
 );
 
 const separationModels = [vocalModel, karaokeModel];
+
+/// Official HuBERTFA v0.0.7 ONNX export, with its matching dictionaries.
+const hubertFaModel = ModelSpec(
+  id: 'hubertfa',
+  title: 'HuBERTFA 逐句对齐',
+  purpose: '把每句歌词对齐到主唱的人声',
+  fileName: '1218_hfa_model_new_dict.zip',
+  url: 'https://github.com/wolfgitpr/HubertFA/releases/download/v0.0.7/1218_hfa_model_new_dict.zip',
+  bytes: 256589553,
+  sha256: '48bd6dbcc293e47cc6cbcc556baf575e3d91d61d0ac88ddeccd6098f8f346fa2',
+  installedName: 'hubertfa-v0.0.7/model.onnx',
+  installedBytes: 415220874,
+  archive: ModelArchive('1218_hfa_model_new_dict', {
+    'model.onnx': 415220874,
+    'vocab.json': 4093,
+    'config.json': 447,
+    'VERSION': 1,
+    'ds-zh-pinyin-lite.txt': 6494,
+    'ds_cmudict-07b.txt': 3402616,
+    'japanese_dict_full.txt': 1564,
+  }),
+);
 
 String formatMegabytes(int bytes) => '${(bytes / 1e6).round()} MB';
 

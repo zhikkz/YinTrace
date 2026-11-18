@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
+import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../import/import_pipeline.dart';
 import '../library/recording.dart';
 import '../library/song.dart';
+import '../models/model_catalog.dart';
 import 'export_page.dart';
 import 'import_page.dart' show lyricsHint;
 import 'lyrics_style.dart';
+import 'model_setup.dart';
 import 'pitch_editor_page.dart';
 import 'pitch_graph.dart';
 import 'practice_page.dart';
@@ -35,6 +38,7 @@ class _SongPageState extends State<SongPage> {
   List<Recording> _recordings = const [];
   String? _error;
   bool _loaded = false;
+  bool _realigning = false;
 
   @override
   void didChangeDependencies() {
@@ -97,8 +101,8 @@ class _SongPageState extends State<SongPage> {
   }
 
   Future<void> _editLyrics() async {
-    final controller = TextEditingController(text: _meta!.lyrics);
-    final ok = await showModalBottomSheet<bool>(
+    var lyrics = _meta!.lyrics;
+    final edited = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => Padding(
@@ -110,29 +114,39 @@ class _SongPageState extends State<SongPage> {
             Text('修改歌词', style: ctx.type.headlineSmall),
             const SizedBox(height: 6),
             Text(
-              '改完会用已经测好的音高重新对齐每个${_ref!.language.unit}，不需要重新分离人声。'
+              'HuBERTFA 会用已保存的人声重新对齐每句歌词。'
               '${_ref!.corrected ? '没改动的句子里，你校正过的位置和音高会保留。' : ''}',
               style: ctx.type.bodySmall,
             ),
             const SizedBox(height: 14),
-            TextField(
-              controller: controller,
+            TextFormField(
+              initialValue: lyrics,
+              onChanged: (text) => lyrics = text,
               minLines: 8,
               maxLines: 14,
               decoration: const InputDecoration(hintText: lyricsHint),
             ),
             const SizedBox(height: 14),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('重新对齐')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, lyrics), child: const Text('重新对齐')),
           ],
         ),
       ),
     );
-    if (ok != true || !mounted) return;
+    if (edited == null || !mounted) return;
+    final services = AppScope.of(context);
+    if (!await ensureModels(context, requiredModels: [hubertFaModel]) || !mounted) return;
+    setState(() => _realigning = true);
+    final awake = ScreenAwake()..hold();
     try {
-      await realignSong(AppScope.of(context).songs, widget.songId, controller.text);
-      await _load();
+      await realignSong(
+        services.songs, widget.songId, edited, hubertFaPath: services.models.pathFor(hubertFaModel)!,
+      );
+      if (mounted) await _load();
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      awake.release();
+      if (mounted) setState(() => _realigning = false);
     }
   }
 
@@ -166,6 +180,20 @@ class _SongPageState extends State<SongPage> {
     }
     if (meta == null || ref == null) {
       return Scaffold(appBar: AppBar(), body: const Center(child: CircularProgressIndicator()));
+    }
+    if (_realigning) {
+      return PopScope(
+        canPop: false,
+        child: Scaffold(
+          appBar: AppBar(title: Text(meta.title), automaticallyImplyLeading: false),
+          body: const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [CircularProgressIndicator(), SizedBox(height: 16), Text('正在逐句对齐歌词…')],
+            ),
+          ),
+        ),
+      );
     }
     final lastLineScores = <int, double>{};
     for (final r in _history) {

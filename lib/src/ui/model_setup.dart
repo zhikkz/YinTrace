@@ -9,7 +9,7 @@ import '../models/model_catalog.dart';
 import '../models/model_manager.dart';
 import 'theme.dart';
 
-/// Makes sure the requested separation models are on the device, offering to
+/// Makes sure the requested models are on the device, offering to
 /// download them if they are not. Returns whether they are ready.
 Future<bool> ensureModels(BuildContext context, {List<ModelSpec> requiredModels = separationModels}) async {
   final models = AppScope.of(context).models;
@@ -22,7 +22,7 @@ Future<bool> ensureModels(BuildContext context, {List<ModelSpec> requiredModels 
   return models.isReadyFor(requiredModels);
 }
 
-/// Download (or pick from Files) the requested UVR models. The download belongs
+/// Download (or pick from Files) the requested models. The download belongs
 /// to the app, not to this sheet: closing the sheet does not stop it.
 class ModelSetupSheet extends StatefulWidget {
   const ModelSetupSheet({super.key, this.requiredModels = separationModels});
@@ -95,23 +95,27 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
     final working = models.busy;
     final ready = models.isReadyFor(widget.requiredModels);
     final shownModels = working ? models.requestedModels : widget.requiredModels;
+    final alignment = shownModels.contains(hubertFaModel);
+    final separation = shownModels.any(separationModels.contains);
     final total = models.bytesFor(shownModels);
     final received = working ? models.receivedBytes : models.receivedBytesFor(shownModels);
     final partial = !working && !ready && received > 0;
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(24, 4, 24, 16 + MediaQuery.viewInsetsOf(context).bottom),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(ready ? '模型已就绪' : '下载分离模型', style: context.type.headlineSmall),
+            Text(
+              ready ? '模型已就绪' : alignment ? '下载所需模型' : '下载分离模型',
+              style: context.type.headlineSmall,
+            ),
             const SizedBox(height: 8),
             Text(
               ready
-                  ? '现在可以导入整首歌了。'
-                  : 'YinTrace 用人声分离模型提取人声，打开“去和声”时才需要去和声模型。'
-                      '本次所需模型共 ${formatMegabytes(total)}，已下载的不会重复下载，建议连 Wi‑Fi。',
+                  ? '可以继续了。'
+                  : '本次所需模型共 ${formatMegabytes(total)}，已下载的不会重复下载，建议连 Wi‑Fi。',
               style: context.type.bodyMedium,
             ),
             const SizedBox(height: 18),
@@ -166,7 +170,10 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
                 ),
               ),
             const SizedBox(height: 4),
-            Text('模型由 Ultimate Vocal Remover 项目（Anjok07、aufr33）训练并公开发布。', style: context.type.labelSmall),
+            if (separation)
+              Text('分离模型由 Ultimate Vocal Remover 项目（Anjok07、aufr33）训练并公开发布。', style: context.type.labelSmall),
+            if (alignment)
+              Text('逐句对齐模型由 wolfgitpr/HubertFA 项目发布。', style: context.type.labelSmall),
           ],
         ),
       ),
@@ -188,7 +195,7 @@ class _ModelSetupSheetState extends State<ModelSetupSheet> {
       case ModelPhase.verifying:
         return '正在校验文件…';
       case ModelPhase.preparing:
-        return '正在生成去和声模型…';
+        return '正在准备模型…';
       case ModelPhase.missing:
       case ModelPhase.ready:
       case ModelPhase.failed:
