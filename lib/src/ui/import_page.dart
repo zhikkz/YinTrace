@@ -288,7 +288,7 @@ class _ImportPageState extends State<ImportPage> {
     if (!await ensureModels(context, requiredModels: [
       if (!_vocalsOnly) vocalModel,
       if (!_vocalsOnly && _removeHarmony) karaokeModel,
-      hubertFaModel,
+      if (!_vocalsOnly) hubertFaModel,
     ])) {
       return;
     }
@@ -314,7 +314,7 @@ class _ImportPageState extends State<ImportPage> {
       verifyCoreML: accel.verify,
       speed: accel.speed,
       pitchModelPath: services.activePitchModel,
-      hubertFaPath: services.models.pathFor(hubertFaModel)!,
+      hubertFaPath: services.models.pathFor(hubertFaModel),
     );
     setState(() {
       _error = null;
@@ -596,7 +596,7 @@ class _ImportPageState extends State<ImportPage> {
         value: _vocalsOnly,
         onChanged: (v) => setState(() => _vocalsOnly = v),
         title: const Text('这是已经分离好的纯人声'),
-        subtitle: const Text('跳过人声分离，直接测音高'),
+        subtitle: const Text('跳过人声分离，直接测音高。未安装 HuBERTFA 时用音高轨迹对齐歌词。'),
       ),
       if (_vocalsOnly)
         _picker(

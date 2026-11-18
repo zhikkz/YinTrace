@@ -103,6 +103,7 @@ class DeviceBenchmark extends ChangeNotifier {
     this.options = const BenchmarkOptions(),
     this.acceleration = const ImportAcceleration(),
     this.pitchModelPath,
+    this.hubertFaPath,
     this.onImported,
     this.onLog,
   });
@@ -118,6 +119,7 @@ class DeviceBenchmark extends ChangeNotifier {
     required String vrPath,
     ImportAcceleration acceleration = const ImportAcceleration(),
     String? pitchModelPath,
+    String? hubertFaPath,
     void Function(Map<String, String> modelInfo)? onImported,
     void Function(String line)? onLog,
   }) {
@@ -128,6 +130,7 @@ class DeviceBenchmark extends ChangeNotifier {
       options: BenchmarkOptions(songSeconds: (o['song_seconds'] as num?)?.toInt() ?? 60, quick: o['quick'] == true),
       acceleration: acceleration,
       pitchModelPath: pitchModelPath,
+      hubertFaPath: hubertFaPath,
       onImported: onImported,
       onLog: onLog,
     );
@@ -147,6 +150,7 @@ class DeviceBenchmark extends ChangeNotifier {
   /// The pitch model the complete import measures the pitch with, as the
   /// app's imports do (null: YIN).
   final String? pitchModelPath;
+  final String? hubertFaPath;
 
   /// Gets what the import reported (for VocalAcceleration.afterImport).
   final void Function(Map<String, String> modelInfo)? onImported;
@@ -332,6 +336,7 @@ class DeviceBenchmark extends ChangeNotifier {
     await _writeSongInBackground(song, seconds);
     final r = <String, Object?>{'song_seconds': seconds};
     final memory = _MemorySampler()..begin();
+    _MemorySampler? alignmentMemory;
     final watch = Stopwatch()..start();
     final stages = <String, double>{};
     final estimates = <List<double>>[]; // [elapsed, estimated remaining]
@@ -351,6 +356,7 @@ class DeviceBenchmark extends ChangeNotifier {
           verifyCoreML: acceleration.verify,
           speed: acceleration.speed,
           pitchModelPath: pitchModelPath,
+          hubertFaPath: hubertFaPath,
         ),
         '${_tmp.path}/songs',
       );
@@ -361,6 +367,12 @@ class DeviceBenchmark extends ChangeNotifier {
         switch (e) {
           case ImportProgressEvent(:final progress):
             importProgress = progress;
+            if (progress.stage == ImportStage.aligning) {
+              alignmentMemory ??= _MemorySampler()..begin();
+            } else if (alignmentMemory != null) {
+              r['alignment_peak_mb'] = alignmentMemory.end();
+              alignmentMemory = null;
+            }
             stages.putIfAbsent(progress.stage.label, () => t);
             final left = progress.remaining;
             if (left != null) estimates.add([t, left.inMilliseconds / 1000]);
@@ -379,6 +391,8 @@ class DeviceBenchmark extends ChangeNotifier {
             r['coreml_check'] = info[ImportPipeline.coreMLInfo];
             r['mdx_run_s'] = double.tryParse(info['mdxRunSeconds'] ?? '');
             r['vr_run_s'] = double.tryParse(info['vrRunSeconds'] ?? '');
+            r['alignment'] = info['alignment'];
+            if (info['alignmentModelError'] != null) r['alignment_error'] = info['alignmentModelError'];
             r['pitch'] = info[ImportPipeline.pitchInfo];
             if (info['pitchModelError'] != null) r['pitch_error'] = info['pitchModelError'];
             onImported?.call(info);
@@ -392,6 +406,7 @@ class DeviceBenchmark extends ChangeNotifier {
     } finally {
       _job = null;
       importProgress = null;
+      alignmentMemory?.end();
     }
     final total = watch.elapsedMilliseconds / 1000;
     r['total_s'] = total;

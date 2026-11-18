@@ -113,7 +113,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
 
   Future<void> _run({required bool resume}) async {
     final services = AppScope.of(context);
-    if (!await ensureModels(context)) return;
+    if (!await ensureModels(context, requiredModels: const [...separationModels, hubertFaModel])) return;
     if (!mounted) return;
     final mdx = services.models.pathFor(vocalModel)!;
     final vr = services.models.pathFor(karaokeModel)!;
@@ -127,6 +127,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
             mdxPath: mdx,
             vrPath: vr,
             acceleration: accel,
+            hubertFaPath: services.models.pathFor(hubertFaModel)!,
             pitchModelPath: services.activePitchModel,
             onImported: services.acceleration.afterImport,
           )
@@ -135,6 +136,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
             vrPath: vr,
             options: BenchmarkOptions(songSeconds: _songSeconds),
             acceleration: accel,
+            hubertFaPath: services.models.pathFor(hubertFaModel)!,
             pitchModelPath: services.activePitchModel,
             onImported: services.acceleration.afterImport,
           );
@@ -221,7 +223,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
         const SizedBox(height: 10),
         bullet('全程大约 5 到 10 分钟。请接上电源，手机发热时系统会降速。'),
         bullet('让 YinTrace 一直在前台，不要锁屏或切到别的 App（屏幕会保持常亮）。'),
-        bullet('这项测试需要两个分离模型（共 194 MB），缺少时会先下载，最好连着 Wi‑Fi。'),
+        bullet('这项测试需要两个分离模型和 HuBERTFA（共约 451 MB），缺少时会先下载，最好连着 Wi‑Fi。'),
         bullet('中途被打断也没关系：已经测完的项目会保留，回来可以接着测。'),
         const SizedBox(height: 22),
         Text('合成歌曲的长度', style: context.type.titleMedium),

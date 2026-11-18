@@ -12,6 +12,7 @@ import 'package:yintrace/src/import/import_pipeline.dart';
 import 'package:yintrace/src/library/song.dart';
 import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/ui/score_trend.dart';
+import 'package:yintrace/src/separation/tensor_model.dart';
 
 import 'support/synth_voice.dart';
 
@@ -99,6 +100,16 @@ void main() {
       );
     });
     tearDown(() => tmp.deleteSync(recursive: true));
+
+    test('cancelling before save keeps lyrics, reference and practice history', () async {
+      final ref = (await repo.loadReference(meta.id)).toJson();
+      final history = [for (final entry in await repo.loadHistory(meta.id)) entry.toJson()];
+      await expectLater(realignSong(repo, meta.id, first + rest, isCancelled: () => true),
+          throwsA(isA<SeparationCancelled>()));
+      expect((await repo.load(meta.id)).lyrics, rest);
+      expect((await repo.loadReference(meta.id)).toJson(), ref);
+      expect([for (final entry in await repo.loadHistory(meta.id)) entry.toJson()], history);
+    });
 
     test('a line added before the others: corrections and scores move with their lines', () async {
       final before = await repo.loadReference(meta.id);

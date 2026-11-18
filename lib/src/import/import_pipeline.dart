@@ -386,14 +386,22 @@ class ImportPipeline {
       final track = await _pitchTrack(r, mono, modelInfo, (f) => report(ImportStage.analyzingPitch, f));
       report(ImportStage.aligning, 0);
       final modelPath = r.hubertFaPath;
-      final reference = modelPath == null
-          ? buildReference(track, lrc.lines)
-          : await HubertFaAligner.withModel(modelPath, lrc.lines, (aligner) => aligner.alignSong(
-              mono, track, lrc.lines, onProgress: (done, total) {
-                report(ImportStage.aligning, done / total, done: done, total: total);
-              },
-            ));
-      if (modelPath != null) modelInfo['alignment'] = 'HuBERTFA';
+      SongReference? aligned;
+      if (modelPath != null) {
+        try {
+          aligned = await HubertFaAligner.withModel(modelPath, lrc.lines, (aligner) => aligner.alignSong(
+            mono, track, lrc.lines, onProgress: (done, total) {
+              report(ImportStage.aligning, done / total, done: done, total: total);
+            },
+          ));
+        } on SeparationCancelled {
+          rethrow;
+        } catch (e) {
+          modelInfo['alignmentModelError'] = '$e'.split('\n').first;
+        }
+      }
+      modelInfo['alignment'] = aligned == null ? '音高轨迹' : 'HuBERTFA';
+      final reference = aligned ?? buildReference(track, lrc.lines);
       report(ImportStage.aligning, 1);
 
       report(ImportStage.saving, 0);
@@ -746,7 +754,12 @@ class _ImportClock {
 /// and starts set by hand) and their practice scores, also when lines were
 /// added or removed before them and they moved; the scores of removed and
 /// rewritten lines are dropped.
-Future<void> realignSong(SongRepository repo, String id, String lyrics, {String? hubertFaPath}) async {
+Future<void> realignSong(SongRepository repo, String id, String lyrics, {
+  String? hubertFaPath,
+  void Function(int, int)? onProgress,
+  bool Function()? isCancelled,
+  void Function()? onSaving,
+}) async {
   final lrc = parseLrc(lyrics);
   if (lrc.lines.isEmpty) throw ImportException('没有解析到带时间的歌词');
   final track = await repo.loadPitchTrack(id);
@@ -763,16 +776,24 @@ Future<void> realignSong(SongRepository repo, String id, String lyrics, {String?
       ? buildReference(track, lrc.lines, pins: pins)
       : await alignStoredVocal(
           hubertFaPath, repo.pathFor(id, meta.vocalsFile), track, lrc.lines, pins: pins, readings: readings,
+          onProgress: onProgress, isCancelled: isCancelled,
         );
+  if (isCancelled?.call() ?? false) throw const SeparationCancelled();
+  if (hubertFaPath != null && pins.entries.any((pin) =>
+      reference.lines[pin.key.$1].tokens[pin.key.$2].pinned != pin.value)) {
+    throw ImportException('新歌词的对齐结果与手动位置冲突，已保留原音高图');
+  }
   if (hubertFaPath == null) {
     for (final MapEntry(key: (k, i), :value) in readings.entries) {
       reference.lines[k].tokens[i].pinyinOverride = value;
     }
   } else {
     meta.modelInfo['alignment'] = 'HuBERTFA';
+    meta.modelInfo.remove('alignmentModelError');
   }
   final moved = old == null ? null : matchLines(old.lines, reference.lines);
   if (old != null) reference.applyCorrectionsFrom(old, moved);
+  onSaving?.call();
   await repo.saveReference(id, reference);
   if (old != null) await repo.remapHistory(id, old, moved!);
   meta.lyrics = lyrics;

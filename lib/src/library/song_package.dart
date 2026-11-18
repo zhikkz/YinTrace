@@ -94,7 +94,7 @@ void exportSongPackageSync(String songsRoot, String id, String outputPath) {
           'separated': meta.separated,
           // Which models separated it; not how fast the sender's device is.
           'modelInfo': {
-            for (final key in const ['mdx', 'vr']) key: ?meta.modelInfo[key],
+            for (final key in const ['mdx', 'vr', 'alignment']) key: ?meta.modelInfo[key],
           },
         },
         'files': files,
