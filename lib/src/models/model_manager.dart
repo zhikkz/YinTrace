@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 
 import 'model_catalog.dart';
@@ -13,13 +14,13 @@ enum ModelPhase {
   downloading,
   verifying,
 
-  /// Assembling the ONNX model from the downloaded weights.
+  /// Assembling or extracting the verified model.
   preparing,
   ready,
   failed,
 }
 
-/// Downloads, verifies and installs the two separation models, and tells
+/// Downloads, verifies and installs models, and tells
 /// the rest of the app where they are.
 ///
 /// Each file is fetched from its first route ([ModelSpec.sources]:
@@ -105,8 +106,13 @@ class ModelManager extends ChangeNotifier {
 
   bool isInstalled(ModelSpec spec) {
     final f = File(_installedPath(spec));
-    return f.existsSync() && f.lengthSync() == spec.installedBytes;
+    if (spec.archive case final archive?) {
+      return archive.files.entries.every((e) => _hasSize(File('${f.parent.path}/${e.key}'), e.value));
+    }
+    return _hasSize(f, spec.installedBytes);
   }
+
+  static bool _hasSize(File file, int size) => file.existsSync() && file.lengthSync() == size;
 
   bool get isReady => isReadyFor(specs);
   bool isReadyFor(Iterable<ModelSpec> models) => models.every(isInstalled);
@@ -114,7 +120,8 @@ class ModelManager extends ChangeNotifier {
   /// Path of the installed ONNX model, or null.
   String? pathFor(ModelSpec spec) => isInstalled(spec) ? _installedPath(spec) : null;
 
-  int get installedBytes => specs.where(isInstalled).fold(0, (s, m) => s + m.installedBytes);
+  int get installedBytes => specs.where(isInstalled).fold(
+      0, (s, m) => s + (m.archive?.files.values.fold<int>(0, (total, size) => total + size) ?? m.installedBytes));
 
   String _installedPath(ModelSpec spec) => '${dir.path}/${spec.installedName}';
   File _partFile(ModelSpec spec) => File('${dir.path}/${spec.fileName}.part');
@@ -159,7 +166,7 @@ class ModelManager extends ChangeNotifier {
         if (isInstalled(spec)) continue;
         _current = spec;
         final original = File('${dir.path}/${spec.fileName}');
-        if (spec.needsAssembly && original.existsSync() && original.lengthSync() == spec.bytes) {
+        if ((spec.needsAssembly || spec.archive != null) && _hasSize(original, spec.bytes)) {
           await _verifyAndInstall(spec, original.path, deleteSource: true);
           _received = _onDisk();
           continue;
@@ -270,7 +277,21 @@ class ModelManager extends ChangeNotifier {
   Future<void> _installVerified(ModelSpec spec, String path, {required bool deleteSource}) async {
     final target = _installedPath(spec);
     final tmp = '$target.tmp';
-    if (spec.needsAssembly) {
+    if (spec.archive case final archive?) {
+      _set(ModelPhase.preparing);
+      final installed = File(target).parent;
+      final staging = Directory('${installed.path}.tmp');
+      try {
+        if (staging.existsSync()) staging.deleteSync(recursive: true);
+        staging.createSync();
+        await compute(_extractArchive, (archive, path, staging.path));
+        if (installed.existsSync()) installed.deleteSync(recursive: true);
+        staging.renameSync(installed.path);
+        if (deleteSource) File(path).deleteSync();
+      } finally {
+        if (staging.existsSync()) staging.deleteSync(recursive: true);
+      }
+    } else if (spec.needsAssembly) {
       _set(ModelPhase.preparing);
       final recipe = await loadRecipe(spec);
       if (recipe.sourceSha256 != spec.sha256) {
@@ -344,12 +365,18 @@ class ModelManager extends ChangeNotifier {
   void cancel() => _download?.cancel();
 
   /// Removes the installed models and partial downloads.
-  Future<void> deleteAll() async {
+  Future<void> deleteAll({Iterable<ModelSpec>? requiredModels}) async {
     cancel();
     await _running;
-    for (final spec in specs) {
+    for (final spec in requiredModels ?? specs) {
       for (final f in [File(_installedPath(spec)), _partFile(spec), File('${_installedPath(spec)}.tmp')]) {
         if (f.existsSync()) f.deleteSync();
+      }
+      if (spec.archive != null) {
+        final dir = File(_installedPath(spec)).parent;
+        for (final folder in [dir, Directory('${dir.path}.tmp')]) {
+          if (folder.existsSync()) folder.deleteSync(recursive: true);
+        }
       }
     }
     _removeObsoleteModels();
@@ -396,6 +423,31 @@ class _RoutesFailed extends ModelDownloadException {
 }
 
 String _assemble((ModelRecipe, String, String) job) => job.$1.assembleSync(job.$2, job.$3);
+
+Future<void> _extractArchive((ModelArchive, String, String) job) async {
+  final (spec, path, destination) = job;
+  final input = InputFileStream(path);
+  try {
+    // The release archive has already passed SHA-256 verification. Only
+    // extract the known files, streaming the ONNX weights to disk.
+    final archive = ZipDecoder().decodeStream(input, throwOnError: true);
+    for (final MapEntry(key: name, value: length) in spec.files.entries) {
+      final entry = archive.findFile('${spec.folder}/$name');
+      if (entry == null || !entry.isFile || entry.size != length) {
+        throw ModelDownloadException('模型压缩包缺少 $name');
+      }
+      final output = OutputFileStream('$destination/$name');
+      try {
+        entry.writeContent(output);
+        if (output.length != length) throw ModelDownloadException('解压 $name 失败');
+      } finally {
+        await output.close();
+      }
+    }
+  } finally {
+    await input.close();
+  }
+}
 
 class _SpeedMeter {
   final _watch = Stopwatch()..start();

@@ -109,11 +109,14 @@ class ImportJob {
       repository: SongRepository(Directory(root)),
       availableMemory: () => NativeAudio.availableMemory,
     );
+    ImportStage? lastStage;
     var lastSent = DateTime.fromMillisecondsSinceEpoch(0);
     try {
       final song = await pipeline.run(request, isCancelled: () => cancelled, onProgress: (p) {
         final now = DateTime.now();
-        if (now.difference(lastSent).inMilliseconds < 100 && p.stageFraction < 1) return;
+        // Start measuring a new stage before it loads the next model.
+        if (p.stage == lastStage && now.difference(lastSent).inMilliseconds < 100 && p.stageFraction < 1) return;
+        lastStage = p.stage;
         lastSent = now;
         out.send({'type': 'progress', 'progress': p.toMap()});
       });

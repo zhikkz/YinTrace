@@ -40,12 +40,25 @@ List<LyricLine> linesOfReference(SongReference ref, String lyrics) {
 /// The pins of [old] for [lines], aligned again after the lyrics changed:
 /// those of lines whose words did not change, wherever those lines moved.
 Map<(int, int), double> carriedPins(SongReference old, List<LyricLine> lines) {
-  final pins = pinsOf(old);
-  if (pins.isEmpty) return const {};
+  return _carryTokenValues(old, lines, (token) => token.pinned);
+}
+
+/// Manual readings follow the same occurrences as manual timing.
+Map<(int, int), String> carriedPinyin(SongReference old, List<LyricLine> lines) {
+  return _carryTokenValues(old, lines, (token) => token.pinyinOverride);
+}
+
+Map<(int, int), T> _carryTokenValues<T extends Object>(
+  SongReference old,
+  List<LyricLine> lines,
+  T? Function(RefToken) field,
+) {
+  if (!old.tokens.any((token) => field(token) != null)) return {};
   final pairs = matchLines(old.lines, [for (final (k, l) in lines.indexed) _standIn(k, l)]);
   return {
-    for (final MapEntry(key: (k, i), value: pin) in pins.entries)
-      if (pairs[k] case final j? when _sameWords(lines[j], old.lines[k])) (j, i): pin,
+    for (final MapEntry(key: k, value: j) in pairs.entries)
+      if (_sameWords(lines[j], old.lines[k]))
+        for (final (i, token) in old.lines[k].tokens.indexed) (j, i): ?field(token),
   };
 }
 
@@ -94,14 +107,55 @@ SongReference retimeLine(
       }
     }
   }
-  return buildReference(track, lines, language: current.language, pins: all, hold: hold);
+  final reference = buildReference(track, lines, language: current.language, pins: all, hold: hold);
+  for (final MapEntry(key: (k, i), :value) in carriedPinyin(current, lines).entries) {
+    reference.lines[k].tokens[i].pinyinOverride = value;
+  }
+  return reference;
 }
+
+/// Where line [line] can start when only that line is aligned again (with
+/// HuBERTFA): the last character of the line before keeps [perToken]
+/// seconds and gives up the rest of its sustained tail, as a new alignment
+/// of the song cuts between two lines where the second one starts.
+double lineStartLimit(SongReference ref, int line, {double perToken = 0.06}) {
+  if (line <= 0) return 0;
+  final before = ref.lines[line - 1];
+  final last = before.tokens.lastOrNull;
+  return last == null ? before.end : math.min(before.end, last.start + perToken);
+}
+
+/// Where line [line] has to end when only that line is aligned again: where
+/// the line after it starts.
+double lineEndLimit(SongReference ref, int line) =>
+    line + 1 < ref.lines.length ? ref.lines[line + 1].start : ref.duration;
 
 /// Where the start of token [token] of line [line] can be set: between the
 /// pins before and after it, and no further than the first character of
 /// the line before and the last of the line after (their characters make
 /// way), leaving [perToken] seconds to each character in between.
-(double, double) pinRange(SongReference ref, int line, int token, {double perToken = 0.06}) {
+///
+/// With [lineOnly] (HuBERTFA aligns only the edited line again) the other
+/// lines stay: the range ends at [lineStartLimit] and [lineEndLimit].
+(double, double) pinRange(SongReference ref, int line, int token, {double perToken = 0.06, bool lineOnly = false}) {
+  if (lineOnly) {
+    final tokens = ref.lines[line].tokens;
+    var lo = lineStartLimit(ref, line, perToken: perToken) + perToken * token;
+    var hi = lineEndLimit(ref, line) - perToken * (tokens.length - token);
+    for (var i = token - 1; i >= 0; i--) {
+      if (tokens[i].pinned case final pin?) {
+        lo = math.max(lo, pin + perToken * (token - i));
+        break;
+      }
+    }
+    for (var i = token + 1; i < tokens.length; i++) {
+      if (tokens[i].pinned case final pin?) {
+        hi = math.min(hi, pin - perToken * (i - token));
+        break;
+      }
+    }
+    return (lo, math.max(lo, hi));
+  }
   final flat = <(int, int, RefToken)>[
     for (final (k, l) in ref.lines.indexed)
       for (final (i, t) in l.tokens.indexed) (k, i, t),

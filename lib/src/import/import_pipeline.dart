@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../analysis/aligner.dart';
+import '../analysis/hubertfa_aligner.dart';
 import '../analysis/lrc.dart';
 import '../analysis/manual_timing.dart';
 import '../analysis/pitch_track.dart';
@@ -16,13 +17,14 @@ import '../separation/mdx_separator.dart';
 import '../separation/model_config.dart';
 import '../separation/tensor_model.dart';
 import '../separation/vr_separator.dart';
+import 'hubertfa_job.dart';
 
 enum ImportStage {
   decoding('读取音频'),
   separatingVocals('分离人声'),
   removingHarmony('去掉和声'),
   analyzingPitch('测量音高'),
-  aligning('把每个字对到音高上'),
+  aligning('逐句对齐歌词'),
   saving('保存到曲库');
 
   const ImportStage(this.label);
@@ -45,6 +47,7 @@ class ImportRequest {
     this.verifyCoreML = false,
     this.speed = const {},
     this.pitchModelPath,
+    this.hubertFaPath,
   });
 
   /// The song (or, with [vocalsOnly], an already separated vocal).
@@ -91,6 +94,10 @@ class ImportRequest {
   /// or a model that fails: YIN does.
   final String? pitchModelPath;
 
+  /// The verified HuBERTFA ONNX file. Null keeps the offline aligner for
+  /// callers that run the pipeline without the model, such as DSP tests.
+  final String? hubertFaPath;
+
   Map<String, Object?> toMap() => {
     'audioPath': audioPath,
     'lyrics': lyrics,
@@ -106,6 +113,7 @@ class ImportRequest {
     'verifyCoreML': verifyCoreML,
     'speed': speed,
     'pitchModelPath': pitchModelPath,
+    'hubertFaPath': hubertFaPath,
   };
 
   factory ImportRequest.fromMap(Map<Object?, Object?> m) => ImportRequest(
@@ -125,6 +133,7 @@ class ImportRequest {
       for (final e in ((m['speed'] as Map?) ?? const {}).entries) e.key as String: (e.value as num).toDouble(),
     },
     pitchModelPath: m['pitchModelPath'] as String?,
+    hubertFaPath: m['hubertFaPath'] as String?,
   );
 }
 
@@ -288,9 +297,9 @@ class ImportPipeline {
         if (harmony)
           ImportStage.removingHarmony:
               (vr.inferenceCount(frames) + 0.3 * vr.segmentCount(frames)) * runSeconds(vrSpeedKey(vrCfg.windowSize)),
-        // 4.0, 0.9 and 1.2 s for the 4-minute song.
+        // Pitch and saving take about 4.0 s and 1.2 s for a 4-minute song.
         ImportStage.analyzingPitch: 0.017 * duration,
-        ImportStage.aligning: 0.004 * duration,
+        ImportStage.aligning: r.hubertFaPath == null ? 0.004 * duration : 2 + 0.18 * duration,
         ImportStage.saving: 0.005 * duration,
       });
       report(ImportStage.decoding, 1);
@@ -376,7 +385,23 @@ class ImportPipeline {
       report(ImportStage.analyzingPitch, 0);
       final track = await _pitchTrack(r, mono, modelInfo, (f) => report(ImportStage.analyzingPitch, f));
       report(ImportStage.aligning, 0);
-      final reference = buildReference(track, lrc.lines);
+      final modelPath = r.hubertFaPath;
+      SongReference? aligned;
+      if (modelPath != null) {
+        try {
+          aligned = await HubertFaAligner.withModel(modelPath, lrc.lines, (aligner) => aligner.alignSong(
+            mono, track, lrc.lines, onProgress: (done, total) {
+              report(ImportStage.aligning, done / total, done: done, total: total);
+            },
+          ));
+        } on SeparationCancelled {
+          rethrow;
+        } catch (e) {
+          modelInfo['alignmentModelError'] = '$e'.split('\n').first;
+        }
+      }
+      modelInfo['alignment'] = aligned == null ? '音高轨迹' : 'HuBERTFA';
+      final reference = aligned ?? buildReference(track, lrc.lines);
       report(ImportStage.aligning, 1);
 
       report(ImportStage.saving, 0);
@@ -729,22 +754,48 @@ class _ImportClock {
 /// and starts set by hand) and their practice scores, also when lines were
 /// added or removed before them and they moved; the scores of removed and
 /// rewritten lines are dropped.
-Future<void> realignSong(SongRepository repo, String id, String lyrics) async {
+Future<void> realignSong(SongRepository repo, String id, String lyrics, {
+  String? hubertFaPath,
+  void Function(int, int)? onProgress,
+  bool Function()? isCancelled,
+  void Function()? onSaving,
+}) async {
   final lrc = parseLrc(lyrics);
   if (lrc.lines.isEmpty) throw ImportException('没有解析到带时间的歌词');
   final track = await repo.loadPitchTrack(id);
+  final meta = await repo.load(id);
   SongReference? old;
   try {
     old = await repo.loadReference(id);
   } catch (_) {
     // No earlier reference to take corrections from.
   }
-  final reference = buildReference(track, lrc.lines, pins: old == null ? const {} : carriedPins(old, lrc.lines));
+  final pins = old == null ? const <(int, int), double>{} : carriedPins(old, lrc.lines);
+  final readings = old == null ? const <(int, int), String>{} : carriedPinyin(old, lrc.lines);
+  final reference = hubertFaPath == null
+      ? buildReference(track, lrc.lines, pins: pins)
+      : await alignStoredVocal(
+          hubertFaPath, repo.pathFor(id, meta.vocalsFile), track, lrc.lines, pins: pins, readings: readings,
+          onProgress: onProgress, isCancelled: isCancelled,
+        );
+  if (isCancelled?.call() ?? false) throw const SeparationCancelled();
+  if (hubertFaPath != null && pins.entries.any((pin) =>
+      reference.lines[pin.key.$1].tokens[pin.key.$2].pinned != pin.value)) {
+    throw ImportException('新歌词的对齐结果与手动位置冲突，已保留原音高图');
+  }
+  if (hubertFaPath == null) {
+    for (final MapEntry(key: (k, i), :value) in readings.entries) {
+      reference.lines[k].tokens[i].pinyinOverride = value;
+    }
+  } else {
+    meta.modelInfo['alignment'] = 'HuBERTFA';
+    meta.modelInfo.remove('alignmentModelError');
+  }
   final moved = old == null ? null : matchLines(old.lines, reference.lines);
   if (old != null) reference.applyCorrectionsFrom(old, moved);
+  onSaving?.call();
   await repo.saveReference(id, reference);
   if (old != null) await repo.remapHistory(id, old, moved!);
-  final meta = await repo.load(id);
   meta.lyrics = lyrics;
   await repo.save(meta);
 }

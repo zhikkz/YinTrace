@@ -2,13 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
+import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../import/import_pipeline.dart';
 import '../library/recording.dart';
 import '../library/song.dart';
+import '../models/model_catalog.dart';
+import '../separation/tensor_model.dart';
 import 'export_page.dart';
 import 'import_page.dart' show lyricsHint;
 import 'lyrics_style.dart';
+import 'model_setup.dart';
 import 'pitch_editor_page.dart';
 import 'pitch_graph.dart';
 import 'practice_page.dart';
@@ -35,6 +39,10 @@ class _SongPageState extends State<SongPage> {
   List<Recording> _recordings = const [];
   String? _error;
   bool _loaded = false;
+  bool _realigning = false;
+  bool _cancelAlignment = false;
+  bool _savingAlignment = false;
+  int _aligned = 0, _total = 0;
 
   @override
   void didChangeDependencies() {
@@ -97,8 +105,8 @@ class _SongPageState extends State<SongPage> {
   }
 
   Future<void> _editLyrics() async {
-    final controller = TextEditingController(text: _meta!.lyrics);
-    final ok = await showModalBottomSheet<bool>(
+    var lyrics = _meta!.lyrics;
+    final edited = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => Padding(
@@ -110,29 +118,55 @@ class _SongPageState extends State<SongPage> {
             Text('修改歌词', style: ctx.type.headlineSmall),
             const SizedBox(height: 6),
             Text(
-              '改完会用已经测好的音高重新对齐每个${_ref!.language.unit}，不需要重新分离人声。'
+              'HuBERTFA 会用已保存的人声重新对齐每句歌词。'
               '${_ref!.corrected ? '没改动的句子里，你校正过的位置和音高会保留。' : ''}',
               style: ctx.type.bodySmall,
             ),
             const SizedBox(height: 14),
-            TextField(
-              controller: controller,
+            TextFormField(
+              initialValue: lyrics,
+              onChanged: (text) => lyrics = text,
               minLines: 8,
               maxLines: 14,
               decoration: const InputDecoration(hintText: lyricsHint),
             ),
             const SizedBox(height: 14),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('重新对齐')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, lyrics), child: const Text('重新对齐')),
           ],
         ),
       ),
     );
-    if (ok != true || !mounted) return;
+    if (edited == null || !mounted) return;
+    final services = AppScope.of(context);
+    if (!await ensureModels(context, requiredModels: [hubertFaModel]) || !mounted) return;
+    setState(() {
+      _realigning = true;
+      _cancelAlignment = false;
+      _savingAlignment = false;
+      _aligned = _total = 0;
+    });
+    final awake = ScreenAwake()..hold();
     try {
-      await realignSong(AppScope.of(context).songs, widget.songId, controller.text);
-      await _load();
+      await realignSong(
+        services.songs, widget.songId, edited, hubertFaPath: services.models.pathFor(hubertFaModel)!,
+        onProgress: (done, total) {
+          if (!mounted) return;
+          setState(() {
+            _aligned = done;
+            _total = total;
+          });
+        },
+        isCancelled: () => !mounted || _cancelAlignment,
+        onSaving: () => setState(() => _savingAlignment = true),
+      );
+      if (mounted) await _load();
+    } on SeparationCancelled {
+      // The worker closes its session before returning here.
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      awake.release();
+      if (mounted) setState(() => _realigning = false);
     }
   }
 
@@ -166,6 +200,32 @@ class _SongPageState extends State<SongPage> {
     }
     if (meta == null || ref == null) {
       return Scaffold(appBar: AppBar(), body: const Center(child: CircularProgressIndicator()));
+    }
+    if (_realigning) {
+      return PopScope(
+        canPop: !_savingAlignment,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) _cancelAlignment = true;
+        },
+        child: Scaffold(
+          appBar: AppBar(title: Text(meta.title), automaticallyImplyLeading: !_savingAlignment),
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(value: _total == 0 ? null : _aligned / _total),
+                const SizedBox(height: 16),
+                Text(_savingAlignment ? '正在保存…' : _total == 0 ? '正在准备对齐…' : '已对齐 $_aligned / $_total 句'),
+                if (!_savingAlignment)
+                  TextButton(
+                    onPressed: _cancelAlignment ? null : () => setState(() => _cancelAlignment = true),
+                    child: Text(_cancelAlignment ? '正在取消…' : '取消'),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
     }
     final lastLineScores = <int, double>{};
     for (final r in _history) {

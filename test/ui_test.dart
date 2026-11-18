@@ -249,6 +249,12 @@ void main() {
         (await tester.runAsync(() => services.songs.loadReference(song.id)))!.lines[1].tokens[3];
     final detected = (await stored()).notes.first.midi;
     await screenshot(tester, '2b_pitch_editor');
+    await tester.tap(find.text('修改拼音'));
+    await tester.pumpAndSettle();
+    expect(find.text('修改「记」的拼音'), findsOneWidget);
+    expect(find.text('自动读音：ji'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
 
     // Listen to the original: exactly the vocal around the character.
     await tester.tap(find.text('听原唱'));
@@ -847,7 +853,7 @@ void main() {
     expect(find.widgetWithText(TextButton, '下载'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, '删除'));
     await tester.pumpAndSettle();
-    expect(find.text('可以腾出 67 MB。已经导入的歌不受影响；下次导入整首歌时要重新下载。'), findsOneWidget);
+    expect(find.textContaining('可以腾出 67 MB'), findsOneWidget);
     await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('删除')));
     await tester.pumpAndSettle();
     expect(file.existsSync(), isFalse);

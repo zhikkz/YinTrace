@@ -171,8 +171,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     ListTile(
                       title: const Text('只用备用线路重新下载模型'),
-                      subtitle: Text('删掉已下载的模型，再从 ${_backupRoute(services.models)} 下载一遍'
-                          '（${formatMegabytes(services.models.totalBytes)}），看备用线路能不能用'),
+                      subtitle: Text('从 ${_backupRoute(services.models)} 重新下载分离模型'
+                          '（${formatMegabytes(services.models.bytesFor(separationModels))}）'),
                       trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
                       onTap: () => _redownloadFromBackup(context, services.models),
                     ),
@@ -212,7 +212,8 @@ Future<void> _redownloadFromBackup(BuildContext context, ModelManager models) as
     builder: (context) => AlertDialog(
       title: const Text('只用备用线路重新下载？'),
       content: Text(
-        '已下载的模型会被删掉，再只从备用线路 ${_backupRoute(models)} 下载 ${formatMegabytes(models.totalBytes)}。'
+        '已下载的分离模型会被删掉，再只从备用线路 ${_backupRoute(models)} '
+        '下载 ${formatMegabytes(models.bytesFor(separationModels))}。'
         '已经导入的歌不受影响。',
       ),
       actions: [
@@ -222,7 +223,7 @@ Future<void> _redownloadFromBackup(BuildContext context, ModelManager models) as
     ),
   );
   if (ok != true || !context.mounted) return;
-  await models.deleteAll();
+  await models.deleteAll(requiredModels: separationModels);
   models.backupOnly = true;
   if (context.mounted) await ensureModels(context);
 }
@@ -305,7 +306,7 @@ class _SliderRow extends StatelessWidget {
   );
 }
 
-/// Status of the two separation models, with download / delete.
+/// Status of downloaded models, with download / delete.
 class _ModelsRow extends StatelessWidget {
   const _ModelsRow({required this.models});
   final ModelManager models;
@@ -314,10 +315,10 @@ class _ModelsRow extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除分离模型？'),
+        title: const Text('删除已下载的模型？'),
         content: Text(
           '可以腾出 ${formatMegabytes(models.installedBytes)}。已经导入的歌不受影响；'
-          '下次导入整首歌时要重新下载。',
+          '下次导入或重新对齐时会提示下载所需模型。',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
@@ -362,7 +363,10 @@ class _ModelsRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('人声分离和去和声', style: context.type.bodyLarge),
+                Text(
+                  models.specs.contains(hubertFaModel) ? '人声分离、去和声和逐句对齐' : '人声分离和去和声',
+                  style: context.type.bodyLarge,
+                ),
                 Text(status, style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
               ],
             ),
@@ -370,7 +374,7 @@ class _ModelsRow extends StatelessWidget {
           // What is there can be deleted without downloading the rest first.
           if (partial) TextButton(onPressed: () => _delete(context), child: const Text('删除')),
           TextButton(
-            onPressed: () => ready ? _delete(context) : ensureModels(context),
+            onPressed: () => ready ? _delete(context) : ensureModels(context, requiredModels: models.specs),
             child: Text(ready ? '删除' : (busy ? '查看' : '下载')),
           ),
         ],
