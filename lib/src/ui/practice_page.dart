@@ -517,6 +517,9 @@ class _Stage extends StatelessWidget {
   final PracticeSession session;
   final PitchTrack? contour;
 
+  /// Keep the singer's pitch range through a short gap between lines.
+  static const _pitchRangeHoldSeconds = 4.0;
+
   @override
   Widget build(BuildContext context) {
     final ph = session.position;
@@ -536,34 +539,56 @@ class _Stage extends StatelessWidget {
       hi = r.$2;
     }
     final user = session.displayPoints;
-    // Keep both voices on the same pitch axis, even when sung an octave apart.
+    // Keep both voices on the same axis, and let recent pitches keep their
+    // space for a few seconds after the trail scrolls off the graph.
     for (final point in user) {
-      if (point.midi <= 0 || point.time < t0 || point.time > t1) continue;
+      if (point.midi <= 0 || point.time < t0 - _pitchRangeHoldSeconds || point.time > t1) continue;
       lo = math.min(lo, point.midi);
       hi = math.max(hi, point.midi);
     }
-    final (a, b) = paddedRange(lo, hi, minSpan: 14);
-    return CustomPaint(
-      size: Size.infinite,
-      painter: PitchGraphPainter(
-        reference: session.reference,
-        contour: contour,
-        t0: t0,
-        t1: t1,
-        midiLo: a,
-        midiHi: b + 1.5,
-        style: PitchGraphStyle.of(
-          context,
-          tolerance: session.settings.toleranceCents.toDouble(),
-          language: session.reference.language,
+    final playing = session.isPlaying;
+    final live = playing && !session.reviewing;
+    final playbackPoint = playing ? session.reviewPoint : null;
+    final tokenScores = session.tokenScores();
+    final style = PitchGraphStyle.of(
+      context,
+      tolerance: session.settings.toleranceCents.toDouble(),
+      language: session.reference.language,
+    );
+    return TweenAnimationBuilder<(double, double)>(
+      tween: _PitchRangeTween(paddedRange(lo, hi, minSpan: 14)),
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      builder: (context, range, _) => CustomPaint(
+        size: Size.infinite,
+        painter: PitchGraphPainter(
+          reference: session.reference,
+          contour: contour,
+          t0: t0,
+          t1: t1,
+          midiLo: range.$1,
+          midiHi: range.$2 + 1.5,
+          style: style,
+          user: user,
+          playhead: ph,
+          tokenScores: tokenScores,
+          glyphSize: 16,
+          live: live,
+          playbackPoint: playbackPoint,
         ),
-        user: user,
-        playhead: ph,
-        tokenScores: session.tokenScores(),
-        glyphSize: 16,
-        live: session.isPlaying,
       ),
     );
+  }
+}
+
+class _PitchRangeTween extends Tween<(double, double)> {
+  _PitchRangeTween((double, double) end) : super(end: end);
+
+  @override
+  (double, double) lerp(double t) {
+    final (lo0, hi0) = begin!;
+    final (lo1, hi1) = end!;
+    return (lo0 + (lo1 - lo0) * t, hi0 + (hi1 - hi0) * t);
   }
 }
 
