@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 /// Version shown in the app (kept in step with pubspec.yaml by a test).
 const appVersion = '1.0.0';
@@ -17,6 +18,14 @@ const appSourceUrl = 'https://github.com/zhikkz/YinTrace';
 /// collected by Flutter automatically). Shown by the in-app license page.
 /// See also THIRD_PARTY_NOTICES.md at the root of the repository.
 void registerThirdPartyLicenses() {
+  LicenseRegistry.addLicense(() async* {
+    final license = await rootBundle.loadString('assets/models/hubertfa-LICENSE.txt');
+    yield LicenseEntryWithLineBreaks(const ['HubertFA'], '''
+YinTrace downloads the HubertFA v0.0.7 model and dictionaries and adapts the upstream AlignmentDecoder to Dart.
+https://github.com/wolfgitpr/HubertFA
+
+$license''');
+  });
   LicenseRegistry.addLicense(
     () => Stream.fromIterable([
       LicenseEntryWithLineBreaks(

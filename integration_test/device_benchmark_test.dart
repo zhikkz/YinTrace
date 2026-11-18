@@ -31,8 +31,8 @@ void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('device benchmark: a complete import, and CPU against Core ML', (tester) async {
     final services = await AppServices.init();
-    log('准备模型（第一次会下载 194 MB）');
-    await services.models.install();
+    log('准备模型（第一次会下载 451 MB）');
+    await services.models.install(requiredModels: const [...separationModels, hubertFaModel]);
     expect(services.models.error, isNull);
     final bench = DeviceBenchmark(
       mdxPath: services.models.pathFor(vocalModel)!,
@@ -41,6 +41,7 @@ void main() {
       // The vocal model with Core ML, checked against the CPU on its first
       // chunk, as on a device the first time.
       acceleration: const ImportAcceleration(coreML: vocalCoreMLOptions, verify: true),
+      hubertFaPath: services.models.pathFor(hubertFaModel)!,
       pitchModelPath: services.pitchModelPath,
       onLog: log,
     );
@@ -55,6 +56,7 @@ void main() {
     expect(report['finished_at'], isNotNull);
     final imp = report['import'] as Map;
     expect(imp['error'], isNull);
+    expect(imp['alignment'], 'HuBERTFA');
     expect(imp['mdx_runtime'], 'Core ML');
     expect('${imp['coreml_check']}', startsWith('checked'));
     expect(imp['mdx_run_s'], greaterThan(0));

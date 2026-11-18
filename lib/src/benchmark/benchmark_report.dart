@@ -119,6 +119,9 @@ String benchmarkMarkdown(Map<String, Object?> data) {
             if (imp['vr_run_s'] != null) ['去和声每次（导入中，含前后处理）', _num(imp['vr_run_s'], 3, ' 秒')],
             if (imp['pitch'] != null)
               ['测音高用', '${imp['pitch']}${imp['pitch_error'] != null ? '（模型出错：${imp['pitch_error']}）' : ''}'],
+            if (imp['alignment'] != null) ['歌词对齐用', '${imp['alignment']}'],
+            if (imp.containsKey('alignment_peak_mb')) ['对齐阶段内存峰值增量', _num(imp['alignment_peak_mb'], 0, ' MB')],
+            if (imp['alignment_error'] != null) ['对齐模型错误', '${imp['alignment_error']}'],
             ['内存峰值增量', _num(imp['peak_footprint_mb'], 0, ' MB')],
             for (final e in stages.entries) ['阶段：${e.key}', _num(e.value, 1, ' 秒')],
             for (final e in estimates.entries) ['“预计还需”在 ${e.key} 处的误差', _num(e.value, 0, ' 秒')],

@@ -41,6 +41,7 @@ class RefToken {
     this.skip = false,
     this.manual = false,
     this.pinned,
+    this.pinyinOverride,
   });
 
   final String text;
@@ -68,6 +69,9 @@ class RefToken {
   /// token, so [start] is where that voice begins.
   double? pinned;
 
+  /// The syllable explicitly chosen for this character (HuBERTFA).
+  String? pinyinOverride;
+
   double get duration => end - start;
   bool get hasPitch => notes.isNotEmpty;
 
@@ -75,7 +79,7 @@ class RefToken {
   bool get scored => !skip && notes.isNotEmpty;
 
   /// Whether the user changed anything about this token.
-  bool get corrected => shift != 0 || skip || manual || pinned != null;
+  bool get corrected => shift != 0 || skip || manual || pinned != null || pinyinOverride != null;
 
   /// Where the user's or the aligner's slot for this token begins.
   double get slotStart => pinned ?? start;
@@ -102,6 +106,7 @@ class RefToken {
     skip = false;
     manual = false;
     pinned = null;
+    pinyinOverride = null;
   }
 
   /// Copies the corrections of [other] (the same token in an earlier
@@ -144,6 +149,7 @@ class RefToken {
         if (skip) 'skip': true,
         if (manual) 'man': true,
         if (pinned != null) 'pin': _r(pinned!),
+        if (pinyinOverride != null) 'pinyin': pinyinOverride,
       };
 
   factory RefToken.fromJson(Map<String, dynamic> j) {
@@ -163,6 +169,7 @@ class RefToken {
       skip: j['skip'] == true,
       manual: manual,
       pinned: (j['pin'] as num?)?.toDouble(),
+      pinyinOverride: j['pinyin'] as String?,
     );
   }
 
@@ -186,6 +193,7 @@ class RefLine {
     required this.text,
     required this.lrcStart,
     this.lrcEnd,
+    this.hubertFa = false,
     required this.tokens,
     this.translation,
   });
@@ -200,6 +208,7 @@ class RefLine {
   /// Time stamp typed by the user.
   final double lrcStart;
   final double? lrcEnd;
+  final bool hubertFa;
   final List<RefToken> tokens;
 
   double get start => tokens.isEmpty ? lrcStart : tokens.first.start;
@@ -227,6 +236,7 @@ class RefLine {
         'i': index,
         'text': text,
         'ls': _r(lrcStart),
+        if (hubertFa) 'hubertFa': true,
         if (lrcEnd != null) 'le': _r(lrcEnd!),
         if (translation != null) 'tr': translation,
         'tokens': [for (final t in tokens) t.toJson()],
@@ -235,6 +245,7 @@ class RefLine {
   factory RefLine.fromJson(Map<String, dynamic> j) => RefLine(
         index: (j['i'] as num).toInt(),
         text: j['text'] as String,
+        hubertFa: j['hubertFa'] == true,
         lrcStart: (j['ls'] as num).toDouble(),
         lrcEnd: (j['le'] as num?)?.toDouble(),
         translation: j['tr'] as String?,

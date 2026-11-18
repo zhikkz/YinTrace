@@ -37,7 +37,7 @@ class SongMeta {
   /// Whether the vocals were separated in the app (vs. imported as is).
   final bool separated;
 
-  /// Names of the models used for separation.
+  /// Names and diagnostics of the models used to prepare the song.
   final Map<String, String> modelInfo;
 
   double? bestScore;
@@ -76,7 +76,7 @@ class SongMeta {
         accompanimentFile: j['accompanimentFile'] as String?,
         originalFile: j['originalFile'] as String?,
         separated: j['separated'] as bool? ?? true,
-        modelInfo: (j['modelInfo'] as Map?)?.map((k, v) => MapEntry('$k', '$v')) ?? const {},
+        modelInfo: (j['modelInfo'] as Map?)?.map((k, v) => MapEntry('$k', '$v')) ?? {},
         bestScore: (j['bestScore'] as num?)?.toDouble(),
         lastScore: (j['lastScore'] as num?)?.toDouble(),
         practiceCount: (j['practiceCount'] as num?)?.toInt() ?? 0,

@@ -255,6 +255,14 @@ The license file of the release reads:
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+## HubertFA (Apache License 2.0)
+
+The waveform model and dictionaries are downloaded from the official HubertFA
+v0.0.7 release. YinTrace adapts the project's AlignmentDecoder to Dart, with
+LRC timing hints, optional silence, and one output interval per lyric token.
+The upstream license is included in [assets/models/hubertfa-LICENSE.txt](assets/models/hubertfa-LICENSE.txt).
+[HubertFA v0.0.7](https://github.com/wolfgitpr/HubertFA/tree/v0.0.7)
+
 ## YIN
 
 The singer's own pitch, live in practice and free practice, is measured with
@@ -272,7 +280,8 @@ Linked into the app, each under the license published with the package:
 |---|---|
 | Flutter SDK, `flutter_localizations` | BSD 3-Clause |
 | `flutter_onnxruntime` | MIT |
-| `file_picker` | MIT |
+| `file_picker`, `archive`, `kana_kit` | MIT |
+| `pinyin` | BSD 2-Clause |
 | `fftea` | Apache 2.0 |
 | `crypto`, `ffi`, `path_provider` | BSD 3-Clause |
 | `wakelock_plus` (and `package_info_plus`) | BSD 3-Clause |
