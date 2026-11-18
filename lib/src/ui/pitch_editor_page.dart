@@ -371,7 +371,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
   Future<void> _setStart(double seconds) async {
     final ref = _ref, k = _token;
     if (ref == null || k == null || _track == null || _selected == null) return;
-    final (lo, hi) = pinRange(ref, _line, k);
+    final (lo, hi) = pinRange(ref, _line, k, lineOnly: _usesHubertFa);
     final pin = seconds.clamp(lo, hi).toDouble();
     if ((pin - _startOf(k)).abs() < 0.002) {
       _snack(seconds < pin ? '再往前就碰到前面的$_unit了' : '再往后就碰到后面的$_unit了');
