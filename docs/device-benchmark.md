@@ -37,7 +37,7 @@ tools/device_benchmark.sh <设备 ID>        # 60 秒的合成歌曲
 tools/device_benchmark.sh <设备 ID> 240    # 想看一首 4 分钟的歌要多久
 ```
 
-- 用 profile 构建，速度接近正式版。测试会替换手机上已装的 YinTrace（同一个 App），
+- 用 profile 构建，速度接近正式版。测试会替换手机上已装的音迹（同一个 App），
   曲库和已下载的模型保留；第一次运行会下载两个 UVR 模型（194 MB）和 HuBERTFA（257 MB）。
 - 全程约 15 到 25 分钟（大部分时间花在 Core ML 编译模型上；240 秒的歌再多几分钟）。
   请保持手机亮屏、解锁、App 在前台，

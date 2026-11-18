@@ -61,7 +61,7 @@ String benchmarkMarkdown(Map<String, Object?> data) {
   final memory = dev['memory_gb'];
   final available = dev['available_memory_mb_at_start'];
   final lines = <String>[
-    '# YinTrace 真机测速报告',
+    '# 音迹真机测速报告',
     '',
     '- 设备：${dev['model'] ?? '未知型号'}，${dev['cores'] ?? '–'} 核'
         '${memory is num ? '，内存 ${memory.toStringAsFixed(1)} GB' : ''}',

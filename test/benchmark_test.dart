@@ -126,7 +126,7 @@ void main() {
         ..['backgrounded'] = ['$benchMdx · CPU 2 线程']
         ..['step_errors'] = {'$benchMdx · Core ML 编译缓存': 'StateError: no cache directory'};
       final md = benchmarkMarkdown(jsonDecode(jsonEncode(report)) as Map<String, Object?>);
-      expect(md, startsWith('# YinTrace 真机测速报告\n'));
+      expect(md, startsWith('# 音迹真机测速报告\n'));
       expect(md, contains('- 设备：iPhone15,2，6 核，内存 5.6 GB'));
       expect(md, contains('- 开始时系统允许 App 再用的内存：2950 MB\n'));
       expect(md, contains('App 被系统关闭了（多半是内存不够），已跳过：$benchVr · Core ML MLProgram 全部单元'));
@@ -209,7 +209,7 @@ void main() {
       await tester.tap(find.text('复制报告'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(copied, startsWith('# YinTrace 真机测速报告'));
+      expect(copied, startsWith('# 音迹真机测速报告'));
       expect(find.textContaining('报告已复制'), findsOneWidget);
       await tester.tap(find.text('查看完整报告'));
       await tester.pumpAndSettle();

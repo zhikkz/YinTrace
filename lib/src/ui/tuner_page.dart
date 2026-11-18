@@ -52,7 +52,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
       final permission = await NativeAudio.requestMicPermission();
       if (!mounted) return;
       if (permission != MicPermission.granted) {
-        setState(() => _error = '没有麦克风权限。到 系统设置 → 隐私与安全性 → 麦克风，打开 YinTrace。');
+        setState(() => _error = '没有麦克风权限。到 系统设置 → 隐私与安全性 → 麦克风，打开音迹。');
         return;
       }
       NativeAudio.configureSession(record: true, measurement: settings.measurementMode);

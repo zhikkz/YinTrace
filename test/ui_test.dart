@@ -650,8 +650,8 @@ void main() {
     await tester.tap(find.text('导入yintrace文件'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('导入 YinTrace 歌曲文件'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, '选择 YinTrace 文件'), findsOneWidget);
+    expect(find.text('导入音迹歌曲文件'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '选择音迹文件'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
     expect(find.text('选择音频'), findsNothing);
     expect(find.text('去和声'), findsNothing);
@@ -660,7 +660,7 @@ void main() {
     await tester.tap(find.text('添加新歌曲'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('导入 YinTrace 歌曲文件'), findsNothing);
+    expect(find.text('导入音迹歌曲文件'), findsNothing);
     await tester.scrollUntilVisible(find.text('从文件读取 .lrc'), 200, scrollable: find.byType(Scrollable).first);
     await tester.pump(); // builds the lyrics field below it
     expect(tester.widget<TextField>(find.byType(TextField).last).controller!.text, lyrics);
@@ -777,14 +777,14 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('导入yintrace文件'));
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.widgetWithText(FilledButton, '选择 YinTrace 文件'));
+    await tester.tap(find.widgetWithText(FilledButton, '选择音迹文件'));
     await settleIo(tester, rounds: 5);
-    expect(find.text('这不是 YinTrace 导出的歌曲文件'), findsOneWidget);
-    expect(find.text('导入 YinTrace 歌曲文件'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, '选择 YinTrace 文件'), findsOneWidget);
+    expect(find.text('这不是音迹导出的歌曲文件'), findsOneWidget);
+    expect(find.text('导入音迹歌曲文件'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '选择音迹文件'), findsOneWidget);
     // ...and the song file opens as a new song that was never practised.
     picked = file;
-    await tester.tap(find.widgetWithText(FilledButton, '选择 YinTrace 文件'));
+    await tester.tap(find.widgetWithText(FilledButton, '选择音迹文件'));
     await settleIo(tester, rounds: 40);
     expect(find.byType(SongPage), findsOneWidget);
     expect(find.text('夜航（示例）'), findsWidgets);

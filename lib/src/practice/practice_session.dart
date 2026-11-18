@@ -187,7 +187,7 @@ class PracticeSession extends ChangeNotifier {
       final perm = await NativeAudio.requestMicPermission();
       if (_disposed) return;
       if (perm != MicPermission.granted) {
-        error = '没有麦克风权限：请在 系统设置 → 隐私与安全性 → 麦克风 中允许 YinTrace';
+        error = '没有麦克风权限：请在 系统设置 → 隐私与安全性 → 麦克风 中允许音迹';
         notifyListeners();
         return;
       }
