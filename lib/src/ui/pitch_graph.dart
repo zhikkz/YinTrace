@@ -310,6 +310,7 @@ class PitchGraphPainter extends CustomPainter {
       old.midiLo != midiLo ||
       old.midiHi != midiHi ||
       old.playhead != playhead ||
+      old.live != live ||
       old.user != user ||
       old.user.length != user.length ||
       old.reference != reference ||
