@@ -31,14 +31,17 @@ abstract final class PitchModel {
   static String get fileName => 'swift_f0-${sha256.substring(0, 12)}.onnx';
 
   /// Writes the bundled model into [dir] unless it is there already, and
-  /// returns its path. [load] reads the asset (`rootBundle.load`). Older
-  /// versions of the model in [dir] are removed.
+  /// returns its path. A copy in [dir] that is not the model (checked like
+  /// the asset, by its SHA-256) is written again. [load] reads the asset
+  /// (`rootBundle.load`). Older versions of the model in [dir] are removed.
   static Future<String> install(Directory dir, Future<ByteData> Function(String asset) load) async {
     final file = File('${dir.path}/$fileName');
-    if (file.existsSync() && file.lengthSync() == bytes) return file.path;
+    if (file.existsSync() && file.lengthSync() == bytes && _isModel(await file.readAsBytes())) {
+      return file.path;
+    }
     final data = await load(asset);
     final content = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
-    if (content.length != bytes || '${crypto.sha256.convert(content)}' != sha256) {
+    if (!_isModel(content)) {
       throw StateError('the bundled pitch model is not the expected file');
     }
     await dir.create(recursive: true);
@@ -55,4 +58,7 @@ abstract final class PitchModel {
     }
     return file.path;
   }
+
+  static bool _isModel(List<int> content) =>
+      content.length == bytes && '${crypto.sha256.convert(content)}' == sha256;
 }
