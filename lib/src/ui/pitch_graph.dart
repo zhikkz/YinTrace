@@ -62,6 +62,7 @@ class PitchGraphPainter extends CustomPainter {
     this.gutter = 30,
     this.glyphSize = 15,
     this.live = false,
+    this.playbackPoint,
     this.highlight,
     this.revision = 0,
   });
@@ -83,6 +84,9 @@ class PitchGraphPainter extends CustomPainter {
 
   /// Draw the head of the voice trace (practice / tuner).
   final bool live;
+
+  /// The recorded pitch sounding at the playhead while listening back.
+  final UserPoint? playbackPoint;
 
   /// A time span to mark with a light band (the pitch editor's selection).
   final (double, double)? highlight;
@@ -274,9 +278,11 @@ class PitchGraphPainter extends CustomPainter {
       for (final (o, col) in dots) {
         canvas.drawCircle(o, 2, Paint()..color = col);
       }
-      if (live && head != null && playhead != null && (playhead! - head.time) < 0.6) {
-        final o = Offset(x(head.time), y(head.midi));
-        final cents = head.cents;
+      final marker = playbackPoint ??
+          (live && head != null && playhead != null && playhead! - head.time < 0.6 ? head : null);
+      if (marker != null && marker.midi > 0) {
+        final o = Offset(x(marker.time), y(marker.midi));
+        final cents = marker.cents;
         final col = cents == null ? p.inkSoft : p.deviation(cents, tolerance: style.tolerance);
         canvas.drawCircle(o, 9, Paint()..color = col.withValues(alpha: 0.18));
         canvas.drawCircle(o, 4.5, Paint()..color = col);
@@ -311,6 +317,7 @@ class PitchGraphPainter extends CustomPainter {
       old.midiHi != midiHi ||
       old.playhead != playhead ||
       old.live != live ||
+      old.playbackPoint != playbackPoint ||
       old.user != user ||
       old.user.length != user.length ||
       old.reference != reference ||

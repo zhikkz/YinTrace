@@ -1041,17 +1041,21 @@ void main() {
       }
     }
 
-    PitchGraphPainter graph() {
-      final finder = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
-      return tester.widget<CustomPaint>(finder).painter! as PitchGraphPainter;
-    }
+    final graphFinder = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
+    PitchGraphPainter graph() => tester.widget<CustomPaint>(graphFinder).painter! as PitchGraphPainter;
 
     // A low voice in the lead-in must be visible alongside the upcoming
     // original melody, even outside the original singer's pitch range.
     final lowVoice = synthVoice([const Syl(0.1, 0.6, 48, unvoicedOnset: false)], 0.6);
+    await runUntil(0.08, voice: lowVoice);
+    final initialFloor = graph().midiLo;
+    await runUntil(0.22, voice: lowVoice);
+    final expandingFloor = graph().midiLo;
     await runUntil(0.5, voice: lowVoice);
     final liveGraph = graph();
     final sungPitch = liveGraph.user.last;
+    expect(expandingFloor, lessThan(initialFloor));
+    expect(expandingFloor, greaterThan(liveGraph.midiLo), reason: 'the axis expands over several frames');
     expect(sungPitch.midi, closeTo(48, 0.5));
     expect(liveGraph.midiLo, lessThan(sungPitch.midi));
     final originalPitch = ref.lines.first.notes.first.midi;
@@ -1062,6 +1066,15 @@ void main() {
     await tester.pump();
     expect(graph().live, isFalse);
     session.play();
+
+    await runUntil(2.7);
+    expect(graph().t0, greaterThan(sungPitch.time));
+    expect(graph().midiLo, lessThan(sungPitch.midi), reason: 'short gaps keep the recent low range');
+    await runUntil(6.4);
+    final contractingFloor = graph().midiLo;
+    expect(contractingFloor, greaterThan(liveGraph.midiLo));
+    await runUntil(6.75);
+    expect(graph().midiLo, greaterThan(contractingFloor), reason: 'the axis also contracts over several frames');
 
     await runUntil(7.9);
     expect(find.textContaining('记得带伞'), findsWidgets);
@@ -1107,6 +1120,21 @@ void main() {
     expect(err, lessThan(1e-3), reason: 'played back exactly what was captured');
     await tester.pump(const Duration(milliseconds: 16));
     expect(session.scorer.overallScore(), scored);
+    final reviewGraph = graph();
+    final playedPoint = session.reviewPoint!;
+    expect(playedPoint.midi, greaterThan(0));
+    expect(reviewGraph.user.any((p) => p.midi > 0 && p.time > playedPoint.time + 0.5 && p.time < reviewGraph.t1), isTrue);
+    final size = tester.getSize(graphFinder);
+    final plotWidth = size.width - reviewGraph.gutter;
+    final timeSpan = reviewGraph.t1 - reviewGraph.t0;
+    final midiSpan = reviewGraph.midiHi - reviewGraph.midiLo;
+    final x = reviewGraph.gutter + (playedPoint.time - reviewGraph.t0) / timeSpan * plotWidth;
+    final y = size.height - (playedPoint.midi - reviewGraph.midiLo) / midiSpan * size.height;
+    expect(
+      graphFinder,
+      paints..something((method, args) => method == #drawCircle && args[0] == Offset(x, y) && args[1] == 4.5),
+      reason: 'the playback dot marks the sample at the playhead even with later samples on screen',
+    );
     await screenshot(tester, '4b_listen_back');
     await tester.tap(find.text('回到练习'));
     await tester.pump();
