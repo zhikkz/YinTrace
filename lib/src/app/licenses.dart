@@ -71,6 +71,15 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.''',
       ),
       LicenseEntryWithLineBreaks(
+        const ['SwiftF0'],
+        '''
+YinTrace measures the original singer's pitch, when a song is imported, with SwiftF0 (https://github.com/lars76/swift-f0), a pitch estimation network by Lars Nieradzik: "SwiftF0: Fast and Accurate Monophonic Pitch Detection", arXiv:2508.18440, 2025.
+
+The app bundles the model of swift-f0 0.3.0. Its weights are unchanged; its interface was adapted for the app (the pitch range fixed at 60 to 1400 Hz, the pitch output cast to 32-bit floats, the two outputs joined into one) by tools/build_pitch_model.py.
+
+${_mit('Copyright (c) 2025-2026 Lars Nieradzik')}''',
+      ),
+      LicenseEntryWithLineBreaks(
         const ['pypinyin', 'pinyin-data'],
         '''
 The table of syllable onsets used to align lyrics is generated from the data of https://github.com/mozillazg/python-pinyin and https://github.com/mozillazg/pinyin-data.

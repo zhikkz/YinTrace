@@ -41,7 +41,9 @@ class AboutPage extends StatelessWidget {
               credit('分离算法',
                   '移植自 Ultimate Vocal Remover GUI（MIT 许可）。其中 VR 架构来自 tsurumeso 的 vocal-remover，'
                       'MDX-Net 来自 Kuielab 和 Woosung Choi。'),
-              credit('音高检测', 'YIN 算法，Alain de Cheveigné 与 Hideki Kawahara，2002。'),
+              credit('音高检测',
+                  '原唱的音高用 SwiftF0 音高模型测（Lars Nieradzik，2025，MIT 许可，随 App 附带）；'
+                      '你唱的音高用 YIN 算法实时测（Alain de Cheveigné 与 Hideki Kawahara，2002）。'),
               credit('其他', '音频引擎 miniaudio（David Reid）；推理引擎 ONNX Runtime（Microsoft）；'
                   '拼音数据 pypinyin（mozillazg）；界面 Flutter。'),
               const SizedBox(height: 10),

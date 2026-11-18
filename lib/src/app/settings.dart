@@ -50,6 +50,11 @@ class AppSettings extends ChangeNotifier {
   /// Seconds of the pitch graph visible during practice.
   double practiceWindowSeconds = 6;
 
+  /// Test builds: imports measure the original singer's pitch with YIN
+  /// instead of the pitch model, to compare the two. (The singer's own
+  /// pitch is measured with YIN either way.)
+  bool yinPitch = false;
+
   static Future<AppSettings> load(File file) async {
     final s = AppSettings(file);
     if (file.existsSync()) {
@@ -75,6 +80,7 @@ class AppSettings extends ChangeNotifier {
     headphoneTipSeen = j['headphoneTipSeen'] as bool? ?? headphoneTipSeen;
     measurementMode = j['measurementMode'] as bool? ?? measurementMode;
     practiceWindowSeconds = (j['practiceWindowSeconds'] as num?)?.toDouble() ?? practiceWindowSeconds;
+    yinPitch = j['yinPitch'] as bool? ?? yinPitch;
   }
 
   Map<String, dynamic> toJson() => {
@@ -89,6 +95,7 @@ class AppSettings extends ChangeNotifier {
     'headphoneTipSeen': headphoneTipSeen,
     'measurementMode': measurementMode,
     'practiceWindowSeconds': practiceWindowSeconds,
+    'yinPitch': yinPitch,
   };
 
   /// Applies [change], notifies listeners and saves.

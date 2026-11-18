@@ -6,14 +6,14 @@
 lib/
   main.dart
   src/
-    dsp/          实数 FFT、STFT/iSTFT、多相重采样、YIN、音高换算
+    dsp/          实数 FFT、STFT/iSTFT、多相重采样、SwiftF0 音高模型的输入输出、YIN、音高换算
     separation/   MDX-Net 与 VR 推理流程（UVR 移植）、模型配置、ONNX Runtime 封装
     analysis/     LRC 解析、语言识别（中/英/日）、离线音高跟踪、逐字对齐、参考旋律与校正
     import/       导入流水线（后台 isolate）
     library/      本地曲库（每首歌一个目录）、练习记录、我的录音、发给别人的歌曲文件
-    practice/     实时音高跟踪、评分、练习会话、校正页的片段播放
+    practice/     实时音高跟踪（YIN）、评分、练习会话、校正页的片段播放
     export/       制作成品：混音、后台导出、保存录音
-    models/       两个分离模型的下载、校验、动态时间轴配方与 .pth → ONNX 组装
+    models/       两个分离模型的下载、校验、动态时间轴配方与 .pth → ONNX 组装；随 App 附带的音高模型
     app/          设置、全局服务、第三方许可登记
     ui/           曲库 / 导入 / 歌曲 / 校正位置和音高 / 练习 / 评分 / 制作成品 / 自由练习 / 设置 页面，音高图绘制
 packages/flutter_onnxruntime/ 固定 1.9.0 的本地副本，补齐 Apple useArena（保留 MIT 许可）
@@ -22,6 +22,7 @@ packages/yintrace_audio/   原生音频核心（C + miniaudio，dart:ffi）
   src/yt_platform_apple.inc AVAudioSession（线路变化按原因区分）、麦克风权限、ExtAudioFile 解码、
                             AAC 编码、系统分享面板
 tools/
+  build_pitch_model.py      从 swift-f0 官方 wheel 生成随 App 附带的 assets/models/swift_f0.onnx，并核对和原模型一致
   build_karaoke_graph.py    生成 assets/models 里的网络结构和拷贝配方，并与 PyTorch 对照验证
   fetch_models.sh           给测试和工具用：下载两个模型并校验
   reference/                生成测试参考数据的脚本（numpy / torch / librosa / UVR 原代码）
@@ -58,8 +59,13 @@ packages/yintrace_audio/tool/run_native_tests.sh
 
 # 编译宿主平台的原生库，然后跑 Dart 测试（包括用真实原生引擎驱动的练习页端到端测试）
 cmake -S packages/yintrace_audio/src -B build/host -DCMAKE_BUILD_TYPE=Release && cmake --build build/host
+pip install onnxruntime numpy   # 音高模型的测试用 Python 的 ONNX Runtime 运行它（flutter test 加载不了插件）
 YINTRACE_AUDIO_LIB=$PWD/build/host/libyintrace_audio.so flutter test
-# 加上 SCREENSHOT_DIR=build/screenshots 会把界面截图写出来
+# 加上 SCREENSHOT_DIR=build/screenshots 会把界面截图写出来；PYTHON=... 指定带 onnxruntime 的 Python，
+# 没有时音高模型的真实测试会跳过
+
+# 随 App 附带的音高模型：确认它就是脚本从 swift-f0 官方 wheel 生成的（需要 pip install onnx）
+python tools/build_pitch_model.py verify
 
 # 模型配方：随机权重的往返自检；用真实模型按配方组装并与 PyTorch 对照
 python tools/build_karaoke_graph.py selftest

@@ -9,10 +9,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yintrace/src/analysis/lrc.dart';
 import 'package:yintrace/src/analysis/pitch_track.dart';
 import 'package:yintrace/src/audio/audio_backend.dart';
+import 'package:yintrace/src/dsp/swift_f0.dart';
 import 'package:yintrace/src/import/import_pipeline.dart';
 import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/models/model_catalog.dart';
 import 'package:yintrace/src/models/model_recipe.dart';
+import 'package:yintrace/src/models/pitch_model.dart';
 
 import 'support/python_ort_model.dart';
 
@@ -60,6 +62,7 @@ void main() {
                 mdxModelPath: paths[0],
                 vrModelPath: paths[1],
                 keepOriginal: false,
+                pitchModelPath: PitchModel.asset,
               ),
               onProgress: (p) {
                 final percent = (p.overall * 100).floor();
@@ -72,6 +75,7 @@ void main() {
             );
         final reference = await repo.loadReference(meta.id);
         final track = await repo.loadPitchTrack(meta.id);
+        expect(meta.modelInfo[ImportPipeline.pitchInfo], PitchModel.name, reason: '${meta.modelInfo}');
         expect(reference.lines.length, parsed.lines.length);
         expect(track.duration, closeTo(meta.duration, 0.1));
         expect(reference.tokens.map((t) => t.text), parsed.lines.expand((l) => l.tokens).map((t) => t.text));
@@ -99,10 +103,12 @@ void main() {
         );
         final expectedVocal = env['REAL_IMPORT_REFERENCE'];
         if (expectedVocal != null) {
-          // Independently separated by UVR, then analysed using the same YIN
-          // pipeline. This checks the reference pitch behind the stored chart.
+          // Independently separated by UVR, then analysed with the same pitch
+          // model. This checks the reference pitch behind the stored chart.
           final pure = const WavAudioBackend().decode(expectedVocal, channels: 1);
-          final expectedTrack = analyzePitch(pure.samples, 44100);
+          final pitchModel = await PythonOrtModel.start(PitchModel.asset, python: env['PYTHON'] ?? 'python3');
+          final expectedTrack = await analyzePitchWithModel(pure.samples, 44100, SwiftF0(pitchModel));
+          await pitchModel.close();
           final n = track.length < expectedTrack.length ? track.length : expectedTrack.length;
           var sameVoicing = 0, samePitch = 0, bothVoiced = 0;
           for (var i = 0; i < n; i++) {

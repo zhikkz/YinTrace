@@ -8,8 +8,10 @@ import '../analysis/manual_timing.dart';
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../audio/audio_backend.dart';
+import '../dsp/swift_f0.dart';
 import '../library/song.dart';
 import '../library/song_repository.dart';
+import '../models/pitch_model.dart';
 import '../separation/mdx_separator.dart';
 import '../separation/model_config.dart';
 import '../separation/tensor_model.dart';
@@ -42,6 +44,7 @@ class ImportRequest {
     this.coreMLMarker,
     this.verifyCoreML = false,
     this.speed = const {},
+    this.pitchModelPath,
   });
 
   /// The song (or, with [vocalsOnly], an already separated vocal).
@@ -84,6 +87,10 @@ class ImportRequest {
   /// 'mdx.coreml', 'vr.512', 'vr.320'), for the remaining-time estimate.
   final Map<String, double> speed;
 
+  /// The pitch model ([PitchModel]) that measures the vocal's pitch; null,
+  /// or a model that fails: YIN does.
+  final String? pitchModelPath;
+
   Map<String, Object?> toMap() => {
     'audioPath': audioPath,
     'lyrics': lyrics,
@@ -98,6 +105,7 @@ class ImportRequest {
     'coreMLMarker': coreMLMarker,
     'verifyCoreML': verifyCoreML,
     'speed': speed,
+    'pitchModelPath': pitchModelPath,
   };
 
   factory ImportRequest.fromMap(Map<Object?, Object?> m) => ImportRequest(
@@ -116,6 +124,7 @@ class ImportRequest {
     speed: {
       for (final e in ((m['speed'] as Map?) ?? const {}).entries) e.key as String: (e.value as num).toDouble(),
     },
+    pitchModelPath: m['pitchModelPath'] as String?,
   );
 }
 
@@ -362,8 +371,10 @@ class ImportPipeline {
       // Drop both aliases, including the pure-vocal input case.
       vocals = Float32List(0);
       mix = Float32List(0);
+      // The pitch is measured on the separated lead vocal (or the vocal-only
+      // file), never on the mix.
       report(ImportStage.analyzingPitch, 0);
-      final track = analyzePitch(mono, 44100, onProgress: (f) => report(ImportStage.analyzingPitch, f));
+      final track = await _pitchTrack(r, mono, modelInfo, (f) => report(ImportStage.analyzingPitch, f));
       report(ImportStage.aligning, 0);
       final reference = buildReference(track, lrc.lines);
       report(ImportStage.aligning, 1);
@@ -437,6 +448,42 @@ class ImportPipeline {
       info[coreMLInfo] = 'error: ${'$e'.split('\n').first}';
       return cpu();
     }
+  }
+
+  /// What [SongMeta.modelInfo] says measured the vocal's pitch (`pitch`:
+  /// the pitch model's name, or `YIN`), and why the model was not used when
+  /// the request had one (`pitchModelError`).
+  static const pitchInfo = 'pitch';
+
+  /// The pitch of [vocal] (mono, 44.1 kHz: the separated lead vocal, or the
+  /// vocal-only file), measured with the pitch model, or with YIN when the
+  /// request has none or the model fails (the song is finished with YIN).
+  Future<PitchTrack> _pitchTrack(
+    ImportRequest r,
+    Float32List vocal,
+    Map<String, String> info,
+    void Function(double) onProgress,
+  ) async {
+    final path = r.pitchModelPath;
+    if (path != null) {
+      TensorModel? model;
+      try {
+        model = await loadModel(path, inputName: PitchModel.inputName, outputName: PitchModel.outputName);
+        final track = await analyzePitchWithModel(vocal, 44100, SwiftF0(model), onProgress: onProgress);
+        info[pitchInfo] = PitchModel.name;
+        return track;
+      } on SeparationCancelled {
+        rethrow;
+      } catch (e) {
+        info['pitchModelError'] = '$e'.split('\n').first;
+      } finally {
+        try {
+          await model?.close();
+        } catch (_) {}
+      }
+    }
+    info[pitchInfo] = 'YIN';
+    return analyzePitch(vocal, 44100, onProgress: onProgress);
   }
 
   static String _name(String path) => path.split(Platform.pathSeparator).last.split('/').last;
