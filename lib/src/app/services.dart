@@ -56,6 +56,7 @@ class AppServices {
     final models = ModelManager(
       dir: Directory('${support.path}/models'),
       loadRecipe: loadBundledRecipe,
+      specs: [...separationModels, hubertFaModel],
       // The models can be downloaded again: keep them out of iCloud backups.
       excludeFromBackup: excludeFromBackup,
     );

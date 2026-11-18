@@ -41,6 +41,7 @@ class RefToken {
     this.skip = false,
     this.manual = false,
     this.pinned,
+    this.pinyinOverride,
   });
 
   final String text;
@@ -67,6 +68,9 @@ class RefToken {
   /// aligner placed it. Its notes are the voice from there to the next
   /// token, so [start] is where that voice begins.
   double? pinned;
+
+  /// The syllable explicitly chosen for this character (HuBERTFA).
+  String? pinyinOverride;
 
   double get duration => end - start;
   bool get hasPitch => notes.isNotEmpty;
@@ -144,6 +148,7 @@ class RefToken {
         if (skip) 'skip': true,
         if (manual) 'man': true,
         if (pinned != null) 'pin': _r(pinned!),
+        if (pinyinOverride != null) 'pinyin': pinyinOverride,
       };
 
   factory RefToken.fromJson(Map<String, dynamic> j) {
@@ -163,6 +168,7 @@ class RefToken {
       skip: j['skip'] == true,
       manual: manual,
       pinned: (j['pin'] as num?)?.toDouble(),
+      pinyinOverride: j['pinyin'] as String?,
     );
   }
 

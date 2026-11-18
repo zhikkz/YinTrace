@@ -1,0 +1,252 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:yintrace/src/analysis/hubertfa_aligner.dart';
+import 'package:yintrace/src/analysis/hubertfa_decoder.dart';
+import 'package:yintrace/src/analysis/hubertfa_lexicon.dart';
+import 'package:yintrace/src/analysis/lrc.dart';
+import 'package:yintrace/src/analysis/lyrics_language.dart';
+import 'package:yintrace/src/analysis/manual_timing.dart';
+import 'package:yintrace/src/analysis/pitch_track.dart';
+import 'package:yintrace/src/analysis/reference.dart';
+import 'package:yintrace/src/audio/audio_backend.dart';
+import 'package:yintrace/src/audio/wav.dart';
+import 'package:yintrace/src/import/import_pipeline.dart';
+import 'package:yintrace/src/library/song_repository.dart';
+
+const _phones = {
+  'SP': 0,
+  'zh/ch': 1,
+  'zh/ang': 2,
+  'zh/zh': 3,
+  'zh/l': 4,
+  'zh/e': 5,
+  'zh/iao': 6,
+  'zh/a': 7,
+  'en/g': 8,
+  'en/ow': 9,
+  'ja/k': 10,
+  'ja/a': 11,
+};
+const _lyrics = '[00:00.80]长啊\n[00:02.10]了\n[00:02.70]\n';
+
+HubertFaLogits _scores(int frames, double offset, List<(double, double, int)> spans) {
+  final logits = Float32List(_phones.length * frames)..fillRange(0, _phones.length * frames, -8);
+  final edges = Float32List(frames)..fillRange(0, frames, -6);
+  var previous = 0;
+  for (var i = 0; i < frames; i++) {
+    final t = offset + i * hubertFaFrameSeconds;
+    final phone = spans.where((s) => t >= s.$1 && t < s.$2).firstOrNull?.$3 ?? 0;
+    logits[phone * frames + i] = 6;
+    if (phone != previous) edges[i] = 5;
+    previous = phone;
+  }
+  return HubertFaLogits(logits, edges);
+}
+
+const _pronounced = [(0.54, 0.65, 1), (0.65, 1.02, 2), (1.17, 1.56, 7), (1.91, 2.04, 4), (2.04, 2.38, 5)];
+
+PitchTrack _track({bool quietTail = false}) {
+  const frames = 300;
+  final midi = Float32List(frames);
+  final db = Float32List(frames)..fillRange(0, frames, -100);
+  for (final (start, end) in [(52, 103), (117, 188), (192, 255)]) {
+    midi.fillRange(start, end, 64);
+    db.fillRange(start, end, -21);
+  }
+  if (quietTail) db.fillRange(229, 255, -65);
+  return PitchTrack(hopSeconds: 0.01, midi: midi, rmsDb: db, aperiodicity: Float32List(frames));
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late Directory tmp;
+  late String modelPath;
+  setUp(() {
+    tmp = Directory.systemTemp.createTempSync('hubertfa');
+    modelPath = '${tmp.path}/model.onnx';
+    File('${tmp.path}/vocab.json').writeAsStringSync(
+      jsonEncode({
+        'vocab': _phones,
+        'vocab_size': _phones.length,
+        'language_prefix': true,
+        'dictionaries': {'zh': 'zh.txt', 'en': 'en.txt', 'ja': 'ja.txt'},
+      }),
+    );
+    File('${tmp.path}/zh.txt').writeAsStringSync('chang\tch ang\nzhang\tzh ang\nle\tl e\nliao\tl iao\na\ta\n');
+    File('${tmp.path}/en.txt').writeAsStringSync('go\tg ow\n');
+    File('${tmp.path}/ja.txt').writeAsStringSync('ka\tk a\n');
+  });
+  tearDown(() => tmp.deleteSync(recursive: true));
+
+  test('G2P uses phrase context and maps overrides by token, including repeated characters', () async {
+    expect(mandarinPinyin(tokenize('長大 了解 還給')), {0: 'zhang', 1: 'da', 2: 'liao', 3: 'jie', 4: 'huan', 5: 'gei'});
+    expect(normalizePinyin('LǙ'), 'lv');
+    expect(normalizePinyin('zhang3'), 'zhang');
+    final lines = parseLrc('[00:00]长长 go\n[00:02]カ').lines;
+    final lexicon = await HubertFaLexicon.load(modelPath, lines);
+    expect(lexicon.phones(lines[0], LyricsLanguage.chinese, {0: 'zhǎng', 1: 'cháng'}), [
+      [3, 2],
+      [1, 2],
+      [8, 9],
+    ]);
+    expect(lexicon.phones(lines[1], LyricsLanguage.japanese, {}), [
+      [10, 11],
+    ]);
+    expect(() => lexicon.phones(lines[0], LyricsLanguage.chinese, {1: 'bad'}), throwsFormatException);
+  });
+
+  test('model edges distinguish repeated syllables even with no silence between them', () {
+    final logits = _scores(100, 0, [(0.15, 0.82, 7)]);
+    logits.edges[42] = 5;
+    final result = HubertFaDecoder([
+      [7],
+      [7],
+    ]).decode(logits, frames: 100, vocabularySize: _phones.length)!;
+    expect(result.first.start, closeTo(0.15, 0.04));
+    expect(result.last.start, closeTo(0.42, 0.025));
+    expect(result.last.end, closeTo(0.82, 0.04));
+  });
+
+  test('padded clips recover early starts and use pitch and energy for tails', () async {
+    final lines = parseLrc(_lyrics).lines;
+    final lexicon = await HubertFaLexicon.load(modelPath, lines);
+    final widths = <double>[];
+    final track = _track(quietTail: true);
+    final reference = await HubertFaAligner(lexicon, (audio) async {
+      final offset = widths.isEmpty ? 0.4 : 1.7;
+      widths.add(audio.length / HubertFaAligner.sampleRate);
+      return _scores(audio.length ~/ 441 + 1, offset, _pronounced);
+    }).alignSong(Float32List(3 * 44100), track, lines, pins: {(0, 1): 1.15}, readings: {(1, 0): 'le'});
+    expect(widths, [closeTo(2.1, 0.001), closeTo(1.3, 0.001)]);
+    expect(reference.lines.first.start, closeTo(0.54, 0.04));
+    expect(reference.lines.first.tokens.last.pinned, 1.15);
+    expect(reference.lines.first.end, closeTo(1.88, 0.03), reason: 'extends the sustained vowel past model SP');
+    expect(reference.lines.first.end, lessThanOrEqualTo(reference.lines.last.start));
+    expect(reference.lines.last.end, closeTo(2.29, 0.02), reason: 'energy falls before pitch disappears');
+    expect(reference.lines.first.notes, isNotEmpty);
+    final saved = SongReference.fromJson(reference.toJson());
+    final moved = parseLrc('[00:00.20]开头\n$_lyrics').lines;
+    expect(carriedPinyin(saved, moved), {(2, 0): 'le'});
+  });
+
+  test('only the edited occurrence uses the override and pins keep their exact start', () async {
+    final line = parseLrc('[00:00.40]长啊\n[00:01.60]').lines.single;
+    final lexicon = await HubertFaLexicon.load(modelPath, [line]);
+    final aligner = HubertFaAligner(
+      lexicon,
+      (audio) async => _scores(audio.length ~/ 441 + 1, 0, [(0.54, 0.65, 3), ..._pronounced.skip(1)]),
+    );
+    final result = await aligner.alignEditedLine(
+      Float32List(3 * 44100),
+      _track(),
+      line,
+      4,
+      LyricsLanguage.chinese,
+      lower: 0.2,
+      upper: 1.6,
+      pins: {1: 1.147},
+      readings: {0: 'zhang'},
+    );
+    expect(result.index, 4);
+    expect(result.tokens.first.pinyinOverride, 'zhang');
+    expect(result.tokens.last.pinyinOverride, isNull);
+    expect(result.tokens.last.pinned, 1.147);
+    expect(result.end, lessThanOrEqualTo(1.6));
+  });
+
+  test('normal import sends each line to the same session and releases native tensors', () async {
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const channel = MethodChannel('flutter_onnxruntime');
+    var opens = 0, runs = 0, closes = 0, releases = 0, frames = 0;
+    late HubertFaLogits result;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      final args = call.arguments as Map;
+      switch (call.method) {
+        case 'createSession':
+          opens++;
+          expect(args['modelPath'], modelPath);
+          return {
+            'sessionId': 'one',
+            'inputNames': ['waveform'],
+            'outputNames': ['ph_frame_logits', 'ph_edge_logits', 'ctc_logits'],
+          };
+        case 'createOrtValue':
+          final shape = (args['shape'] as List).cast<int>();
+          expect(shape.first, 1);
+          final audio = args['data'] as Float32List;
+          expect(audio.length, shape.last);
+          frames = audio.length ~/ 441 + 1;
+          result = _scores(frames, runs == 0 ? 0.4 : 1.7, _pronounced);
+          return {'valueId': 'in', 'dataType': 'float32', 'shape': shape};
+        case 'runInference':
+          runs++;
+          expect(args['sessionId'], 'one');
+          expect((args['inputs'] as Map).keys.single, 'waveform');
+          return {
+            'ph_frame_logits': [
+              'p',
+              'float32',
+              [1, _phones.length, frames],
+            ],
+            'ph_edge_logits': [
+              'e',
+              'float32',
+              [1, frames],
+            ],
+            'ctc_logits': [
+              'ctc',
+              'float32',
+              [1, _phones.length, frames],
+            ],
+          };
+        case 'getOrtValueData':
+          return {'data': args['valueId'] == 'p' ? result.phones : result.edges};
+        case 'releaseOrtValue':
+          releases++;
+          return null;
+        case 'closeSession':
+          closes++;
+          return null;
+      }
+      throw StateError(call.method);
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final voice = Float32List(3 * 44100);
+    for (var i = 22050; i < 2.5 * 44100; i++) {
+      voice[i] = 0.4 * math.sin(i * 2 * math.pi * 240 / 44100);
+    }
+    final audioPath = '${tmp.path}/vocal.wav';
+    writeWavFile(audioPath, voice, 1, 44100);
+    final repository = SongRepository(Directory('${tmp.path}/songs'));
+    final progress = <int>[];
+    final request = ImportRequest(
+      audioPath: audioPath,
+      lyrics: _lyrics,
+      title: '两句',
+      vocalsOnly: true,
+      hubertFaPath: modelPath,
+    );
+    final song =
+        await ImportPipeline(
+          audio: const WavAudioBackend(),
+          repository: repository,
+          loadModel: (_, {required inputName, required outputName, coreML}) => throw StateError('unused'),
+        ).run(
+          ImportRequest.fromMap(request.toMap()),
+          onProgress: (p) {
+            if (p.stage == ImportStage.aligning && p.done != null) progress.add(p.done!);
+          },
+        );
+    expect([opens, runs, closes, releases], [1, 2, 1, 8]);
+    expect(progress, [1, 2]);
+    expect(song.modelInfo['alignment'], 'HuBERTFA');
+    final saved = await repository.loadReference(song.id);
+    expect(saved.lines.map((l) => l.tokenText), ['长啊', '了']);
+    expect(saved.lines.first.start, lessThan(0.8));
+  });
+}

@@ -40,12 +40,25 @@ List<LyricLine> linesOfReference(SongReference ref, String lyrics) {
 /// The pins of [old] for [lines], aligned again after the lyrics changed:
 /// those of lines whose words did not change, wherever those lines moved.
 Map<(int, int), double> carriedPins(SongReference old, List<LyricLine> lines) {
-  final pins = pinsOf(old);
-  if (pins.isEmpty) return const {};
+  return _carryTokenValues(old, lines, (token) => token.pinned);
+}
+
+/// Manual readings follow the same occurrences as manual timing.
+Map<(int, int), String> carriedPinyin(SongReference old, List<LyricLine> lines) {
+  return _carryTokenValues(old, lines, (token) => token.pinyinOverride);
+}
+
+Map<(int, int), T> _carryTokenValues<T extends Object>(
+  SongReference old,
+  List<LyricLine> lines,
+  T? Function(RefToken) field,
+) {
+  if (!old.tokens.any((token) => field(token) != null)) return {};
   final pairs = matchLines(old.lines, [for (final (k, l) in lines.indexed) _standIn(k, l)]);
   return {
-    for (final MapEntry(key: (k, i), value: pin) in pins.entries)
-      if (pairs[k] case final j? when _sameWords(lines[j], old.lines[k])) (j, i): pin,
+    for (final MapEntry(key: k, value: j) in pairs.entries)
+      if (_sameWords(lines[j], old.lines[k]))
+        for (final (i, token) in old.lines[k].tokens.indexed) (j, i): ?field(token),
   };
 }
 
@@ -94,7 +107,11 @@ SongReference retimeLine(
       }
     }
   }
-  return buildReference(track, lines, language: current.language, pins: all, hold: hold);
+  final reference = buildReference(track, lines, language: current.language, pins: all, hold: hold);
+  for (final MapEntry(key: (k, i), :value) in carriedPinyin(current, lines).entries) {
+    reference.lines[k].tokens[i].pinyinOverride = value;
+  }
+  return reference;
 }
 
 /// Where the start of token [token] of line [line] can be set: between the
