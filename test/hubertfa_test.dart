@@ -50,11 +50,11 @@ HubertFaLogits _scores(int frames, double offset, List<(double, double, int)> sp
 
 const _pronounced = [(0.54, 0.65, 1), (0.65, 1.02, 2), (1.17, 1.56, 7), (1.91, 2.04, 4), (2.04, 2.38, 5)];
 
-PitchTrack _track({bool quietTail = false}) {
+PitchTrack _track({bool quietTail = false, bool legato = false}) {
   const frames = 300;
   final midi = Float32List(frames);
   final db = Float32List(frames)..fillRange(0, frames, -100);
-  for (final (start, end) in [(52, 103), (117, 188), (192, 255)]) {
+  for (final (start, end) in legato ? [(52, 103), (117, 255)] : [(52, 103), (117, 188), (192, 255)]) {
     midi.fillRange(start, end, 64);
     db.fillRange(start, end, -21);
   }
@@ -170,6 +170,39 @@ void main() {
       expect(ref.lines.last.tokens.first.pinned, pin);
       expect(ref.lines.first.end, lessThanOrEqualTo(pin));
     }
+  });
+
+  test('a line can start earlier, inside the sustained tail of the line before, and give it back', () async {
+    final lines = parseLrc(_lyrics).lines;
+    final lexicon = await HubertFaLexicon.load(modelPath, lines);
+    // 啊 runs legato into 了, which the model hears at 2.00 instead of 1.91.
+    final vocal = Float32List(3 * 44100), track = _track(legato: true);
+    const heard = [(0.54, 0.65, 1), (0.65, 1.02, 2), (1.17, 2.00, 7), (2.00, 2.10, 4), (2.10, 2.38, 5)];
+    // Each clip is a view of the vocal: lay its scores out where it starts.
+    final aligner = HubertFaAligner(lexicon, (clip) async =>
+        _scores(clip.length ~/ 441 + 1, clip.offsetInBytes / 4 / HubertFaAligner.sampleRate, heard));
+    final original = await aligner.alignSong(vocal, track, lines);
+    final tail = original.lines.first.tokens.last..transpose(1);
+    expect(original.lines.first.end, original.lines.last.start, reason: 'the tail reaches the late onset');
+    // The editor offers what editLine can keep: into the tail, not onto 啊.
+    expect(pinRange(original, 1, 0, lineOnly: true).$1, closeTo(tail.start + 0.06, 1e-9));
+    expect(pinRange(original, 0, 1, lineOnly: true).$2, closeTo(original.lines.last.start - 0.06, 1e-9));
+
+    final edited = await aligner.editLine(vocal, track, lines.last, original, 1, pins: {0: 1.91}, readings: {});
+    expect(edited.lines.last.tokens.single.pinned, 1.91);
+    final cut = edited.lines.first.tokens.last;
+    expect(cut.end, inInclusiveRange(1.85, 1.91));
+    expect(cut.notes.last.end, lessThanOrEqualTo(cut.end));
+    expect(cut.shift, 1, reason: 'its pitch correction stays');
+    expect(edited.lines.first.tokens.first.toJson(), original.lines.first.tokens.first.toJson());
+    await expectLater(
+      aligner.editLine(vocal, track, lines.last, original, 1, pins: {0: tail.start + 0.03}, readings: {}),
+      throwsFormatException,
+    );
+
+    final restored = await aligner.editLine(vocal, track, lines.last, edited, 1, pins: {}, readings: {}, restore: {0});
+    expect(restored.lines.last.start, original.lines.last.start);
+    expect(restored.lines.first.toJson(), original.lines.first.toJson(), reason: 'the tail follows the voice again');
   });
 
   test('an unavailable alignment model falls back and saves the processed vocal', () async {

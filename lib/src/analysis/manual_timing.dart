@@ -114,11 +114,48 @@ SongReference retimeLine(
   return reference;
 }
 
+/// Where line [line] can start when only that line is aligned again (with
+/// HuBERTFA): the last character of the line before keeps [perToken]
+/// seconds and gives up the rest of its sustained tail, as a new alignment
+/// of the song cuts between two lines where the second one starts.
+double lineStartLimit(SongReference ref, int line, {double perToken = 0.06}) {
+  if (line <= 0) return 0;
+  final before = ref.lines[line - 1];
+  final last = before.tokens.lastOrNull;
+  return last == null ? before.end : math.min(before.end, last.start + perToken);
+}
+
+/// Where line [line] has to end when only that line is aligned again: where
+/// the line after it starts.
+double lineEndLimit(SongReference ref, int line) =>
+    line + 1 < ref.lines.length ? ref.lines[line + 1].start : ref.duration;
+
 /// Where the start of token [token] of line [line] can be set: between the
 /// pins before and after it, and no further than the first character of
 /// the line before and the last of the line after (their characters make
 /// way), leaving [perToken] seconds to each character in between.
-(double, double) pinRange(SongReference ref, int line, int token, {double perToken = 0.06}) {
+///
+/// With [lineOnly] (HuBERTFA aligns only the edited line again) the other
+/// lines stay: the range ends at [lineStartLimit] and [lineEndLimit].
+(double, double) pinRange(SongReference ref, int line, int token, {double perToken = 0.06, bool lineOnly = false}) {
+  if (lineOnly) {
+    final tokens = ref.lines[line].tokens;
+    var lo = lineStartLimit(ref, line, perToken: perToken) + perToken * token;
+    var hi = lineEndLimit(ref, line) - perToken * (tokens.length - token);
+    for (var i = token - 1; i >= 0; i--) {
+      if (tokens[i].pinned case final pin?) {
+        lo = math.max(lo, pin + perToken * (token - i));
+        break;
+      }
+    }
+    for (var i = token + 1; i < tokens.length; i++) {
+      if (tokens[i].pinned case final pin?) {
+        hi = math.min(hi, pin - perToken * (i - token));
+        break;
+      }
+    }
+    return (lo, math.max(lo, hi));
+  }
   final flat = <(int, int, RefToken)>[
     for (final (k, l) in ref.lines.indexed)
       for (final (i, t) in l.tokens.indexed) (k, i, t),

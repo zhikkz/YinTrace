@@ -8,6 +8,7 @@ import 'hubertfa_decoder.dart';
 import 'hubertfa_lexicon.dart';
 import 'lrc.dart';
 import 'lyrics_language.dart';
+import 'manual_timing.dart';
 import 'pitch_track.dart';
 import 'reference.dart';
 import 'reference_notes.dart';
@@ -128,7 +129,10 @@ class HubertFaAligner {
   }
 
   /// Replaces one line after a timing or reading edit, keeping pitch edits
-  /// except on tokens explicitly restored to automatic recognition.
+  /// except on tokens explicitly restored to automatic recognition. The line
+  /// may start inside the sustained tail of the line before
+  /// ([lineStartLimit]); that line's last character then ends where it now
+  /// starts, as [alignSong] cuts between lines. The other lines stay.
   Future<SongReference> editLine(
     Float32List vocal,
     PitchTrack track,
@@ -141,15 +145,66 @@ class HubertFaAligner {
   }) async {
     final updated = await alignEditedLine(
       vocal, track, line, index, current.language,
-      lower: index > 0 ? current.lines[index - 1].end : 0,
-      upper: index + 1 < current.lines.length ? current.lines[index + 1].start : current.duration,
+      lower: lineStartLimit(current, index),
+      upper: lineEndLimit(current, index),
       pins: pins, readings: readings,
     );
     for (final (i, token) in updated.tokens.indexed) {
       if (!restore.contains(i)) token.applyCorrections(current.lines[index].tokens[i]);
     }
-    return SongReference(
-      lines: [...current.lines]..[index] = updated, duration: current.duration, language: current.language,
+    final lines = [...current.lines]..[index] = updated;
+    if (index > 0) lines[index - 1] = _meetNextLine(track, lines[index - 1], current.lines[index].start, updated.start);
+    return SongReference(lines: lines, duration: current.duration, language: current.language);
+  }
+
+  /// [line] with its last character ending where the line after it now
+  /// starts ([next], before the edit [previousNext]): its tail gives way to
+  /// an earlier start, and follows the voice again up to a later one (as
+  /// [_tailEnd] does on import). Returns [line] itself when nothing changes.
+  static RefLine _meetNextLine(PitchTrack track, RefLine line, double previousNext, double next) {
+    final last = line.tokens.lastOrNull;
+    if (last == null) return line;
+    final gateDb = const PitchAnalysisOptions().absoluteGateDb;
+    final detected = last.hasPitch && !last.manual;
+    final double end;
+    if (next < last.end) {
+      end = _tailEnd(track, last.start, next, next, gateDb);
+    } else if (next > previousNext && detected) {
+      end = math.max(last.end, _tailEnd(track, last.start, last.end, next, gateDb));
+    } else {
+      return line;
+    }
+    if (end == last.end) return line;
+    final notes = detected
+        ? notesInFrames(
+            track,
+            _frameAtOrAfter(track, last.start),
+            _frameAtOrAfter(track, end),
+            splitSemitones: 0.8,
+            minNoteSeconds: 0.06,
+          )
+        : <RefNote>[];
+    for (final note in notes) {
+      note.end = math.min(note.end, end);
+    }
+    final token = RefToken(
+      text: last.text,
+      start: last.start,
+      end: end,
+      notes: notes,
+      spaceBefore: last.spaceBefore,
+      confidence: last.confidence,
+      pinned: last.pinned,
+      pinyinOverride: last.pinyinOverride,
+    )..applyCorrections(last);
+    return RefLine(
+      index: line.index,
+      hubertFa: line.hubertFa,
+      text: line.text,
+      lrcStart: line.lrcStart,
+      lrcEnd: line.lrcEnd,
+      translation: line.translation,
+      tokens: [...line.tokens.take(line.tokens.length - 1), token],
     );
   }
 
