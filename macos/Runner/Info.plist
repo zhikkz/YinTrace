@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>YinTrace 需要使用麦克风实时测量你唱歌的音高。</string>
+	<string>音迹需要使用麦克风实时测量你唱歌的音高。</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>

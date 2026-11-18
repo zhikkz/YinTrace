@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>YinTrace</string>
+	<string>音迹</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -48,11 +48,11 @@
 		</dict>
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>YinTrace 需要使用麦克风实时测量你唱歌的音高，并与原唱的逐字音高进行对比。</string>
+	<string>音迹需要使用麦克风实时测量你唱歌的音高，并与原唱的逐字音高进行对比。</string>
 	<key>NSAppleMusicUsageDescription</key>
-	<string>YinTrace 需要访问你选择的音频文件来生成练习用的伴奏和音高图。</string>
+	<string>音迹需要访问你选择的音频文件来生成练习用的伴奏和音高图。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>YinTrace 只会读取你主动选择的文件。</string>
+	<string>音迹只会读取你主动选择的文件。</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
