@@ -1277,6 +1277,16 @@ void main() {
     expect(find.text('单句循环 · 第 2 / 2 句'), findsOneWidget);
     expect(find.text('退出循环'), findsOneWidget);
     await screenshot(tester, '3b_practice_loop');
+    // The run ended as the loop began. Store it while the page is still
+    // here, so that the save on disposal has nothing left to write: a save
+    // still running when the test ends never finishes, and this song's reads
+    // and writes in the next tests would wait for it.
+    var stored = false;
+    session.save().then((_) => stored = true);
+    for (var i = 0; i < 60 && !stored; i++) {
+      await settleIo(tester, rounds: 1);
+    }
+    expect(stored, isTrue);
     // Dispose the page (and with it the native engine).
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);
