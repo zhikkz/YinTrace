@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:yintrace_audio/yintrace_audio.dart';
 
+import '../import/import_queue.dart';
 import '../import/vocal_acceleration.dart';
 import '../library/song_repository.dart';
 import '../models/model_manager.dart';
@@ -22,12 +23,16 @@ class AppServices {
     required this.songs,
     required this.models,
     VocalAcceleration? acceleration,
+    ImportQueue? importQueue,
     this.pitchModelPath,
-  }) : acceleration = acceleration ?? VocalAcceleration.unavailable();
+  }) : acceleration = acceleration ?? VocalAcceleration.unavailable() {
+    this.importQueue = importQueue ?? ImportQueue(songs.root.path, this.acceleration);
+  }
 
   final AppSettings settings;
   final SongRepository songs;
   final ModelManager models;
+  late final ImportQueue importQueue;
 
   /// Whether the vocal model runs with Core ML here, and how fast this
   /// device separated songs before.

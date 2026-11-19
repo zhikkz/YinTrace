@@ -10,6 +10,7 @@ import '../library/song.dart';
 import '../library/song_repository.dart';
 import '../separation/onnx_model.dart';
 import '../separation/tensor_model.dart';
+import 'import_model_pool.dart';
 import 'import_pipeline.dart';
 
 /// Events emitted by a running [ImportJob].
@@ -31,102 +32,194 @@ class ImportFailedEvent extends ImportEvent {
   final bool cancelled;
 }
 
-/// Runs the import pipeline in a background isolate so the UI stays fluid.
+/// Handle for a single import, whether run alone or by the shared worker.
 class ImportJob {
-  ImportJob._(this._isolate, this._controller, this._commands, this._port);
+  ImportJob._(this.events, this._cancel);
 
-  final Isolate _isolate;
-  final StreamController<ImportEvent> _controller;
-  final Completer<SendPort> _commands;
-  final ReceivePort _port;
+  final Stream<ImportEvent> events;
+  final void Function() _cancel;
 
-  Stream<ImportEvent> get events => _controller.stream;
-
+  /// Runs a single import on its own worker (also used by the benchmark).
   static Future<ImportJob> start(ImportRequest request, String songsRoot) async {
-    final token = RootIsolateToken.instance;
-    if (token == null) throw StateError('ImportJob must be started from the root isolate');
-    final port = ReceivePort();
-    final commands = Completer<SendPort>();
-    final controller = StreamController<ImportEvent>();
-    final isolate = await Isolate.spawn(
-      _entry,
-      [port.sendPort, token, request.toMap(), songsRoot],
-      debugName: 'yintrace-import',
-    );
-    port.listen((msg) {
-      if (msg is SendPort) {
-        commands.complete(msg);
-        return;
-      }
-      final m = msg as Map;
-      switch (m['type']) {
-        case 'progress':
-          controller.add(ImportProgressEvent(ImportProgress.fromMap(m['progress'] as Map)));
-        case 'done':
-          controller.add(ImportDoneEvent(SongMeta.fromJson((m['song'] as Map).cast<String, dynamic>())));
-          controller.close();
-          port.close();
-        case 'error':
-          controller.add(ImportFailedEvent(m['message'] as String, cancelled: m['cancelled'] == true));
-          controller.close();
-          port.close();
-      }
-    });
-    return ImportJob._(isolate, controller, commands, port);
+    final worker = await ImportWorker._spawn(songsRoot, shared: false);
+    return worker.startJob(request);
   }
 
-  /// Asks the job to stop at the next checkpoint (or kills the worker if it
-  /// has not started yet).
-  Future<void> cancel() async {
-    if (_controller.isClosed) return;
-    if (_commands.isCompleted) {
-      (await _commands.future).send('cancel');
-    } else {
-      _isolate.kill(priority: Isolate.immediate);
-      _controller.add(ImportFailedEvent('已取消', cancelled: true));
-      await _controller.close();
-      _port.close();
+  /// Asks the job to stop at the next checkpoint.
+  Future<void> cancel() async => _cancel();
+}
+
+/// Runs the queue's active imports in one isolate so their model sessions
+/// can be reused and synchronous audio processing stays off the UI isolate.
+class ImportWorker {
+  ImportWorker._(this._port, this._shared) {
+    _port.listen(_onMessage);
+  }
+
+  final ReceivePort _port;
+  final bool _shared;
+  final _exited = Completer<void>();
+  final _jobs = <int, StreamController<ImportEvent>>{};
+  final _pendingCommands = <Object>[];
+  SendPort? _commands;
+  int _nextId = 0;
+  bool _closing = false;
+  String? _failure;
+
+  bool get isClosed => _closing;
+
+  static Future<ImportWorker> start(String songsRoot) => _spawn(songsRoot, shared: true);
+
+  static Future<ImportWorker> _spawn(String songsRoot, {required bool shared}) async {
+    final token = RootIsolateToken.instance;
+    if (token == null) throw StateError('ImportWorker must be started from the root isolate');
+    final port = ReceivePort();
+    try {
+      await Isolate.spawn(
+        _entry,
+        (port.sendPort, token, songsRoot, shared),
+        onError: port.sendPort,
+        onExit: port.sendPort,
+        debugName: 'yintrace-import',
+      );
+      return ImportWorker._(port, shared);
+    } catch (_) {
+      port.close();
+      rethrow;
     }
   }
 
-  static Future<void> _entry(List<Object?> args) async {
-    final out = args[0] as SendPort;
-    final token = args[1] as RootIsolateToken;
-    final request = ImportRequest.fromMap(args[2] as Map<Object?, Object?>);
-    final root = args[3] as String;
-    BackgroundIsolateBinaryMessenger.ensureInitialized(token);
-    final commands = ReceivePort();
-    out.send(commands.sendPort);
-    var cancelled = false;
-    commands.listen((msg) {
-      if (msg == 'cancel') cancelled = true;
+  ImportJob startJob(ImportRequest request) {
+    if (isClosed) throw StateError('导入进程已停止');
+    final id = _nextId++;
+    final controller = _jobs[id] = StreamController<ImportEvent>();
+    _send((id, request));
+    return ImportJob._(controller.stream, () {
+      if (_jobs.containsKey(id)) _send(id);
     });
+  }
 
+  /// Stops any outstanding imports and releases the worker's native models.
+  Future<void> close() {
+    if (!_closing) {
+      _closing = true;
+      _send('close');
+    }
+    return _exited.future;
+  }
+
+  void _send(Object message) {
+    final commands = _commands;
+    if (commands == null) {
+      _pendingCommands.add(message);
+    } else {
+      commands.send(message);
+    }
+  }
+
+  void _onMessage(dynamic message) {
+    switch (message) {
+      case final SendPort commands:
+        _commands = commands;
+        for (final pending in _pendingCommands) {
+          commands.send(pending);
+        }
+        _pendingCommands.clear();
+      case (final int id, final ImportEvent event):
+        final controller = _jobs[id];
+        if (controller == null) return;
+        controller.add(event);
+        if (event is! ImportProgressEvent) {
+          _jobs.remove(id);
+          unawaited(controller.close());
+          if (!_shared) unawaited(close());
+        }
+      case [final String error, _]:
+        _failure = error;
+        _closing = true;
+      case null:
+        _closing = true;
+        final failure = _failure;
+        for (final controller in _jobs.values) {
+          controller.add(ImportFailedEvent(failure == null ? '导入进程意外停止' : '导入进程意外停止：$failure'));
+          unawaited(controller.close());
+        }
+        _jobs.clear();
+        _pendingCommands.clear();
+        _port.close();
+        _exited.complete();
+    }
+  }
+
+  static void _entry((SendPort, RootIsolateToken, String, bool) args) {
+    final (out, token, root, shared) = args;
+    BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+    final pool = shared ? ImportModelPool() : null;
     final pipeline = ImportPipeline(
       audio: const NativeAudioBackend(),
       loadModel: (path, {required inputName, required outputName, coreML}) =>
           OnnxTensorModel.load(path, inputName: inputName, outputName: outputName, coreML: coreML),
       repository: SongRepository(Directory(root)),
       availableMemory: () => NativeAudio.availableMemory,
+      sharedModels: pool,
     );
-    ImportStage? lastStage;
-    var lastSent = DateTime.fromMillisecondsSinceEpoch(0);
-    try {
-      final song = await pipeline.run(request, isCancelled: () => cancelled, onProgress: (p) {
-        final now = DateTime.now();
-        // Start measuring a new stage before it loads the next model.
-        if (p.stage == lastStage && now.difference(lastSent).inMilliseconds < 100 && p.stageFraction < 1) return;
-        lastStage = p.stage;
-        lastSent = now;
-        out.send({'type': 'progress', 'progress': p.toMap()});
-      });
-      out.send({'type': 'done', 'song': song.toJson()});
-    } on SeparationCancelled {
-      out.send({'type': 'error', 'message': '已取消', 'cancelled': true});
-    } catch (e) {
-      out.send({'type': 'error', 'message': e.toString()});
-    } finally {
+
+    final commands = ReceivePort();
+    final active = <int, _ImportCancellation>{};
+    var closing = false;
+
+    Future<void> finishIfIdle() async {
+      if (!closing || active.isNotEmpty) return;
       commands.close();
+      await pool?.close();
+      // BackgroundIsolateBinaryMessenger keeps a port open; exit after all
+      // plugin operations, including ONNX session disposal, are complete.
+      Isolate.exit();
     }
+
+    Future<void> run(int id, ImportRequest request) async {
+      final state = active[id] = _ImportCancellation();
+      ImportStage? lastStage;
+      var lastSent = DateTime.fromMillisecondsSinceEpoch(0);
+      try {
+        final song = await pipeline.run(request, isCancelled: () => state.cancelled, onProgress: (p) {
+          final now = DateTime.now();
+          if (p.stage == lastStage && now.difference(lastSent).inMilliseconds < 100 && p.stageFraction < 1) return;
+          lastStage = p.stage;
+          lastSent = now;
+          out.send((id, ImportProgressEvent(p)));
+        });
+        out.send((id, ImportDoneEvent(song)));
+      } on SeparationCancelled {
+        out.send((id, ImportFailedEvent('已取消', cancelled: true)));
+      } catch (e) {
+        out.send((id, ImportFailedEvent(e.toString())));
+      } finally {
+        active.remove(id);
+        await finishIfIdle();
+      }
+    }
+
+    commands.listen((message) {
+      switch (message) {
+        case (final int id, final ImportRequest request):
+          unawaited(run(id, request));
+        case final int id:
+          active[id]?.cancelled = true;
+          pool?.cancelPending();
+        case 'close':
+          closing = true;
+          for (final state in active.values) {
+            state.cancelled = true;
+          }
+          pool?.cancelPending();
+          unawaited(finishIfIdle());
+      }
+    });
+    out.send(commands.sendPort);
   }
+}
+
+class _ImportCancellation {
+  bool cancelled = false;
 }

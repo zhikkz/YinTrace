@@ -56,8 +56,11 @@ class _SettingsPageState extends State<SettingsPage> {
               _Group(
                 children: [
                   ListenableBuilder(
-                    listenable: services.models,
-                    builder: (context, _) => _ModelsRow(models: services.models),
+                    listenable: Listenable.merge([services.models, services.importQueue]),
+                    builder: (context, _) => _ModelsRow(
+                      models: services.models,
+                      inUse: services.importQueue.usesDownloadedModels,
+                    ),
                   ),
                   if (services.acceleration.supported)
                     ListenableBuilder(
@@ -169,12 +172,17 @@ class _SettingsPageState extends State<SettingsPage> {
                       value: s.yinPitch || services.pitchModelPath == null,
                       onChanged: services.pitchModelPath == null ? null : (v) => set(() => s.yinPitch = v),
                     ),
-                    ListTile(
-                      title: const Text('只用备用线路重新下载模型'),
-                      subtitle: Text('从 ${_backupRoute(services.models)} 重新下载分离模型'
-                          '（${formatMegabytes(services.models.bytesFor(separationModels))}）'),
-                      trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
-                      onTap: () => _redownloadFromBackup(context, services.models),
+                    ListenableBuilder(
+                      listenable: services.importQueue,
+                      builder: (context, _) => ListTile(
+                        title: const Text('只用备用线路重新下载模型'),
+                        subtitle: Text('从 ${_backupRoute(services.models)} 重新下载分离模型'
+                            '（${formatMegabytes(services.models.bytesFor(separationModels))}）'),
+                        trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+                        onTap: services.importQueue.usesDownloadedModels
+                            ? null
+                            : () => _redownloadFromBackup(context, services.models),
+                      ),
                     ),
                   ],
                 ),
@@ -206,7 +214,8 @@ String _backupRoute(ModelManager models) =>
 /// Test builds: removes the models and downloads them again over the backup
 /// route only.
 Future<void> _redownloadFromBackup(BuildContext context, ModelManager models) async {
-  if (models.busy) return;
+  final queue = AppScope.of(context).importQueue;
+  if (models.busy || queue.usesDownloadedModels) return;
   final ok = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
@@ -222,7 +231,7 @@ Future<void> _redownloadFromBackup(BuildContext context, ModelManager models) as
       ],
     ),
   );
-  if (ok != true || !context.mounted) return;
+  if (ok != true || !context.mounted || queue.usesDownloadedModels) return;
   await models.deleteAll(requiredModels: separationModels);
   models.backupOnly = true;
   if (context.mounted) await ensureModels(context);
@@ -308,10 +317,13 @@ class _SliderRow extends StatelessWidget {
 
 /// Status of downloaded models, with download / delete.
 class _ModelsRow extends StatelessWidget {
-  const _ModelsRow({required this.models});
+  const _ModelsRow({required this.models, required this.inUse});
   final ModelManager models;
+  final bool inUse;
 
   Future<void> _delete(BuildContext context) async {
+    final queue = AppScope.of(context).importQueue;
+    if (queue.usesDownloadedModels) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -326,7 +338,7 @@ class _ModelsRow extends StatelessWidget {
         ],
       ),
     );
-    if (ok == true) await models.deleteAll();
+    if (ok == true && !queue.usesDownloadedModels) await models.deleteAll();
   }
 
   @override
@@ -367,14 +379,17 @@ class _ModelsRow extends StatelessWidget {
                   models.specs.contains(hubertFaModel) ? '人声分离、去和声和逐句对齐' : '人声分离和去和声',
                   style: context.type.bodyLarge,
                 ),
-                Text(status, style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
+                Text(inUse ? '$status · 导入队列使用中' : status,
+                    style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
               ],
             ),
           ),
           // What is there can be deleted without downloading the rest first.
-          if (partial) TextButton(onPressed: () => _delete(context), child: const Text('删除')),
+          if (partial) TextButton(onPressed: inUse ? null : () => _delete(context), child: const Text('删除')),
           TextButton(
-            onPressed: () => ready ? _delete(context) : ensureModels(context, requiredModels: models.specs),
+            onPressed: ready
+                ? (inUse ? null : () => _delete(context))
+                : () => ensureModels(context, requiredModels: models.specs),
             child: Text(ready ? '删除' : (busy ? '查看' : '下载')),
           ),
         ],

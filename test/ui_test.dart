@@ -39,6 +39,7 @@ import 'package:yintrace/src/ui/app.dart';
 import 'package:yintrace/src/ui/benchmark_page.dart';
 import 'package:yintrace/src/ui/export_page.dart';
 import 'package:yintrace/src/ui/import_page.dart';
+import 'package:yintrace/src/ui/import_queue_page.dart';
 import 'package:yintrace/src/ui/library_page.dart';
 import 'package:yintrace/src/ui/pitch_editor_page.dart';
 import 'package:yintrace/src/ui/pitch_graph.dart';
@@ -370,6 +371,7 @@ void main() {
 
   testWidgets('pitch editor sets where a character starts, and the rest of the line follows', (tester) async {
     phone(tester);
+    var alignments = 0;
     await tester.pumpWidget(
       host(
         services,
@@ -381,6 +383,10 @@ void main() {
             engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
             configureSession: false,
           ),
+          retimer: (track, lines, ref, line, pins) async {
+            alignments++;
+            return retimeLine(track, lines, ref, line, pins);
+          },
         ),
       ),
     );
@@ -394,12 +400,18 @@ void main() {
     final shown = find.textContaining(RegExp(r'^从 \d+:\d\d\.\d\d 开始$'));
     expect(shown, findsOneWidget);
 
-    // Two quick taps add up; the result is saved.
+    // Each tap updates the displayed start and restarts the save window.
     await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: find.byType(Scrollable).first);
+    final displayedStart = tester.widget<Text>(shown).data;
     await tester.tap(find.byTooltip('推后 0.05 秒'));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.widget<Text>(shown).data, isNot(displayedStart));
     await tester.tap(find.byTooltip('推后 0.05 秒'));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(alignments, 0);
+    expect((await stored()).lines[1].tokens[4].pinned, isNull);
     await settleIo(tester, rounds: 20);
+    expect(alignments, 1);
     final moved = (await stored()).lines[1];
     expect(moved.tokens[4].pinned, closeTo(start + 0.1, 1e-3));
     // Its voice starts there (to the pitch frame, 5.8 ms), and the
@@ -432,75 +444,130 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
 
-  testWidgets('pitch editor: taps while a line is being aligned add up and keep each other', (tester) async {
+  for (final useModel in [false, true]) {
+    final aligner = useModel ? 'HuBERTFA' : 'pitch alignment';
+    testWidgets('pitch editor keeps taps while $aligner is running', (tester) async {
+      phone(tester);
+      if (useModel) {
+        final repo = services.songs;
+        final original = (await tester.runAsync(() => repo.load(song.id)))!;
+        addTearDown(() => repo.saveAlignmentMetadata(song.id, original.lyrics, original.modelInfo));
+        await tester.runAsync(
+          () => repo.saveAlignmentMetadata(song.id, original.lyrics, {...original.modelInfo, 'alignment': 'HuBERTFA'}),
+        );
+      }
+      // Each re-alignment waits until the test lets it finish, as on the
+      // phone, where it runs in the background.
+      final gates = <Completer<void>>[];
+      await tester.pumpWidget(
+        host(
+          services,
+          PitchEditorPage(
+            songId: song.id,
+            line: 1,
+            decodeInBackground: false,
+            playerFactory: () => SegmentPlayer(
+              engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+              configureSession: false,
+            ),
+            retimer: (track, lines, ref, line, pins) async {
+              final gate = Completer<void>();
+              gates.add(gate);
+              await gate.future;
+              return retimeLine(track, lines, ref, line, pins);
+            },
+          ),
+        ),
+      );
+      await settleIo(tester, rounds: 20);
+      Future<SongReference> stored() async => (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+      final original = await stored();
+      final before = original.lines[1];
+      addTearDown(() => services.songs.saveReference(song.id, original));
+      final scrollable = find.byType(Scrollable).first;
+      Future<void> nudge(String char) async {
+        await tester.scrollUntilVisible(find.text(char), -200, scrollable: scrollable);
+        await tester.tap(find.text(char));
+        await tester.pump();
+        await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: scrollable);
+        await tester.tap(find.byTooltip('推后 0.05 秒'));
+        await tester.pump();
+      }
+
+      // Twice on one character, then once on another of the same line, all
+      // before the first result is in.
+      await nudge('得');
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(gates, hasLength(1));
+      await tester.tap(find.byTooltip('推后 0.05 秒'));
+      await tester.pump();
+      expect(find.text('你调过'), findsOneWidget);
+      await nudge('带');
+      expect(gates, hasLength(1));
+      gates.first.complete();
+      await tester.pump();
+      expect((await stored()).lines[1].tokens[4].pinned, isNull);
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(gates, hasLength(2));
+      gates.last.complete();
+      await settleIo(tester);
+      final after = (await stored()).lines[1];
+      expect(after.tokens[4].pinned, closeTo(before.tokens[4].start + 0.1, 1e-3));
+      expect(after.tokens[5].pinned, closeTo(before.tokens[5].start + 0.05, 1e-3));
+
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  testWidgets('pitch editor saves queued timing before returning to the song', (tester) async {
     phone(tester);
-    // Each re-alignment waits until the test lets it finish, as on the
-    // phone, where it runs in the background.
-    final gates = <Completer<void>>[];
+    Future<SongReference> stored() async => (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    final before = await stored();
+    final alignment = Completer<void>();
+    var started = false;
     await tester.pumpWidget(
       host(
         services,
-        PitchEditorPage(
-          songId: song.id,
-          line: 1,
-          decodeInBackground: false,
-          playerFactory: () => SegmentPlayer(
-            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
-            configureSession: false,
+        Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => PitchEditorPage(
+                  songId: song.id,
+                  line: 1,
+                  decodeInBackground: false,
+                  retimer: (track, lines, ref, line, pins) async {
+                    started = true;
+                    await alignment.future;
+                    return retimeLine(track, lines, ref, line, pins);
+                  },
+                ),
+              )),
+              child: const Text('打开校正'),
+            ),
           ),
-          retimer: (track, lines, ref, line, pins) async {
-            final gate = Completer<void>();
-            gates.add(gate);
-            await gate.future;
-            return retimeLine(track, lines, ref, line, pins);
-          },
         ),
       ),
     );
-    await settleIo(tester, rounds: 20);
-    Future<SongReference> stored() async => (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
-    final before = (await stored()).lines[1];
-    final scrollable = find.byType(Scrollable).first;
-    Future<void> nudge(String char) async {
-      await tester.scrollUntilVisible(find.text(char), -200, scrollable: scrollable);
-      await tester.tap(find.text(char));
-      await tester.pump();
-      await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: scrollable);
-      await tester.tap(find.byTooltip('推后 0.05 秒'));
-      await tester.pump();
-    }
-
-    // Twice on one character, then once on another of the same line, all
-    // before the first result is in.
-    await nudge('得');
+    await tester.tap(find.text('打开校正'));
+    await settleIo(tester, rounds: 25);
+    await tester.tap(find.text('得'));
+    await tester.pump();
+    await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: find.byType(Scrollable).first);
     await tester.tap(find.byTooltip('推后 0.05 秒'));
     await tester.pump();
-    expect(find.text('你调过'), findsOneWidget);
-    await nudge('带');
-    expect(gates, hasLength(1));
-    for (var round = 0; round < 6; round++) {
-      for (final g in gates) {
-        if (!g.isCompleted) g.complete();
-      }
-      await settleIo(tester, rounds: 5);
-    }
-    final after = (await stored()).lines[1];
-    expect(after.tokens[4].pinned, closeTo(before.tokens[4].start + 0.1, 1e-3));
-    expect(after.tokens[5].pinned, closeTo(before.tokens[5].start + 0.05, 1e-3));
-
-    // Put the line back for the tests after this one.
-    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('这一句全部恢复自动识别'));
-    for (var round = 0; round < 4; round++) {
-      for (final g in gates) {
-        if (!g.isCompleted) g.complete();
-      }
-      await settleIo(tester, rounds: 5);
-    }
-    expect((await stored()).lines[1].tokens.any((t) => t.pinned != null), isFalse);
+    expect(started, isFalse);
+    await tester.tap(find.byType(BackButton));
+    await tester.pump();
+    expect(started, isTrue);
+    expect(ModalRoute.of(tester.element(find.text('校正')))?.isCurrent, isTrue);
+    alignment.complete();
+    await settleIo(tester, rounds: 25);
+    expect(ModalRoute.of(tester.element(find.text('打开校正')))?.isCurrent, isTrue);
+    expect((await stored()).lines[1].tokens[4].pinned, closeTo(before.lines[1].tokens[4].slotStart + 0.05, 1e-3));
+    await tester.runAsync(() => services.songs.saveReference(song.id, before));
     await tester.pumpWidget(const SizedBox());
-  }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
+  });
 
   testWidgets('a kept take becomes a finished track', (tester) async {
     phone(tester);
@@ -841,20 +908,40 @@ void main() {
     expect(shared, [file, file]);
     await tester.pumpWidget(const SizedBox());
 
-    // The receiver: some other file is refused and the page stays usable...
+    // The receiver can see a package rejected in the queue, then add a valid one.
     String? picked = '${tmp.path}/vocal.wav';
-    await tester.pumpWidget(host(services, ImportPage(pickSongFile: () async => picked, background: false)));
-    await tester.pump();
-    await tester.tap(find.text('导入yintrace文件'));
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.widgetWithText(FilledButton, '选择音迹文件'));
-    await settleIo(tester, rounds: 5);
+    await tester.pumpWidget(host(services, Scaffold(body: Builder(builder: (context) {
+      return TextButton(
+        onPressed: () async {
+          final added = await Navigator.of(context).push(MaterialPageRoute<bool>(builder: (_) =>
+              ImportPage(pickSongFile: () async => picked, background: false)));
+          if (added == true && context.mounted) {
+            await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ImportQueuePage()));
+          }
+        },
+        child: const Text('添加文件'),
+      );
+    }))));
+    Future<void> addPackage() async {
+      await tester.tap(find.text('添加文件'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('导入yintrace文件'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '选择音迹文件'));
+      await settleIo(tester, rounds: 35);
+    }
+
+    await addPackage();
+    expect(find.byType(ImportQueuePage), findsOneWidget);
     expect(find.text('这不是音迹导出的歌曲文件'), findsOneWidget);
-    expect(find.text('导入音迹歌曲文件'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, '选择音迹文件'), findsOneWidget);
-    // ...and the song file opens as a new song that was never practised.
+    expect(find.text('导入失败'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
     picked = file;
-    await tester.tap(find.widgetWithText(FilledButton, '选择音迹文件'));
+    await addPackage();
+    expect(find.text('已导入'), findsOneWidget);
+    expect(find.byType(SongPage), findsNothing);
+    await tester.tap(find.text('打开歌曲'));
     await settleIo(tester, rounds: 40);
     expect(find.byType(SongPage), findsOneWidget);
     expect(find.text('夜航（示例）'), findsWidgets);

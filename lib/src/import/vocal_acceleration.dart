@@ -123,9 +123,10 @@ class VocalAcceleration extends ChangeNotifier {
 
   /// Decides how the next import runs its models. [vocalModelPath] is the
   /// installed vocal model (its size and date name Core ML's cache).
-  Future<ImportAcceleration> beforeImport(String vocalModelPath) async {
+  /// [anotherImportRunning] means the marker may belong to a live worker.
+  Future<ImportAcceleration> beforeImport(String vocalModelPath, {bool anotherImportRunning = false}) async {
     final marker = _marker;
-    if (marker != null && marker.existsSync()) {
+    if (!anotherImportRunning && marker != null && marker.existsSync()) {
       try {
         marker.deleteSync();
       } catch (_) {}
