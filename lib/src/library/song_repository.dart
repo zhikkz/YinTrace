@@ -95,9 +95,19 @@ class SongRepository {
   Future<SongMeta> _readSong(String id) async => SongMeta.fromJson(
       jsonDecode(await File(pathFor(id, songFile)).readAsString()) as Map<String, dynamic>);
 
+  /// Saves metadata and keeps the stored practice statistics of an existing song.
   Future<void> save(SongMeta meta) => _withSong(meta.id, () async {
     dirFor(meta.id).createSync(recursive: true);
-    await writeFileAtomic(pathFor(meta.id, songFile), jsonEncode(meta.toJson()));
+    final path = pathFor(meta.id, songFile);
+    final data = meta.toJson();
+    if (File(path).existsSync()) {
+      final current = (await _readSong(meta.id)).toJson();
+      for (final field in const ['practiceCount', 'bestScore', 'lastScore', 'lastPracticedAt']) {
+        data.remove(field);
+        if (current.containsKey(field)) data[field] = current[field];
+      }
+    }
+    await writeFileAtomic(path, jsonEncode(data));
   });
 
   Future<SongReference> loadReference(String id) async => SongReference.fromJson(
