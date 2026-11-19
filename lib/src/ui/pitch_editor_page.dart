@@ -346,6 +346,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
         pins: pins,
         readings: readings,
         restore: restore,
+        next: lineIndex + 1 < lines.length ? lines[lineIndex + 1] : null,
       );
       if (!mounted) return;
       await services.songs.saveReference(widget.songId, fresh);

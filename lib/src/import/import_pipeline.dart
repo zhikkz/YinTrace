@@ -754,8 +754,13 @@ class _ImportClock {
 /// and starts set by hand) and their practice scores, also when lines were
 /// added or removed before them and they moved; the scores of removed and
 /// rewritten lines are dropped.
+///
+/// With HuBERTFA and [pitchModelPath], the pitch of the stored vocal is
+/// measured again first, so that a song imported with an older version of
+/// the app (or from a song file) gets the pitch curve this version measures.
 Future<void> realignSong(SongRepository repo, String id, String lyrics, {
   String? hubertFaPath,
+  String? pitchModelPath,
   void Function(int, int)? onProgress,
   bool Function()? isCancelled,
   void Function()? onSaving,
@@ -772,11 +777,11 @@ Future<void> realignSong(SongRepository repo, String id, String lyrics, {
   }
   final pins = old == null ? const <(int, int), double>{} : carriedPins(old, lrc.lines);
   final readings = old == null ? const <(int, int), String>{} : carriedPinyin(old, lrc.lines);
-  final reference = hubertFaPath == null
-      ? buildReference(track, lrc.lines, pins: pins)
+  final (reference, measured) = hubertFaPath == null
+      ? (buildReference(track, lrc.lines, pins: pins), null)
       : await alignStoredVocal(
           hubertFaPath, repo.pathFor(id, meta.vocalsFile), track, lrc.lines, pins: pins, readings: readings,
-          onProgress: onProgress, isCancelled: isCancelled,
+          pitchModelPath: pitchModelPath, onProgress: onProgress, isCancelled: isCancelled,
         );
   if (isCancelled?.call() ?? false) throw const SeparationCancelled();
   if (hubertFaPath != null && pins.entries.any((pin) =>
@@ -794,6 +799,11 @@ Future<void> realignSong(SongRepository repo, String id, String lyrics, {
   final moved = old == null ? null : matchLines(old.lines, reference.lines);
   if (old != null) reference.applyCorrectionsFrom(old, moved);
   onSaving?.call();
+  if (measured != null) {
+    await repo.savePitchTrack(id, measured);
+    meta.modelInfo[ImportPipeline.pitchInfo] = PitchModel.name;
+    meta.modelInfo.remove('pitchModelError');
+  }
   await repo.saveReference(id, reference);
   if (old != null) await repo.remapHistory(id, old, moved!);
   meta.lyrics = lyrics;

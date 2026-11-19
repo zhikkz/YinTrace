@@ -143,7 +143,8 @@ class PitchGraphPainter extends CustomPainter {
           Paint()..color = p.ink.withValues(alpha: 0.07));
     }
 
-    // The original singer's real contour, as a hairline.
+    // The original singer's real contour, as a hairline: only where a line
+    // is sung, not the backing vocals and ad-libs of intros and interludes.
     final c = contour;
     if (c != null && c.length > 0) {
       final path = Path();
@@ -151,9 +152,22 @@ class PitchGraphPainter extends CustomPainter {
       final f0 = math.max(0, (t0 / c.hopSeconds).floor());
       final f1 = math.min(c.length, (t1 / c.hopSeconds).ceil() + 1);
       final step = math.max(1, ((f1 - f0) / (plotW * 1.5)).floor());
+      final sung = reference == null
+          ? null
+          : [
+              for (final l in reference!.lines)
+                if (l.tokens.isNotEmpty && l.end >= t0 - 1 && l.start <= t1 + 1) (l.start - 0.3, l.end + 0.3),
+            ];
+      var span = 0;
       for (var f = f0; f < f1; f += step) {
         final m = c.midi[f];
-        if (m <= 0) {
+        final t = f * c.hopSeconds;
+        if (sung != null) {
+          while (span < sung.length && sung[span].$2 < t) {
+            span++;
+          }
+        }
+        if (m <= 0 || (sung != null && (span == sung.length || t < sung[span].$1))) {
           open = false;
           continue;
         }
@@ -326,6 +340,63 @@ class PitchGraphPainter extends CustomPainter {
       old.highlight != highlight ||
       old.revision != revision ||
       old.style.palette != style.palette;
+}
+
+/// Keeps the practice graph's vertical range steady while the song
+/// scrolls: the range is whole semitones, grows at once to show a note
+/// that would not fit, and shrinks only when it is more than [slack]
+/// semitones bigger than needed on a side. Without this every note that
+/// scrolls in or out moved the axis a little, and the graph never stood
+/// still.
+class PitchAxisFollower {
+  PitchAxisFollower({this.minSpan = 14, this.pad = 3, this.slack = 2});
+
+  final double minSpan, pad, slack;
+  (double, double)? _range;
+
+  /// The range to show for pitches [lo]..[hi].
+  (double, double) follow(double lo, double hi) {
+    final (a, b) = paddedRange(lo, hi, minSpan: minSpan, pad: pad);
+    final wantLo = a.floorToDouble(), wantHi = b.ceilToDouble();
+    final current = _range;
+    if (current == null) return _range = (wantLo, wantHi);
+    var (low, high) = current;
+    if (wantLo < low || wantLo > low + slack) low = wantLo;
+    if (wantHi > high || wantHi < high - slack) high = wantHi;
+    return _range = (low, high);
+  }
+}
+
+/// The range of the singer's steady pitches among [points] between [from]
+/// and [to]: runs of at least [minRun] points in a row within a semitone of
+/// each other. A single wrong reading (an octave slip of the live pitch, a
+/// noise) does not make the graph rescale for the seconds it stays in the
+/// trail. Null without any.
+(double, double)? steadyPitchRange(List<UserPoint> points, double from, double to, {int minRun = 4}) {
+  var lo = double.infinity, hi = -double.infinity;
+  var runStart = 0;
+  void close(int end) {
+    if (end - runStart < minRun) return;
+    for (var k = runStart; k < end; k++) {
+      lo = math.min(lo, points[k].midi);
+      hi = math.max(hi, points[k].midi);
+    }
+  }
+
+  for (var i = 0; i < points.length; i++) {
+    final p = points[i];
+    final inside = p.midi > 0 && p.time >= from && p.time <= to;
+    final continues = inside &&
+        i > runStart &&
+        (p.midi - points[i - 1].midi).abs() < 1 &&
+        p.time - points[i - 1].time < 0.05;
+    if (!continues) {
+      close(i);
+      runStart = inside ? i : i + 1;
+    }
+  }
+  close(points.length);
+  return lo > hi ? null : (lo, hi);
 }
 
 /// Picks a comfortable vertical range around [lo]..[hi].

@@ -135,9 +135,9 @@ class SongRepository {
     }
   }
 
-  Future<void> savePitchTrack(String id, PitchTrack track) async {
-    await File(pathFor(id, pitchFile)).writeAsBytes(encodePitchTrack(track), flush: true);
-  }
+  /// Replaces the song's pitch curve whole (re-aligning measures it again).
+  Future<void> savePitchTrack(String id, PitchTrack track) =>
+      writeBytesAtomic(pathFor(id, pitchFile), encodePitchTrack(track));
 
   Future<PitchTrack> loadPitchTrack(String id) async =>
       decodePitchTrack(await File(pathFor(id, pitchFile)).readAsBytes());

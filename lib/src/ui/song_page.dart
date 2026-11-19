@@ -118,7 +118,7 @@ class _SongPageState extends State<SongPage> {
             Text('修改歌词', style: ctx.type.headlineSmall),
             const SizedBox(height: 6),
             Text(
-              'HuBERTFA 会用已保存的人声重新对齐每句歌词。'
+              'HuBERTFA 会用已保存的人声重新测原唱音高、重新对齐每句歌词。'
               '${_ref!.corrected ? '没改动的句子里，你校正过的位置和音高会保留。' : ''}',
               style: ctx.type.bodySmall,
             ),
@@ -149,6 +149,7 @@ class _SongPageState extends State<SongPage> {
     try {
       await realignSong(
         services.songs, widget.songId, edited, hubertFaPath: services.models.pathFor(hubertFaModel)!,
+        pitchModelPath: services.activePitchModel,
         onProgress: (done, total) {
           if (!mounted) return;
           setState(() {

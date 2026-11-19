@@ -17,11 +17,11 @@ abstract final class PitchModel {
   static const asset = 'assets/models/swift_f0.onnx';
 
   /// What `tools/build_pitch_model.py build` writes (a test checks it).
-  static const sha256 = '17aed278f03819b6b4241d7352df25244ce0e918b65049a5e83ec259b25ca014';
-  static const bytes = 135466;
+  static const sha256 = 'efd41605a153b3ecd42f5d18907a89afda5fec3998455e02bc43db0adcf64541';
+  static const bytes = 135703;
 
   static const inputName = 'audio';
-  static const outputName = 'pitch_confidence';
+  static const outputName = 'pitch_confidence_bins';
 
   /// Shown in a song's model info and in diagnostics.
   static const name = 'SwiftF0 0.3.0';
