@@ -184,7 +184,7 @@ void main() {
       repo = SongRepository(tmp);
       id = repo.newSongId();
       await repo.save(SongMeta(
-        id: id, title: '测试', createdAt: DateTime(2026), duration: 1, vocalsFile: 'v.wav', practiceCount: 9,
+        id: id, title: '测试', createdAt: DateTime(2026), duration: 1, lyrics: '', vocalsFile: 'v.wav', practiceCount: 9,
       ));
     });
     tearDown(() => tmp.deleteSync(recursive: true));
