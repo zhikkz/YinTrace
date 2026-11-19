@@ -175,6 +175,47 @@ void main() {
     });
   });
 
+  group('practice storage', () {
+    late Directory tmp;
+    late SongRepository repo;
+    late String id;
+    setUp(() async {
+      tmp = Directory.systemTemp.createTempSync('yt_practice_storage');
+      repo = SongRepository(tmp);
+      id = repo.newSongId();
+      await repo.save(SongMeta(
+        id: id, title: '测试', createdAt: DateTime(2026), duration: 1, vocalsFile: 'v.wav', practiceCount: 9,
+      ));
+    });
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    PracticeRecord run(int day) => PracticeRecord(
+      at: DateTime(2026, 1, day), score: 80, lineScores: {0: 80}, coverage: 1,
+    );
+
+    test('opening the library rolls forward an interrupted save and a retry counts only once', () async {
+      final record = run(1);
+      final blocked = Directory('${repo.pathFor(id, SongRepository.songFile)}.tmp')..createSync();
+      await expectLater(repo.addPractice(id, record), throwsA(isA<FileSystemException>()));
+      expect(File(repo.pathFor(id, SongRepository.historyFile)).existsSync(), isTrue);
+      blocked.deleteSync();
+
+      final reopened = SongRepository(tmp);
+      expect((await reopened.list()).single.practiceCount, 10);
+      expect((await reopened.loadHistory(id)).single.key, record.key);
+      expect((await reopened.addPractice(id, record)).practiceCount, 10);
+      final song = await reopened.load(id);
+      expect(song.lastPracticedAt, record.at);
+      expect(song.bestScore, record.score);
+    });
+
+    test('overlapping saves serialize read-modify-write even with a trimmed history', () async {
+      await Future.wait([repo.addPractice(id, run(1), keep: 1), repo.addPractice(id, run(2), keep: 1)]);
+      expect((await repo.load(id)).practiceCount, 11);
+      expect((await repo.loadHistory(id)).single.key, run(2).key);
+    });
+  });
+
   group('LivePitchTracker', () {
     test('maps capture blocks to latency-compensated song time, across a loop jump', () {
       final tracker = LivePitchTracker(
