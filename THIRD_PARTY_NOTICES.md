@@ -257,9 +257,11 @@ The license file of the release reads:
 
 ## HubertFA (Apache License 2.0)
 
-The waveform model and dictionaries are downloaded from the official HubertFA
-v0.0.7 release. YinTrace adapts the project's AlignmentDecoder to Dart, with
-LRC timing hints, optional silence, and one output interval per lyric token.
+The waveform model and dictionaries come from the official HubertFA v0.0.7
+release. YinTrace downloads the original archive via ghfast.top and falls back
+to the upstream GitHub Release. YinTrace adapts the project's AlignmentDecoder
+to Dart, with LRC timing hints, optional silence, and one output interval per
+lyric token.
 The upstream license is included in [assets/models/hubertfa-LICENSE.txt](assets/models/hubertfa-LICENSE.txt).
 [HubertFA v0.0.7](https://github.com/wolfgitpr/HubertFA/tree/v0.0.7)
 

@@ -97,17 +97,21 @@ const karaokeModel = ModelSpec(
 
 const separationModels = [vocalModel, karaokeModel];
 
+const _hubertFaRelease =
+    'https://github.com/wolfgitpr/HubertFA/releases/download/v0.0.7/1218_hfa_model_new_dict.zip';
+
 /// Official HuBERTFA v0.0.7 ONNX export, with its matching dictionaries.
 const hubertFaModel = ModelSpec(
   id: 'hubertfa',
   title: 'HuBERTFA 逐句对齐',
   purpose: '把每句歌词对齐到主唱的人声',
   fileName: '1218_hfa_model_new_dict.zip',
-  url: 'https://github.com/wolfgitpr/HubertFA/releases/download/v0.0.7/1218_hfa_model_new_dict.zip',
+  url: 'https://ghfast.top/$_hubertFaRelease',
   bytes: 256589553,
   sha256: '48bd6dbcc293e47cc6cbcc556baf575e3d91d61d0ac88ddeccd6098f8f346fa2',
   installedName: 'hubertfa-v0.0.7/model.onnx',
   installedBytes: 415220874,
+  mirrors: [_hubertFaRelease],
   archive: ModelArchive('1218_hfa_model_new_dict', {
     'model.onnx': 415220874,
     'vocab.json': 4093,
