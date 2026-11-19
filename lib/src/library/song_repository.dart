@@ -257,12 +257,17 @@ Uint8List encodePitchTrack(PitchTrack t) {
 
 PitchTrack decodePitchTrack(Uint8List bytes) {
   final b = ByteData.sublistView(bytes);
-  if (b.getUint32(0, Endian.little) != _magic) {
+  if (bytes.length < 20 || b.getUint32(0, Endian.little) != _magic) {
     throw const FormatException('not a YinTrace pitch file');
   }
   final version = b.getUint32(4, Endian.little);
   final hop = b.getFloat64(8, Endian.little);
   final n = b.getUint32(16, Endian.little);
+  if (version != 1 && version != 2) throw const FormatException('unsupported pitch track version');
+  if (!hop.isFinite || hop <= 0) throw const FormatException('invalid pitch frame interval');
+  final bytesPerFrame = version == 2 ? 12 : 8;
+  if (bytes.length != 20 + n * bytesPerFrame) throw const FormatException('invalid pitch track length');
+
   Float32List read(int at) {
     final out = Float32List(n);
     for (var i = 0, o = at; i < n; i++, o += 4) {
@@ -271,12 +276,11 @@ PitchTrack decodePitchTrack(Uint8List bytes) {
     return out;
   }
 
-  final withChange = version >= 2 && bytes.length >= 20 + n * 12;
   return PitchTrack(
     hopSeconds: hop,
     midi: read(20),
     rmsDb: read(20 + n * 4),
     aperiodicity: Float32List(n),
-    spectralChange: withChange ? read(20 + n * 8) : null,
+    spectralChange: version == 2 ? read(20 + n * 8) : null,
   );
 }

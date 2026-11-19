@@ -40,6 +40,13 @@ const _headerBytes = 20;
 const _maxManifestBytes = 8 << 20;
 const _chunk = 1 << 20;
 
+// Both of these entries are decoded in memory, unlike streamed audio.
+void _checkEntrySize(String role, int bytes) {
+  if ((role == 'pitch' || role == 'reference') && bytes > (16 << 20)) {
+    throw SongPackageException('歌曲的音高或参考谱文件过大');
+  }
+}
+
 /// File name of the package of [meta]: `歌名 - 歌手.yintrace`.
 String songPackageName(SongMeta meta) {
   String clean(String s) => s.replaceAll(RegExp(r'[\\/:*?"<>|\n\r\t]'), ' ').trim();
@@ -79,7 +86,9 @@ void exportSongPackageSync(String songsRoot, String id, String outputPath) {
     for (final (role, name) in parts) {
       final file = File(repo.pathFor(id, name));
       if (!file.existsSync()) throw SongPackageException('这首歌的文件不全，导出不了');
-      files.add({'role': role, 'name': name, 'bytes': file.lengthSync(), 'sha256': _hash(file)});
+      final bytes = file.lengthSync();
+      _checkEntrySize(role, bytes);
+      files.add({'role': role, 'name': name, 'bytes': bytes, 'sha256': _hash(file)});
     }
     final manifest = utf8.encode(
       jsonEncode({
@@ -160,6 +169,7 @@ SongMeta importSongPackageSync(String songsRoot, String packagePath) {
     for (final f in files) {
       final bytes = f['bytes'] as int;
       if (bytes < 0) throw const FormatException('negative size');
+      _checkEntrySize(f['role'] as String, bytes);
       total += bytes;
     }
     if (total != length) throw SongPackageException(incomplete);
