@@ -88,6 +88,19 @@ void main() {
     return e.render(64, input: Float32List(64)..fillRange(0, 64, 0.4))[0];
   }
 
+  test('a short take late in the song plays at its original absolute position', () {
+    final e = session.engine!;
+    final take = session.take!;
+    const first = 7 * sr;
+    take.addAudio(Float32List(256)..fillRange(0, 256, 0.25), first, 0);
+    session.listenBack(line: 1);
+    expect(session.listening, ListenKind.take);
+    e.seekFrame(first - 32);
+    final out = e.render(64);
+    expect(out.take(64), everyElement(closeTo(0, 1e-5)));
+    expect(out.skip(64), everyElement(closeTo(0.25, 1e-4)));
+  }, skip: lib == null);
+
   test('live monitoring follows practice, pause and listening without changing the level', () {
     expect(session.monitorAvailable, isTrue); // offline test route
     expect(session.monitorEnabled, isFalse);

@@ -110,7 +110,7 @@ class PracticeSession extends ChangeNotifier {
   int? _originalLine; // the line played with the original singer
   double _resumeAt = 0; // where practice continues after listening back
   int? _resumeLine; // ...to sing this line, when it continues before one
-  int _loadedTake = -1; // version of the take in the engine's take slot
+  (int, int, int)? _loadedTake; // version and song-frame interval in the take slot
 
   PracticeEngine? get engine => _engine;
   bool get isPlaying => _engine?.isPlaying ?? false;
@@ -332,12 +332,17 @@ class PracticeSession extends ChangeNotifier {
     final t = take;
     if (e == null || t == null || !canListenBack(line: line) || _suspended) return;
     e.pause();
-    if (_loadedTake != t.version) {
-      e.loadTrackPcm(TrackSlot.take, t.samples!, 1);
-      _loadedTake = t.version;
-    }
     final (a, b) = line != null ? _loopRange(line) : (math.max(0.0, t.startSeconds - 0.5), t.endSeconds + 0.3);
-    final range = (a, math.min(b, math.max(a, e.lengthSeconds)));
+    final range = (a, math.min(b, math.max(a, duration)));
+    final first = math.max(t.startFrame, (range.$1 * e.sampleRate).floor());
+    final end = math.min(t.endFrame, (range.$2 * e.sampleRate).ceil());
+    if (end <= first) return;
+    final key = (t.version, first, end);
+    if (_loadedTake != key) {
+      e.loadTrackPcm(TrackSlot.take, t.readFrames(first, end), 1);
+      e.setTrackOffset(TrackSlot.take, first);
+      _loadedTake = key;
+    }
     if (listening == ListenKind.original) {
       // Straight from the original singer: practice would have gone on at
       // the start of that line.
@@ -386,7 +391,7 @@ class PracticeSession extends ChangeNotifier {
       e.pause();
       if (kind == ListenKind.take) {
         e.unloadTrack(TrackSlot.take);
-        _loadedTake = -1;
+        _loadedTake = null;
       }
       _endCount = e.endCount; // reaching the end while reviewing is not a finished run
       applyMix();
