@@ -199,6 +199,52 @@ void main() {
           reason: '${melody.map(hzToMidi).map((m) => m.round()).toSet()}');
     });
 
+    test('a voice an octave below that takes over for a second in a held note is not followed', () {
+      // The lead holds 330 Hz for 1.2 s; for 0.6 s of it a harmony an octave
+      // below (left in by the separation) is what the model hears best.
+      const n = 300;
+      final scores = Float32List(n * SwiftF0.bins)..fillRange(0, n * SwiftF0.bins, -6);
+      final confidence = Float32List(n)..fillRange(0, n, 0.8);
+      final lead = bin(330), low = bin(165);
+      for (var t = 0; t < n; t++) {
+        final harmony = t >= 80 && t < 230;
+        scores[t * SwiftF0.bins + lead] = harmony ? 2.5 : 4;
+        if (harmony) scores[t * SwiftF0.bins + low] = 4;
+        // The bins between them a little above the rest: the path can walk
+        // down through them, as it does on real recordings.
+        for (var b = low + 1; b < lead; b++) {
+          scores[t * SwiftF0.bins + b] = -3;
+        }
+      }
+      final midi = decodeMelody(scores, confidence).map(hzToMidi).toList();
+      // Never an octave off; the pitch of the lead except in the frames
+      // where the path walks between the voices (smoothed out later).
+      final lead330 = hzToMidi(330);
+      expect(midi.every((m) => (m - lead330).abs() < 2), isTrue, reason: '$midi');
+      final settled = [for (var t = 0; t < n; t++) if ((t - 80).abs() > 2 && (t - 230).abs() > 2) midi[t]];
+      expect(settled.every((m) => (m - lead330).abs() < 0.8), isTrue, reason: '$midi');
+    });
+
+    test('a real leap of an octave is kept', () {
+      // 220 Hz, a consonant, then 440 Hz, where the model hears nothing an
+      // octave below.
+      const n = 260;
+      final scores = Float32List(n * SwiftF0.bins)..fillRange(0, n * SwiftF0.bins, -6);
+      final confidence = Float32List(n);
+      for (var t = 0; t < n; t++) {
+        final second = t >= 110;
+        if (t >= 100 && t < 110) {
+          confidence[t] = 0.2;
+          continue;
+        }
+        confidence[t] = 0.85;
+        scores[t * SwiftF0.bins + bin(second ? 440 : 220)] = 4;
+      }
+      final midi = decodeMelody(scores, confidence).map(hzToMidi).toList();
+      expect(midi.sublist(0, 100).every((m) => (m - 57).abs() < 0.8), isTrue);
+      expect(midi.sublist(112).every((m) => (m - 69).abs() < 0.8), isTrue, reason: '${midi.sublist(105, 130)}');
+    });
+
     test('a short slip to another pitch is not followed, a new phrase after a pause is', () {
       const n = 300;
       final scores = Float32List(n * SwiftF0.bins)..fillRange(0, n * SwiftF0.bins, -6);
