@@ -79,6 +79,13 @@ class ResumableDownload {
     HttpClientResponse response;
     try {
       response = await _open(url, have, stayOnSite);
+      if (response.statusCode == HttpStatus.requestedRangeNotSatisfiable && have > 0) {
+        // A stale partial gets one restart. A second 416 is a route failure.
+        await response.listen(null).cancel();
+        partFile.deleteSync();
+        have = 0;
+        response = await _open(url, have, stayOnSite);
+      }
     } on DownloadCancelled {
       rethrow;
     } on ModelDownloadException {
@@ -87,24 +94,10 @@ class ResumableDownload {
       if (_cancelled) throw const DownloadCancelled();
       throw ModelDownloadException(_describe(e));
     }
-    if (response.statusCode == HttpStatus.requestedRangeNotSatisfiable) {
-      // The partial file does not fit the server's file: start over.
-      await response.drain<void>();
-      if (partFile.existsSync()) partFile.deleteSync();
-      return fetch(
-        url,
-        partFile,
-        expectedBytes: expectedBytes,
-        onProgress: onProgress,
-        minBytesPerSecond: minBytesPerSecond,
-        slowWindow: slowWindow,
-        stayOnSite: stayOnSite,
-      );
-    }
     if (response.statusCode == HttpStatus.ok) {
       have = 0; // The server ignored the range: write from the start.
     } else if (response.statusCode != HttpStatus.partialContent) {
-      await response.drain<void>().catchError((_) {});
+      await response.listen(null).cancel();
       throw ModelDownloadException('下载服务器返回了错误（${response.statusCode}）');
     }
     final RandomAccessFile sink;
@@ -118,6 +111,7 @@ class ResumableDownload {
     final done = Completer<void>();
     _done = done;
     var received = have;
+    var oversized = false;
     Timer? idle;
     void fail(Object error) {
       if (!done.isCompleted) done.completeError(error);
@@ -154,6 +148,11 @@ class ResumableDownload {
     _body = response.listen(
       (chunk) {
         if (done.isCompleted) return; // already failed or cancelled
+        if (chunk.length > expectedBytes - received) {
+          oversized = true;
+          done.complete();
+          return;
+        }
         try {
           sink.writeFromSync(chunk);
         } on FileSystemException catch (e) {
@@ -188,8 +187,11 @@ class ResumableDownload {
       }
     }
     if (closeError != null) throw ModelStorageException(_describe(closeError));
+    if (oversized) {
+      partFile.deleteSync();
+      throw ModelDownloadException('下载内容超过了模型大小');
+    }
     if (received != expectedBytes) {
-      if (received > expectedBytes) partFile.deleteSync();
       throw ModelDownloadException('下载中断了（收到 $received / $expectedBytes 字节）');
     }
   }
