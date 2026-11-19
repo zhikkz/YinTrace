@@ -135,6 +135,31 @@ void main() {
       expect((await repo.load(meta.id)).lyrics, first + rest);
     });
 
+    test('practice saved during realignment keeps its statistics and follows the moved lines', () async {
+      final record = PracticeRecord(
+        at: DateTime(2026, 11, 3), score: 92, lineScores: {0: 90, 1: 94}, coverage: 1,
+      );
+      late Future<SongMeta> practice;
+      await realignSong(repo, meta.id, first + rest, onSaving: () {
+        // The old metadata has been read, and the history has yet to be remapped.
+        practice = repo.addPractice(meta.id, record);
+      });
+      await practice;
+
+      final history = await repo.loadHistory(meta.id);
+      expect(history, hasLength(3));
+      expect(history[1].loopLine, 2);
+      expect(history.last.key, record.key);
+      expect(history.last.lineScores, {1: 90, 2: 94});
+      expect(wholeSongScores(history), [70, 92]);
+      final saved = await repo.load(meta.id);
+      expect(saved.lyrics, first + rest);
+      expect(
+        (saved.practiceCount, saved.bestScore, saved.lastScore, saved.lastPracticedAt),
+        (3, record.score, record.score, record.at),
+      );
+    });
+
     test('a start set by hand stays with its line', () async {
       // “灯” set 0.1 s late by hand, in the line that will move down.
       var ref = await repo.loadReference(meta.id);
