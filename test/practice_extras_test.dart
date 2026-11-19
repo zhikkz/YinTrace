@@ -45,6 +45,26 @@ void main() {
       expect(take.endSeconds, 10.0);
     });
 
+    test('short passages late in a long song allocate only touched blocks', () {
+      const sr = 44100;
+      final take = TakeRecorder(sampleRate: sr, lengthFrames: 600 * sr);
+      const at = 500 * sr;
+      take.addAudio(ramp(6000, 0.5), at, 0);
+      final capacity = take.allocatedFrames;
+      expect(capacity, lessThan(16000));
+      take.addAudio(ramp(6000, 0.25), at, 0);
+      expect(take.allocatedFrames, capacity);
+      final clip = take.readFrames(at - 1, at + 6001);
+      expect(clip.first, 0);
+      expect(clip.last, 0);
+      expect(clip.skip(1).take(6000), everyElement(0.25));
+      take.addAudio(ramp(50, -0.5), 20, 0);
+      expect(take.allocatedFrames, lessThan(21000));
+      expect(take.readFrames(10000, 10100), everyElement(0));
+      expect(take.startFrame, 20);
+      expect(take.endFrame, at + 6000);
+    });
+
     test('a passage sung again replaces only that part of the pitch trail', () {
       final take = TakeRecorder(sampleRate: 1000, lengthFrames: 1000);
       for (var i = 0; i < 100; i++) {
