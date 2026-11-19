@@ -56,11 +56,11 @@ class _SongPageState extends State<SongPage> {
   Future<void> _load() async {
     final repo = AppScope.of(context).songs;
     try {
-      final meta = await repo.load(widget.songId);
       final ref = await repo.loadReference(widget.songId);
       final track = await repo.loadPitchTrack(widget.songId);
       final history = await repo.loadHistory(widget.songId);
       final recordings = await repo.loadRecordings(widget.songId);
+      final meta = await repo.load(widget.songId);
       if (!mounted) return;
       setState(() {
         _meta = meta;
@@ -102,6 +102,47 @@ class _SongPageState extends State<SongPage> {
       builder: (_) => PitchEditorPage(songId: widget.songId, line: line),
     ));
     await _load();
+  }
+
+  Future<void> _rename() async {
+    final current = _meta!.title;
+    var input = current;
+    final form = GlobalKey<FormState>();
+    final title = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        void submit() {
+          if (form.currentState!.validate()) Navigator.pop(ctx, input.trim());
+        }
+
+        return AlertDialog(
+          title: const Text('修改歌名'),
+          content: Form(
+            key: form,
+            child: TextFormField(
+              initialValue: current,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(labelText: '歌名'),
+              validator: (value) => (value?.trim().isEmpty ?? true) ? '请输入歌名' : null,
+              onChanged: (value) => input = value,
+              onFieldSubmitted: (_) => submit(),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            FilledButton(onPressed: submit, child: const Text('保存')),
+          ],
+        );
+      },
+    );
+    if (!mounted || title == null || title == current) return;
+    try {
+      final meta = await AppScope.of(context).songs.rename(widget.songId, title);
+      if (mounted) setState(() => _meta = meta);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('歌名保存失败：$e')));
+    }
   }
 
   Future<void> _editLyrics() async {
@@ -256,12 +297,14 @@ class _SongPageState extends State<SongPage> {
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_horiz_rounded),
                 onSelected: (v) => switch (v) {
+                  'rename' => _rename(),
                   'edit' => _editLyrics(),
                   'pitch' => _correct(0),
                   'share' => showSongShare(context, meta),
                   _ => _delete(),
                 },
                 itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'rename', child: Text('修改歌名')),
                   PopupMenuItem(value: 'pitch', child: Text('校正位置和音高')),
                   PopupMenuItem(value: 'edit', child: Text('修改歌词')),
                   PopupMenuItem(value: 'share', child: Text('发给别人')),

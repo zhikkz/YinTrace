@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
@@ -526,6 +527,7 @@ class _StageState extends State<_Stage> {
   static const _pitchRangeHoldSeconds = 4.0;
 
   final _axis = PitchAxisFollower();
+  double _dragSeconds = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -563,7 +565,8 @@ class _StageState extends State<_Stage> {
       tolerance: session.settings.toleranceCents.toDouble(),
       language: session.reference.language,
     );
-    return TweenAnimationBuilder<(double, double)>(
+    const gutter = 30.0;
+    final graph = TweenAnimationBuilder<(double, double)>(
       tween: _PitchRangeTween(_axis.follow(lo, hi)),
       duration: const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
@@ -580,11 +583,33 @@ class _StageState extends State<_Stage> {
           user: user,
           playhead: ph,
           tokenScores: tokenScores,
+          gutter: gutter,
           glyphSize: 16,
           live: live,
           playbackPoint: playbackPoint,
         ),
       ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final plotWidth = constraints.maxWidth - gutter;
+        if (plotWidth <= 0) return graph;
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          dragStartBehavior: DragStartBehavior.down,
+          onHorizontalDragStart: (_) {
+            // Seek uses the engine clock. Anchor once so playback cannot
+            // add drift as the user drags.
+            _dragSeconds = session.engine?.positionSeconds ?? 0;
+          },
+          onHorizontalDragUpdate: (details) {
+            final seconds = _dragSeconds - details.delta.dx * span / plotWidth;
+            _dragSeconds = seconds.clamp(0.0, session.duration).toDouble();
+            session.seek(_dragSeconds);
+          },
+          child: graph,
+        );
+      },
     );
   }
 }

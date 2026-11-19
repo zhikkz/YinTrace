@@ -343,6 +343,11 @@ static void test_monitoring(void) {
   yt_engine_set_playing(e, 1);
   yt_engine_render(e, out, mic, 64);
   CHECK(fabsf(out[14] - 0.1f) < 1e-3f);
+  yt_engine_set_playing(e, 0);
+  yt_engine_set_monitor_while_capturing(e, 1);
+  yt_engine_set_monitor_gain(e, 1.0f);
+  yt_engine_render(e, out, mic, 64);
+  CHECK(out[14] == 0 && out[15] == 0);
   yt_engine_destroy(e);
 }
 

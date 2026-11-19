@@ -229,6 +229,25 @@ void main() {
       );
     });
 
+    test('rename keeps the song ID and survives overlapping alignment and practice saves', () async {
+      final record = run(1);
+      await Future.wait([
+        repo.rename(id, '  新标题  '),
+        repo.saveAlignmentMetadata(id, lyrics, {'alignment': 'HuBERTFA'}),
+        repo.addPractice(id, record),
+      ]);
+      await expectLater(repo.rename(id, '  '), throwsArgumentError);
+
+      final saved = (await SongRepository(tmp).list()).single;
+      expect(saved.id, id);
+      expect(saved.title, '新标题');
+      expect(saved.lyrics, lyrics);
+      expect(saved.modelInfo['alignment'], 'HuBERTFA');
+      expect(saved.practiceCount, 10);
+      expect(saved.bestScore, record.score);
+      expect((await repo.loadHistory(id)).single.key, record.key);
+    });
+
     test('opening the library rolls forward an interrupted save and a retry counts only once', () async {
       final record = run(1);
       final blocked = Directory('${repo.pathFor(id, SongRepository.songFile)}.tmp')..createSync();
