@@ -10,7 +10,7 @@ import 'scoring.dart';
 /// that was playing when it was captured, minus the latency compensation
 /// that the pitch tracking uses as well. Singing a passage again (after a
 /// seek, or in a line loop) overwrites the earlier take of that passage.
-/// Kept in memory only: about 10 MB per minute of song.
+/// Allocates sample blocks only for the passages that reach the recorder.
 class TakeRecorder {
   TakeRecorder({required this.sampleRate, required this.lengthFrames});
 
@@ -19,7 +19,8 @@ class TakeRecorder {
   /// Length of the song; the take covers at most this.
   final int lengthFrames;
 
-  Float32List? _samples;
+  static const _chunkFrames = 4096;
+  final _chunks = <int, Float32List>{};
   int _first = -1;
   int _end = -1;
   int _version = 0;
@@ -29,7 +30,7 @@ class TakeRecorder {
   final List<UserPoint> points = [];
   int _cursor = -1; // index of the newest point of the current pass
 
-  bool get isEmpty => _samples == null;
+  bool get isEmpty => _chunks.isEmpty;
 
   /// How long a voice was heard in the take (the points with a pitch, one
   /// per [hopSeconds]); the audio itself is recorded whether anyone sings
@@ -40,8 +41,27 @@ class TakeRecorder {
   /// are replaced (asked for on every frame).
   int _voiced = 0;
 
-  /// Mono samples of the whole song (silent where nothing was sung).
-  Float32List? get samples => _samples;
+  /// Allocated mono sample capacity, in frames.
+  int get allocatedFrames => _chunks.length * _chunkFrames;
+  int get startFrame => isEmpty ? 0 : _first;
+  int get endFrame => isEmpty ? 0 : _end;
+
+  /// A snapshot from frame [from] up to (but excluding) [to]. Unrecorded frames are silent.
+  Float32List readFrames(int from, int to) {
+    RangeError.checkValidRange(from, to, lengthFrames);
+    final out = Float32List(to - from);
+    for (var at = from; at < to;) {
+      final offset = at % _chunkFrames;
+      final count = math.min(to - at, _chunkFrames - offset);
+      final chunk = _chunks[at ~/ _chunkFrames];
+      if (chunk != null) out.setRange(at - from, at - from + count, chunk, offset);
+      at += count;
+    }
+    return out;
+  }
+
+  /// Full-song snapshot for callers that need an absolute-index buffer.
+  Float32List? get samples => isEmpty ? null : readFrames(0, lengthFrames);
 
   /// Changes whenever audio is added (to reload a played-back copy).
   int get version => _version;
@@ -63,8 +83,13 @@ class TakeRecorder {
     final a = math.max(math.max(0, fromFrame), start);
     final b = math.min(math.min(lengthFrames, toFrame ?? lengthFrames), start + block.length);
     if (a >= b) return;
-    final buf = _samples ??= Float32List(lengthFrames);
-    buf.setRange(a, b, block, a - start);
+    for (var at = a; at < b;) {
+      final offset = at % _chunkFrames;
+      final count = math.min(b - at, _chunkFrames - offset);
+      final chunk = _chunks.putIfAbsent(at ~/ _chunkFrames, () => Float32List(_chunkFrames));
+      chunk.setRange(offset, offset + count, block, at - start);
+      at += count;
+    }
     _first = _first < 0 ? a : math.min(_first, a);
     _end = math.max(_end, b);
     _version++;

@@ -19,12 +19,11 @@ Future<Recording> keepTake(
   AudioBackend audio = const NativeAudioBackend(),
   bool background = true,
 }) async {
-  final samples = take.samples;
-  if (samples == null) throw StateError('nothing was recorded');
+  if (take.isEmpty) throw StateError('nothing was recorded');
   final sr = take.sampleRate;
   final a = math.max(0, ((take.startSeconds - 0.2) * sr).round());
-  final b = math.min(samples.length, ((take.endSeconds + 0.2) * sr).round());
-  final part = Float32List.sublistView(samples, a, math.max(a, b));
+  final b = math.min(take.lengthFrames, ((take.endSeconds + 0.2) * sr).round());
+  final part = take.readFrames(a, b);
   final now = DateTime.now();
   final id = 'take-${now.millisecondsSinceEpoch.toRadixString(36)}';
   final dir = repo.takesDir(songId)..createSync(recursive: true);
