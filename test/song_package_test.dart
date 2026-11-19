@@ -267,6 +267,18 @@ void main() {
       refused(Uint8List.fromList(good)..[21] = 0x7d, '读不出来');
     });
 
+    test('shared pitch and reference budgets are checked before any entry is copied', () {
+      for (final role in ['reference', 'pitch']) {
+        final (manifest, _) = manifestOf(file);
+        final entry = (manifest['files'] as List).cast<Map>().firstWhere((f) => f['role'] == role);
+        entry['bytes'] = (16 << 20) + 1;
+        final json = utf8.encode(jsonEncode(manifest));
+        final header = good.sublist(0, 20);
+        ByteData.sublistView(header).setUint32(16, json.length, Endian.little);
+        refused(Uint8List.fromList([...header, ...json]), '过大');
+      }
+    });
+
     test('from a newer version of the app', () {
       refused(Uint8List.fromList(good)..[12] = 2, '更新版本的音迹');
     });
@@ -292,6 +304,16 @@ void main() {
       // ...until something in it is not.
       refused(package(song, files(reference: utf8.encode('{"lines": 3}'))), '读不出来');
       refused(package(song, files(pitch: [1, 2, 3, 4, 5, 6, 7, 8])), '读不出来');
+      final track = parts['pitch']!;
+      refused(package(song, files(pitch: track.sublist(0, track.length - 4))), '读不出来');
+      for (final interval in [0.0, double.nan, double.infinity]) {
+        final bad = Uint8List.fromList(track);
+        ByteData.sublistView(bad).setFloat64(8, interval, Endian.little);
+        refused(package(song, files(pitch: bad)), '读不出来');
+      }
+      final unknown = Uint8List.fromList(track);
+      ByteData.sublistView(unknown).setUint32(4, 3, Endian.little);
+      refused(package(song, files(pitch: unknown)), '读不出来');
       refused(package(song, files(vocals: false)), '读不出来');
       refused(package({...song, 'duration': 0}, files()), '读不出来');
       refused(package(song, [...files(), ('vocals', 'vocals.wav', parts['vocals']!)]), '读不出来');
