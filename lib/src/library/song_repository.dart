@@ -30,6 +30,36 @@ class SongRepository {
   static const referenceFile = 'reference.json';
   static const pitchFile = 'pitch.bin';
   static const historyFile = 'history.json';
+  static const _practiceJournal = 'practice.pending.json';
+  static final _songOperations = <String, Future<void>>{};
+
+  // Queue readers and writers for a song, including a retry after a failed
+  // write. Other songs can still load and save independently.
+  Future<T> _withSong<T>(String id, Future<T> Function() operation, {bool recover = true}) {
+    final key = dirFor(id).absolute.path;
+    final previous = _songOperations[key] ?? Future<void>.value();
+    final result = previous.then((_) async {
+      final journal = File(pathFor(id, _practiceJournal));
+      if (recover && journal.existsSync()) {
+        final pending = jsonDecode(await journal.readAsString()) as Map<String, dynamic>;
+        await _finishPractice(id, pending);
+      }
+      return operation();
+    });
+    final next = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    _songOperations[key] = next;
+    return result.whenComplete(() {
+      if (identical(_songOperations[key], next)) _songOperations.remove(key);
+    });
+  }
+
+  // Both values are absolute snapshots. Replaying after either rename is
+  // idempotent, including when the last step (deleting the journal) failed.
+  Future<void> _finishPractice(String id, Map<String, dynamic> pending) async {
+    await writeFileAtomic(pathFor(id, historyFile), jsonEncode(pending['history']));
+    await writeFileAtomic(pathFor(id, songFile), jsonEncode(pending['song']));
+    await File(pathFor(id, _practiceJournal)).delete();
+  }
 
   Directory dirFor(String id) => Directory('${root.path}/$id');
   String pathFor(String id, String file) => '${root.path}/$id/$file';
@@ -51,7 +81,7 @@ class SongRepository {
       final f = File('${e.path}/$songFile');
       if (!f.existsSync()) continue;
       try {
-        out.add(SongMeta.fromJson(jsonDecode(await f.readAsString()) as Map<String, dynamic>));
+        out.add(await load(e.path.split(Platform.pathSeparator).last));
       } catch (_) {
         // Skip broken entries (e.g. an interrupted import).
       }
@@ -60,13 +90,15 @@ class SongRepository {
     return out;
   }
 
-  Future<SongMeta> load(String id) async => SongMeta.fromJson(
+  Future<SongMeta> load(String id) => _withSong(id, () => _readSong(id));
+
+  Future<SongMeta> _readSong(String id) async => SongMeta.fromJson(
       jsonDecode(await File(pathFor(id, songFile)).readAsString()) as Map<String, dynamic>);
 
-  Future<void> save(SongMeta meta) async {
+  Future<void> save(SongMeta meta) => _withSong(meta.id, () async {
     dirFor(meta.id).createSync(recursive: true);
     await writeFileAtomic(pathFor(meta.id, songFile), jsonEncode(meta.toJson()));
-  }
+  });
 
   Future<SongReference> loadReference(String id) async => SongReference.fromJson(
       jsonDecode(await File(pathFor(id, referenceFile)).readAsString()) as Map<String, dynamic>);
@@ -100,7 +132,9 @@ class SongRepository {
   Future<PitchTrack> loadPitchTrack(String id) async =>
       decodePitchTrack(await File(pathFor(id, pitchFile)).readAsBytes());
 
-  Future<List<PracticeRecord>> loadHistory(String id) async {
+  Future<List<PracticeRecord>> loadHistory(String id) => _withSong(id, () => _readHistory(id));
+
+  Future<List<PracticeRecord>> _readHistory(String id) async {
     final f = File(pathFor(id, historyFile));
     if (!f.existsSync()) return [];
     final list = jsonDecode(await f.readAsString()) as List;
@@ -139,8 +173,11 @@ class SongRepository {
   ///
   /// The best score is the best run through the whole song
   /// ([PracticeRecord.wholeSong]) in the history.
-  Future<SongMeta> savePractice(String id, List<PracticeRecord> records, {int keep = 200}) async {
-    final history = await loadHistory(id);
+  Future<SongMeta> savePractice(String id, List<PracticeRecord> records, {int keep = 200}) =>
+      _withSong(id, () => _savePractice(id, records, keep));
+
+  Future<SongMeta> _savePractice(String id, List<PracticeRecord> records, int keep) async {
+    final history = await _readHistory(id);
     var added = 0;
     for (final record in records) {
       final i = history.indexWhere((r) => r.key == record.key);
@@ -155,8 +192,7 @@ class SongRepository {
     // Once the history was cut, an older and better run may be gone from it.
     final complete = history.length < keep;
     if (history.length > keep) history.removeRange(0, history.length - keep);
-    await _writeHistory(id, history);
-    final meta = await load(id);
+    final meta = await _readSong(id);
     meta.practiceCount += added;
     for (final record in records) {
       final last = meta.lastPracticedAt;
@@ -170,7 +206,9 @@ class SongRepository {
     final best = whole.isEmpty ? null : whole.reduce(math.max);
     final before = meta.bestScore;
     meta.bestScore = complete || before == null || (best != null && best > before) ? best : before;
-    await save(meta);
+    final pending = {'history': [for (final r in history) r.toJson()], 'song': meta.toJson()};
+    await writeFileAtomic(pathFor(id, _practiceJournal), jsonEncode(pending));
+    await _finishPractice(id, pending);
     return meta;
   }
 
@@ -211,7 +249,10 @@ class SongRepository {
   /// practice history to where their lines are now (see
   /// [PracticeRecord.remapped]). [old] is the reference the history was
   /// recorded against, [lineMap] where each of its lines went.
-  Future<void> remapHistory(String id, SongReference old, Map<int, int> lineMap) async {
+  Future<void> remapHistory(String id, SongReference old, Map<int, int> lineMap) =>
+      _withSong(id, () => _remapHistory(id, old, lineMap));
+
+  Future<void> _remapHistory(String id, SongReference old, Map<int, int> lineMap) async {
     final f = File(pathFor(id, historyFile));
     if (!f.existsSync()) return;
     final list = jsonDecode(await f.readAsString()) as List;
@@ -226,11 +267,11 @@ class SongRepository {
     await _writeHistory(id, [for (final r in history) ?r.remapped(lineMap)]);
   }
 
-  Future<void> delete(String id) async {
+  Future<void> delete(String id) => _withSong(id, () async {
     _melodyCache.remove(id);
     final d = dirFor(id);
     if (d.existsSync()) await d.delete(recursive: true);
-  }
+  }, recover: false);
 }
 
 const _magic = 0x54505459; // "YTPT"
