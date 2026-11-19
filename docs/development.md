@@ -37,7 +37,7 @@ test/                       单元测试、对照测试、端到端 UI 测试
   `accompaniment.m4a`（伴奏）、`history.json`（练习记录）、
   `takes/`（我的录音：每段一个 m4a 和一个记录混音设置的 json）。
   以前的版本导入的歌还有一份 `original.*`（原文件的副本），现在不再保存，也没有地方用到它。
-- 导出的成品在 App 的 Documents 目录，“文件”App 里显示为 我的 iPhone › YinTrace。
+- 导出的成品在 App 的 Documents 目录，“文件”App 里显示为 我的 iPhone › 音迹。
 - 发给别人的歌曲文件（`.yintrace`，`lib/src/library/song_package.dart`）也导出到 Documents 目录。
   格式：12 字节 `YinTraceSong`、容器版本（u32 小端，现在是 1）、清单长度（u32 小端）、清单（UTF-8 JSON：
   歌名、歌手、时长、歌词，以及每个文件的角色、大小和 SHA-256），后面依次是各个文件：

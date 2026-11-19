@@ -437,7 +437,7 @@ class _ImportPageState extends State<ImportPage> {
             : SafeArea(
                 minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
                 child: _source == _ImportSource.songFile
-                    ? FilledButton(onPressed: _importSongFile, child: const Text('选择 YinTrace 文件'))
+                    ? FilledButton(onPressed: _importSongFile, child: const Text('选择音迹文件'))
                     : Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -572,9 +572,9 @@ class _ImportPageState extends State<ImportPage> {
         child: Icon(Icons.inbox_rounded, size: 32, color: p.inkSoft),
       ),
       const SizedBox(height: 12),
-      Text('导入 YinTrace 歌曲文件', style: context.type.titleLarge),
+      Text('导入音迹歌曲文件', style: context.type.titleLarge),
       const SizedBox(height: 8),
-      Text('在 YinTrace 的歌曲页菜单里点“发给别人”，即可导出 .yintrace 文件，用于分享或再次导入。', style: context.type.bodyMedium),
+      Text('在音迹的歌曲页菜单里点“发给别人”，即可导出 .yintrace 文件，用于分享或再次导入。', style: context.type.bodyMedium),
       const SizedBox(height: 8),
       Text(
         '文件中已保存人声、歌词和音高图等练习内容，无需下载模型或重新分离，导入后即可练习。',
@@ -760,7 +760,7 @@ class _ImportPageState extends State<ImportPage> {
               ),
             ),
           const Spacer(),
-          Text('请让 YinTrace 保持在前台，屏幕会保持常亮。切到别的 App 可能会中断处理。', style: context.type.bodySmall),
+          Text('请让音迹保持在前台，屏幕会保持常亮。切到别的 App 可能会中断处理。', style: context.type.bodySmall),
           const SizedBox(height: 16),
           OutlinedButton(
             onPressed: _cancel,

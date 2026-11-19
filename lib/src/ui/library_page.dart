@@ -208,7 +208,7 @@ class _EmptyLibrary extends StatelessWidget {
         children: [
           Text('从第一首歌开始', style: context.type.headlineMedium),
           const SizedBox(height: 12),
-          Text('YinTrace 把原唱每个字的音高画出来，你唱的时候就能看到自己哪里高了、哪里低了。',
+          Text('音迹把原唱每个字的音高画出来，你唱的时候就能看到自己哪里高了、哪里低了。',
               style: context.type.bodyMedium),
           const SizedBox(height: 22),
           step(1, '准备一首歌', '歌曲的音频文件（mp3、m4a、flac、wav），和它带时间的歌词（.lrc，或复制下来的 [00:12.40] 这样的歌词）。'),

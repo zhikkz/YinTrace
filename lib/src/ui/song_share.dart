@@ -89,7 +89,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
             Text('把这首歌发给别人', style: context.type.headlineSmall),
             const SizedBox(height: 8),
             Text(
-              '导出成一个文件，发给也在用 YinTrace 的人。对方在“导入歌曲”里选这个文件，不用再分离人声就能练。',
+              '导出成一个文件，发给也在用音迹的人。对方在“导入歌曲”里选这个文件，不用再分离人声就能练。',
               style: context.type.bodyMedium,
             ),
             const SizedBox(height: 8),
@@ -117,7 +117,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
               Text('已导出 ${exported.split('/').last}', style: context.type.bodyMedium),
               const SizedBox(height: 4),
               Text(
-                _notice ?? '在「文件」App 的 我的 iPhone › YinTrace 里也能找到。',
+                _notice ?? '在「文件」App 的 我的 iPhone › 音迹里也能找到。',
                 style: context.type.bodySmall,
               ),
               const SizedBox(height: 14),

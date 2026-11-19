@@ -28,7 +28,7 @@ class AboutPage extends StatelessWidget {
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
             sliver: SliverList.list(children: [
-              Text('YinTrace $appVersion', style: context.type.bodyLarge?.copyWith(fontFeatures: tabular)),
+              Text('音迹 $appVersion', style: context.type.bodyLarge?.copyWith(fontFeatures: tabular)),
               const SizedBox(height: 4),
               Text('分离人声，画出每个字的音高，唱的时候看见自己哪里高了、哪里低了。所有处理都在这台设备上完成，'
                   '你的歌和录音不会上传。', style: context.type.bodyMedium),
@@ -37,7 +37,7 @@ class AboutPage extends StatelessWidget {
               const SizedBox(height: 14),
               credit('分离模型',
                   'UVR-MDX-NET-Voc_FT 和 6_HP-Karaoke-UVR，由 Ultimate Vocal Remover 的开发者 Anjok07 和 aufr33 训练并公开发布。'
-                      'YinTrace 不附带模型，第一次导入整首歌时下载它们的原版文件。'),
+                      '音迹不附带模型，第一次导入整首歌时下载它们的原版文件。'),
               credit('分离算法',
                   '移植自 Ultimate Vocal Remover GUI（MIT 许可）。其中 VR 架构来自 tsurumeso 的 vocal-remover，'
                       'MDX-Net 来自 Kuielab 和 Woosung Choi。'),
@@ -50,7 +50,7 @@ class AboutPage extends StatelessWidget {
               const SizedBox(height: 10),
               Text('许可', style: context.type.titleLarge),
               const SizedBox(height: 14),
-              Text('YinTrace 是自由软件，按 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）发布，不提供任何担保。'
+              Text('音迹是自由软件，按 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）发布，不提供任何担保。'
                   '你可以使用、修改和再分发它；分发它或用修改版对外提供网络服务时，要以同样的许可提供源代码。',
                   style: context.type.bodyMedium),
               const SizedBox(height: 10),
@@ -60,7 +60,7 @@ class AboutPage extends StatelessWidget {
               OutlinedButton(
                 onPressed: () => showLicensePage(
                   context: context,
-                  applicationName: 'YinTrace',
+                  applicationName: '音迹',
                   applicationVersion: appVersion,
                 ),
                 child: Row(children: [
