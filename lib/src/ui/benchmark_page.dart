@@ -222,7 +222,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
         Text('测试前', style: context.type.titleMedium),
         const SizedBox(height: 10),
         bullet('全程大约 5 到 10 分钟。请接上电源，手机发热时系统会降速。'),
-        bullet('让 YinTrace 一直在前台，不要锁屏或切到别的 App（屏幕会保持常亮）。'),
+        bullet('让音迹一直在前台，不要锁屏或切到别的 App（屏幕会保持常亮）。'),
         bullet('这项测试需要两个分离模型和 HuBERTFA（共约 451 MB），缺少时会先下载，最好连着 Wi‑Fi。'),
         bullet('中途被打断也没关系：已经测完的项目会保留，回来可以接着测。'),
         const SizedBox(height: 22),
@@ -310,7 +310,7 @@ class _BenchmarkPageState extends State<BenchmarkPage> with WidgetsBindingObserv
             ),
           ),
           const Spacer(),
-          Text('请让 YinTrace 保持在前台，屏幕会保持常亮。测试会让手机发热，最好接上电源。', style: context.type.bodySmall),
+          Text('请让音迹保持在前台，屏幕会保持常亮。测试会让手机发热，最好接上电源。', style: context.type.bodySmall),
           const SizedBox(height: 16),
           OutlinedButton(
             onPressed: _stopping ? null : _stop,

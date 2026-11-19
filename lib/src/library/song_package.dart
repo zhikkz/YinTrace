@@ -144,11 +144,11 @@ SongMeta importSongPackageSync(String songsRoot, String packagePath) {
     input = File(packagePath).openSync();
     final head = input.readSync(_headerBytes);
     if (head.length < _headerBytes || ascii.decode(head.sublist(0, _magic.length), allowInvalid: true) != _magic) {
-      throw SongPackageException('这不是 YinTrace 导出的歌曲文件');
+      throw SongPackageException('这不是音迹导出的歌曲文件');
     }
     final numbers = ByteData.sublistView(head);
     if (numbers.getUint32(12, Endian.little) > _version) {
-      throw SongPackageException('这个歌曲文件是更新版本的 YinTrace 导出的，请先更新 App');
+      throw SongPackageException('这个歌曲文件是更新版本的音迹导出的，请先更新 App');
     }
     final manifestBytes = numbers.getUint32(16, Endian.little);
     if (manifestBytes > _maxManifestBytes) throw const FormatException('manifest too long');

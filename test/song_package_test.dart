@@ -247,9 +247,9 @@ void main() {
     }
 
     test('some other file', () {
-      refused(File('${tmp.path}/vocal.wav').readAsBytesSync(), '不是 YinTrace 导出的歌曲文件');
-      refused([], '不是 YinTrace 导出的歌曲文件');
-      refused(utf8.encode('YinTraceSong'), '不是 YinTrace 导出的歌曲文件');
+      refused(File('${tmp.path}/vocal.wav').readAsBytesSync(), '不是音迹导出的歌曲文件');
+      refused([], '不是音迹导出的歌曲文件');
+      refused(utf8.encode('YinTraceSong'), '不是音迹导出的歌曲文件');
     });
 
     test('cut off on the way', () {
@@ -268,7 +268,7 @@ void main() {
     });
 
     test('from a newer version of the app', () {
-      refused(Uint8List.fromList(good)..[12] = 2, '更新版本的 YinTrace');
+      refused(Uint8List.fromList(good)..[12] = 2, '更新版本的音迹');
     });
 
     test('files the song page could not read', () {

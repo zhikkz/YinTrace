@@ -490,7 +490,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
               children: [
                 Text('已导出 ${_exported!.split('/').last}', style: context.type.bodyMedium),
                 const SizedBox(height: 4),
-                Text('在「文件」App 的 我的 iPhone › YinTrace 里也能找到。', style: context.type.bodySmall),
+                Text('在「文件」App 的 我的 iPhone › 音迹里也能找到。', style: context.type.bodySmall),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(
