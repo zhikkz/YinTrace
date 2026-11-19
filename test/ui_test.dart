@@ -28,6 +28,7 @@ import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/models/model_manager.dart';
 import 'package:yintrace/src/models/model_catalog.dart';
 import 'package:yintrace/src/ui/model_setup.dart';
+import 'package:yintrace/src/practice/live_pitch.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
 import 'package:yintrace/src/practice/scoring.dart';
 import 'package:yintrace/src/practice/segment_player.dart';
@@ -946,6 +947,60 @@ void main() {
   }
 
   final lib = Platform.environment['YINTRACE_AUDIO_LIB'];
+  testWidgets('scores hide line playback when the scored line has no recording', (tester) async {
+    phone(tester);
+    final reference = SongReference(
+      duration: 10,
+      lines: [
+        RefLine(
+          index: 0,
+          text: '中',
+          lrcStart: 5,
+          tokens: [RefToken(text: '中', start: 5, end: 6, notes: [RefNote(start: 5, end: 6, midi: 60)])],
+        ),
+      ],
+    );
+    late PracticeSession session;
+    await tester.pumpWidget(
+      host(
+        services,
+        PracticePage(
+          meta: song,
+          reference: reference,
+          sessionFactory: (_) => session = PracticeSession(
+            meta: song,
+            reference: reference,
+            repository: services.songs,
+            settings: AppSettings(null),
+            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+            decodeInBackground: false,
+          ),
+        ),
+      ),
+    );
+    await settleIo(tester);
+
+    final take = session.take!;
+    final clip = Float32List(256)..fillRange(0, 256, 0.25);
+    take.addAudio(clip, sr, 0);
+    take.addAudio(clip, 9 * sr, 0);
+    // Mark the line as attempted without adding PCM or a sung run to history.
+    for (var i = 500; i < 600; i++) {
+      final t = i / 100;
+      session.scorer.add(LivePitch(songTime: t, clockTime: t, midi: 0, levelDb: -100, playing: true, aperiodicity: 1));
+    }
+
+    await openScores(tester);
+    expect(find.text('回听这一遍'), findsOneWidget);
+    await tester.scrollUntilVisible(find.byTooltip('听原唱这一句'), 160);
+    expect(find.byTooltip('回听这一句'), findsNothing);
+
+    take.addAudio(clip, 4 * sr, 0); // playback lead-in, outside this line's recording span
+    expect(session.canListenBack(line: 0), isFalse);
+    take.addAudio(Float32List(256), 5 * sr, 0);
+    expect(session.canListenBack(line: 0), isTrue);
+  }, skip: lib == null);
+
   testWidgets('practice page scores a singer through the native engine', (tester) async {
     phone(tester);
     final ref = await tester.runAsync(() => services.songs.loadReference(song.id));

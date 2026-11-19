@@ -148,7 +148,7 @@ class PracticeSession extends ChangeNotifier {
     final t = take;
     if (t == null || t.isEmpty) return false;
     if (line == null) return true;
-    final (a, b) = _loopRange(line);
+    final (a, b) = lineSpan(line);
     return t.covers(a, b);
   }
 
