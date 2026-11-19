@@ -168,10 +168,18 @@ void main() {
     test('agreeing with the CPU: Core ML separates the song, checked once', () async {
       final marker = '${tmp.path}/coreml-trial';
       var markerWhileLoading = false;
-      final loader = Loader(onCoreMLLoad: () => markerWhileLoading = File(marker).existsSync());
+      var markerDuringFirstRun = false;
+      final loader = Loader(
+        onCoreMLLoad: () => markerWhileLoading = File(marker).existsSync(),
+        coreML: (input, run) {
+          if (run == 0) markerDuringFirstRun = File(marker).existsSync();
+          return same(input, run);
+        },
+      );
       final meta = await importWith(loader, marker: marker);
       expect(loader.calls, ['mdx coreml', 'mdx', 'vr'], reason: 'one CPU model only for the check');
       expect(markerWhileLoading, isTrue);
+      expect(markerDuringFirstRun, isTrue);
       expect(File(marker).existsSync(), isFalse);
       expect(meta.modelInfo['mdxRuntime'], 'Core ML');
       expect(meta.modelInfo[ImportPipeline.coreMLInfo], 'checked 300.0 dB');
@@ -247,6 +255,29 @@ void main() {
         throwsA(isA<SeparationCancelled>()),
       );
       expect(File(marker).existsSync(), isFalse);
+    });
+
+    test('cancelling before inference leaves no crash marker on an idle shared session', () async {
+      final marker = File('${tmp.path}/coreml-trial');
+      final pool = ImportModelPool();
+      addTearDown(pool.close);
+      var loaded = false;
+      final loader = Loader(onCoreMLLoad: () {
+        expect(marker.existsSync(), isTrue);
+        loaded = true;
+      });
+      final pipeline = ImportPipeline(
+        audio: const WavAudioBackend(),
+        repository: SongRepository(Directory('${tmp.path}/songs')),
+        loadModel: loader.call,
+        sharedModels: pool,
+      );
+      await expectLater(
+        importWith(loader, marker: marker.path, pipeline: pipeline, isCancelled: () => loaded),
+        throwsA(isA<SeparationCancelled>()),
+      );
+      expect(loader.vocalCoreML?.closed, isFalse);
+      expect(marker.existsSync(), isFalse);
     });
 
     test('the request carries the Core ML choice to the import worker', () {
