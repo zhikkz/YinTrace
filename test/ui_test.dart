@@ -724,6 +724,18 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('the share preview lists exactly the audio included for each song format', (tester) async {
+    for (final (acc, original, label) in [
+      (null, null, '人声'),
+      (null, 'original.mp3', '人声、最初导入的原始音频'),
+      ('backing.m4a', 'original.mp3', '人声、伴奏'),
+    ]) {
+      final meta = SongMeta.fromJson({...song.toJson(), 'accompanimentFile': acc, 'originalFile': original});
+      await tester.pumpWidget(host(services, Scaffold(body: SongShareSheet(song: meta))));
+      expect(find.textContaining('文件里有$label、歌词'), findsOneWidget);
+    }
+  });
+
   testWidgets('a song goes to someone else as one file, and comes into a library from it', (tester) async {
     phone(tester);
     // The song page offers it.

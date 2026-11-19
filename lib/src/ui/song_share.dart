@@ -79,6 +79,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
   Widget build(BuildContext context) {
     final p = context.yt;
     final exported = _exported;
+    final audio = songPackageAudioFiles(widget.song).map((file) => file.$1.label).join('、');
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
@@ -94,7 +95,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
             ),
             const SizedBox(height: 8),
             Text(
-              '文件里有${widget.song.accompanimentFile == null ? '人声' : '人声、伴奏'}、歌词，以及你校正过的位置和音高；'
+              '文件里有$audio、歌词，以及你校正过的位置和音高；'
               '不包含你的练习成绩和录音。',
               style: context.type.bodySmall,
             ),

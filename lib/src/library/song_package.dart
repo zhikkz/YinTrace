@@ -55,6 +55,25 @@ String songPackageName(SongMeta meta) {
   return '${title.isEmpty ? '未命名' : title}${artist.isEmpty ? '' : ' - $artist'}.$songPackageExtension';
 }
 
+enum SongPackageAudioRole {
+  vocals('人声'),
+  accompaniment('伴奏'),
+  original('最初导入的原始音频');
+
+  const SongPackageAudioRole(this.label);
+  final String label;
+}
+
+/// Audio included in both the package manifest and its share preview.
+/// Early songs play their original source when they have no accompaniment.
+List<(SongPackageAudioRole, String)> songPackageAudioFiles(SongMeta meta) => [
+  (SongPackageAudioRole.vocals, meta.vocalsFile),
+  if (meta.accompanimentFile case final name?)
+    (SongPackageAudioRole.accompaniment, name)
+  else if (meta.originalFile case final name?)
+    (SongPackageAudioRole.original, name),
+];
+
 /// Top level, so the isolates' closures capture only these arguments.
 Future<void> exportSongPackageInBackground(String songsRoot, String id, String outputPath) =>
     Isolate.run(() => exportSongPackageSync(songsRoot, id, outputPath));
@@ -74,13 +93,7 @@ void exportSongPackageSync(String songsRoot, String id, String outputPath) {
     final parts = [
       ('reference', SongRepository.referenceFile),
       ('pitch', SongRepository.pitchFile),
-      ('vocals', meta.vocalsFile),
-      if (meta.accompanimentFile case final name?)
-        ('accompaniment', name)
-      // Songs from early versions kept the imported file; it is what plays
-      // where there is no accompaniment, and is not used otherwise.
-      else if (meta.originalFile case final name?)
-        ('original', name),
+      for (final (role, name) in songPackageAudioFiles(meta)) (role.name, name),
     ];
     final files = <Map<String, dynamic>>[];
     for (final (role, name) in parts) {
