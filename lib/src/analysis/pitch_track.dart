@@ -316,7 +316,9 @@ Future<PitchTrack> analyzePitchWithModel(Float32List mono, int sampleRate, Swift
 /// worse. [scores] holds [SwiftF0.bins] logits per frame (see
 /// [SwiftF0Frames.bins]); [confidence] weighs each frame: unsure frames
 /// say little about the pitch and hold it back little, so after a pause
-/// the melody starts wherever the next phrase does.
+/// the melody starts wherever the next phrase does. A stretch where the
+/// path went with another voice an octave away is then moved back
+/// ([_foldOctaves]).
 ///
 /// Within the chosen bin the pitch is the model's own estimate: the mean
 /// in log frequency of the bin and its two neighbours, weighted by their
@@ -351,6 +353,7 @@ Float32List decodeMelody(Float32List scores, Float32List confidence) {
   const jumpCost = 60.0;
 
   final emission = Float64List(width);
+  final norms = Float64List(n);
   void emissions(int t) {
     final row = t * bins + lo;
     var peak = double.negativeInfinity;
@@ -361,7 +364,7 @@ Float32List decodeMelody(Float32List scores, Float32List confidence) {
     for (var b = 0; b < width; b++) {
       sum += math.exp(scores[row + b] - peak);
     }
-    final norm = peak + math.log(sum);
+    final norm = norms[t] = peak + math.log(sum);
     final w = confidence[t].clamp(0.05, 1.0);
     for (var b = 0; b < width; b++) {
       emission[b] = w * math.max(-30.0, scores[row + b] - norm);
@@ -403,11 +406,22 @@ Float32List decodeMelody(Float32List scores, Float32List confidence) {
     prev = next;
     next = swap;
   }
+  final path = Int16List(n);
   var b = 0;
   for (var k = 1; k < width; k++) {
     if (prev[k] > prev[b]) b = k;
   }
   for (var t = n - 1; t >= 0; t--) {
+    path[t] = b;
+    if (t > 0) {
+      final from = back[t * width + b];
+      b = from == jumped ? jumpFrom[t] : from;
+    }
+  }
+  _foldOctaves(path, scores, norms, confidence, lo: lo, width: width);
+  _skipSteppingStones(path, scores, norms, confidence, lo: lo);
+  for (var t = 0; t < n; t++) {
+    final b = path[t];
     // The model's estimate within the bin: its softmax over the bin and
     // its neighbours, as the model computes its own pitch.
     final row = t * bins + lo;
@@ -422,12 +436,143 @@ Float32List decodeMelody(Float32List scores, Float32List confidence) {
       acc += e * logHz[k];
     }
     out[t] = math.exp(acc / sum);
-    if (t > 0) {
-      final from = back[t * width + b];
-      b = from == jumped ? jumpFrom[t] : from;
-    }
   }
   return out;
+}
+
+/// Frames where [path] goes through a pitch the model did not hear, on its
+/// way from one voice or note to another in a few frames (it moves a few
+/// bins a frame rather than jump): each takes the bin of the nearer frame
+/// on either side that the model did hear. Runs of up to 8 frames (32 ms)
+/// in voiced stretches; longer ones are left.
+void _skipSteppingStones(Int16List path, Float32List scores, Float64List norms, Float32List confidence,
+    {required int lo}) {
+  const bins = SwiftF0.bins;
+  const unheard = -6.0;
+  const longest = 8;
+  final n = path.length;
+  bool stone(int t) => confidence[t] >= 0.3 && scores[t * bins + lo + path[t]] - norms[t] < unheard;
+  var t = 0;
+  while (t < n) {
+    if (!stone(t)) {
+      t++;
+      continue;
+    }
+    var e = t;
+    while (e < n && stone(e)) {
+      e++;
+    }
+    if (t > 0 && e < n && e - t <= longest) {
+      final left = path[t - 1], right = path[e];
+      for (var k = t; k < e; k++) {
+        path[k] = k - t < e - k ? left : right;
+      }
+    }
+    t = e;
+  }
+}
+
+/// Moves stretches of [path] (bins from `lo`, `width` of them) to the
+/// octave above or below where that keeps the melody from jumping by an
+/// octave and back, and the model heard that octave too.
+///
+/// The path takes each step on its own: where a second voice an octave
+/// below takes over for a second (a harmony the separation left in), the
+/// path follows it down in a few small steps, each cheap, and comes back
+/// when it ends. Here the choice is made for 32 ms blocks, between the
+/// path and its octave above and below: a block's score is how well the
+/// model's scores support it, and a jump of more than 8 semitones from
+/// one block to the next costs as much as 200 frames of clearly worse
+/// scores (less where the model is unsure: at a breath, a consonant, a
+/// pause). A real leap of an octave stays: the model did not hear the
+/// other octave there.
+void _foldOctaves(Int16List path, Float32List scores, Float64List norms, Float32List confidence,
+    {required int lo, required int width}) {
+  const bins = SwiftF0.bins;
+  const block = 8;
+  const leapBins = 12;
+  const leapCost = 200.0;
+  final n = path.length;
+  if (n < 2 * block) return;
+  double logp(int t, int b) => math.max(-30.0, scores[t * bins + lo + b] - norms[t]);
+  // The octave below and above each frame's bin: the best of the bins
+  // 16–18 away (an octave is 17.15 bins), -1 where none is in range.
+  final alternative = [Int16List(n), path, Int16List(n)];
+  for (var t = 0; t < n; t++) {
+    for (final (k, sign) in [(0, -1), (2, 1)]) {
+      var best = -1;
+      for (var d = 16; d <= 18; d++) {
+        final c = path[t] + sign * d;
+        if (c >= 0 && c < width && (best < 0 || logp(t, c) > logp(t, best))) best = c;
+      }
+      alternative[k][t] = best;
+    }
+  }
+  final blocks = (n + block - 1) ~/ block;
+  final score = Float64List(blocks * 3), level = Float64List(blocks * 3), sure = Float64List(blocks);
+  final values = <double>[];
+  for (var j = 0; j < blocks; j++) {
+    final a = j * block, e = math.min(n, a + block);
+    var least = 1.0;
+    for (var t = a; t < e; t++) {
+      least = math.min(least, confidence[t]);
+    }
+    sure[j] = least.clamp(0.1, 1.0);
+    for (var o = 0; o < 3; o++) {
+      var sum = 0.0;
+      values.clear();
+      for (var t = a; t < e; t++) {
+        final b = alternative[o][t];
+        if (b < 0) {
+          sum = double.negativeInfinity;
+          break;
+        }
+        sum += confidence[t].clamp(0.05, 1.0) * logp(t, b);
+        values.add(b.toDouble());
+      }
+      score[j * 3 + o] = sum;
+      level[j * 3 + o] = sum.isFinite ? median(values) : -1000;
+    }
+  }
+  final back = Uint8List(blocks * 3);
+  var prev = Float64List(3), next = Float64List(3);
+  for (var o = 0; o < 3; o++) {
+    prev[o] = score[o];
+  }
+  for (var j = 1; j < blocks; j++) {
+    final leap = math.min(sure[j], sure[j - 1]) * leapCost;
+    for (var o = 0; o < 3; o++) {
+      var best = double.negativeInfinity, from = 1;
+      for (var p = 0; p < 3; p++) {
+        final v = prev[p] - ((level[j * 3 + o] - level[(j - 1) * 3 + p]).abs() >= leapBins ? leap : 0);
+        if (v > best) {
+          best = v;
+          from = p;
+        }
+      }
+      next[o] = best + score[j * 3 + o];
+      back[j * 3 + o] = from;
+    }
+    final swap = prev;
+    prev = next;
+    next = swap;
+  }
+  var o = 0;
+  for (var k = 1; k < 3; k++) {
+    if (prev[k] > prev[o]) o = k;
+  }
+  for (var j = blocks - 1; j >= 0; j--) {
+    if (o != 1) {
+      // Only the frames on the other voice: in the block where the path
+      // comes back by itself, the frames already back stay.
+      final target = level[j * 3 + o];
+      for (var t = j * block; t < math.min(n, (j + 1) * block); t++) {
+        final moved = alternative[o][t];
+        if ((moved - target).abs() < (path[t] - target).abs()) path[t] = moved;
+      }
+    }
+    o = back[j * 3 + o];
+  }
 }
 
 /// Voiced stretches of the model's track: a stretch starts where the
