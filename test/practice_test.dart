@@ -193,6 +193,42 @@ void main() {
       at: DateTime(2026, 1, day), score: 80, lineScores: {0: 80}, coverage: 1,
     );
 
+    test('saving a stale song snapshot keeps the latest practice statistics', () async {
+      final stale = await repo.load(id);
+      final record = run(1);
+      expect((await repo.addPractice(id, record)).practiceCount, 10);
+      stale.lyrics = lyrics;
+      stale.modelInfo['alignment'] = 'HuBERTFA';
+      await repo.save(stale);
+
+      final saved = await repo.load(id);
+      expect(saved.lyrics, lyrics);
+      expect(saved.modelInfo['alignment'], 'HuBERTFA');
+      expect((await repo.loadHistory(id)).single.key, record.key);
+      expect(
+        (saved.practiceCount, saved.bestScore, saved.lastScore, saved.lastPracticedAt),
+        (10, record.score, record.score, record.at),
+      );
+    });
+
+    test('metadata and practice saves work in order', () async {
+      final edited = await repo.load(id);
+      edited.lyrics = lyrics;
+      await repo.save(edited);
+      final record = run(1);
+      final updated = await repo.addPractice(id, record);
+      updated.title = '新标题';
+      await repo.save(updated);
+
+      final saved = await repo.load(id);
+      expect(saved.lyrics, lyrics);
+      expect(saved.title, '新标题');
+      expect(
+        (saved.practiceCount, saved.bestScore, saved.lastScore, saved.lastPracticedAt),
+        (10, record.score, record.score, record.at),
+      );
+    });
+
     test('opening the library rolls forward an interrupted save and a retry counts only once', () async {
       final record = run(1);
       final blocked = Directory('${repo.pathFor(id, SongRepository.songFile)}.tmp')..createSync();
@@ -207,6 +243,29 @@ void main() {
       final song = await reopened.load(id);
       expect(song.lastPracticedAt, record.at);
       expect(song.bestScore, record.score);
+    });
+
+    test('saving metadata rolls forward a pending practice and keeps the recovered statistics', () async {
+      final stale = await repo.load(id);
+      final record = run(1);
+      final blocked = Directory('${repo.pathFor(id, SongRepository.songFile)}.tmp')..createSync();
+      await expectLater(repo.addPractice(id, record), throwsA(isA<FileSystemException>()));
+      final journal = File(repo.pathFor(id, 'practice.pending.json'));
+      expect(journal.existsSync(), isTrue);
+      blocked.deleteSync();
+
+      final reopened = SongRepository(tmp);
+      stale.lyrics = lyrics;
+      await reopened.save(stale);
+
+      expect(journal.existsSync(), isFalse);
+      final saved = await reopened.load(id);
+      expect(saved.lyrics, lyrics);
+      expect((await reopened.loadHistory(id)).single.key, record.key);
+      expect(
+        (saved.practiceCount, saved.bestScore, saved.lastScore, saved.lastPracticedAt),
+        (10, record.score, record.score, record.at),
+      );
     });
 
     test('overlapping saves serialize read-modify-write even with a trimmed history', () async {
