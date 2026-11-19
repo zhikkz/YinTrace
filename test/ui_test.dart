@@ -29,6 +29,7 @@ import 'package:yintrace/src/models/model_manager.dart';
 import 'package:yintrace/src/models/model_catalog.dart';
 import 'package:yintrace/src/ui/model_setup.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
+import 'package:yintrace/src/practice/scoring.dart';
 import 'package:yintrace/src/practice/segment_player.dart';
 import 'package:yintrace/src/practice/take_recorder.dart';
 import 'package:yintrace/src/export/recordings.dart';
@@ -1044,6 +1045,28 @@ void main() {
     final graphFinder = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
     PitchGraphPainter graph() => tester.widget<CustomPaint>(graphFinder).painter! as PitchGraphPainter;
 
+    void expectMarkerAt(UserPoint point, String reason) {
+      expect(point.midi, greaterThan(0), reason: reason);
+      final g = graph();
+      final size = tester.getSize(graphFinder);
+      final x = g.gutter + (point.time - g.t0) / (g.t1 - g.t0) * (size.width - g.gutter);
+      final y = size.height - (point.midi - g.midiLo) / (g.midiHi - g.midiLo) * size.height;
+      expect(
+        graphFinder,
+        paints..something((method, args) => method == #drawCircle && args[0] == Offset(x, y) && args[1] == 4.5),
+        reason: reason,
+      );
+    }
+
+    void expectNoMarker(String reason) {
+      // The marker has a core and a halo. The smaller trace dots may remain.
+      expect(
+        graphFinder,
+        paints..everything((method, args) => method != #drawCircle || (args[1] != 4.5 && args[1] != 9)),
+        reason: reason,
+      );
+    }
+
     // A low voice in the lead-in must be visible alongside the upcoming
     // original melody, even outside the original singer's pitch range.
     final lowVoice = synthVoice([const Syl(0.1, 0.6, 48, unvoicedOnset: false)], 0.6);
@@ -1079,6 +1102,53 @@ void main() {
     await runUntil(7.9);
     expect(find.textContaining('记得带伞'), findsWidgets);
     await screenshot(tester, '3_practice');
+    final returnPosition = engine.positionSeconds;
+    session.listenBack();
+    Future<void> advanceReview(double seconds) async {
+      engine.render((seconds * sr).round());
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(session.listening, ListenKind.take);
+      expect(session.isPlaying, isTrue);
+    }
+
+    await advanceReview(0.35); // 0.35 s: the low voice recorded in the lead-in
+    final held = session.reviewPoint!;
+    expectMarkerAt(held, 'voiced take before pause');
+    await tester.tap(find.byIcon(Icons.pause_rounded));
+    await tester.pump();
+    expect(session.isPlaying, isFalse);
+    expect(session.reviewPoint?.time, held.time);
+    expectNoMarker('paused on a voiced take sample');
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    expect(session.isPlaying, isTrue);
+    expectMarkerAt(held, 'resuming at the same voiced sample');
+
+    await advanceReview(0.5); // 0.85 s: between the low voice and the first lyric
+    expect(session.reviewPoint?.midi, 0);
+    expectNoMarker('playing an unvoiced sample');
+    await advanceReview(0.5); // 1.35 s: inside the first sung lyric
+    final recovered = session.reviewPoint!;
+    expect(recovered.time, greaterThan(held.time));
+    expectMarkerAt(recovered, 'the first lyric after the gap');
+    session.seek(session.take!.endSeconds + 0.15); // still inside the review tail
+    await tester.pump();
+    expect(session.isPlaying, isTrue);
+    expect(session.reviewPoint, isNull);
+    expectNoMarker('playing beyond the last recorded sample');
+
+    await tester.tap(find.text('回到练习'));
+    await tester.pump();
+    expect(session.reviewing, isFalse);
+    expectNoMarker('back in practice before the singer resumes');
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    expect(session.isPlaying, isTrue);
+    await runUntil(8.33); // the next syllable after returning to practice
+    expect(graph().playbackPoint, isNull);
+    expect(session.points.last.time, greaterThan(returnPosition));
+    expectMarkerAt(session.points.last, 'normal practice marks the new microphone sample');
+
     await runUntil(9.9);
     final results = session.scorer.results();
     expect(results.every((r) => r.attempted), isTrue);
@@ -1122,19 +1192,8 @@ void main() {
     expect(session.scorer.overallScore(), scored);
     final reviewGraph = graph();
     final playedPoint = session.reviewPoint!;
-    expect(playedPoint.midi, greaterThan(0));
     expect(reviewGraph.user.any((p) => p.midi > 0 && p.time > playedPoint.time + 0.5 && p.time < reviewGraph.t1), isTrue);
-    final size = tester.getSize(graphFinder);
-    final plotWidth = size.width - reviewGraph.gutter;
-    final timeSpan = reviewGraph.t1 - reviewGraph.t0;
-    final midiSpan = reviewGraph.midiHi - reviewGraph.midiLo;
-    final x = reviewGraph.gutter + (playedPoint.time - reviewGraph.t0) / timeSpan * plotWidth;
-    final y = size.height - (playedPoint.midi - reviewGraph.midiLo) / midiSpan * size.height;
-    expect(
-      graphFinder,
-      paints..something((method, args) => method == #drawCircle && args[0] == Offset(x, y) && args[1] == 4.5),
-      reason: 'the playback dot marks the sample at the playhead even with later samples on screen',
-    );
+    expectMarkerAt(playedPoint, 'the playback dot marks the sample at the playhead even with later samples on screen');
     await screenshot(tester, '4b_listen_back');
     await tester.tap(find.text('回到练习'));
     await tester.pump();
