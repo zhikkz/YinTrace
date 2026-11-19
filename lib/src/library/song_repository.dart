@@ -92,8 +92,10 @@ class SongRepository {
 
   Future<SongMeta> load(String id) => _withSong(id, () => _readSong(id));
 
-  Future<SongMeta> _readSong(String id) async => SongMeta.fromJson(
-      jsonDecode(await File(pathFor(id, songFile)).readAsString()) as Map<String, dynamic>);
+  Future<Map<String, dynamic>> _readSongData(String id) async =>
+      jsonDecode(await File(pathFor(id, songFile)).readAsString()) as Map<String, dynamic>;
+
+  Future<SongMeta> _readSong(String id) async => SongMeta.fromJson(await _readSongData(id));
 
   /// Saves metadata and keeps the stored practice statistics of an existing song.
   Future<void> save(SongMeta meta) => _withSong(meta.id, () async {
@@ -108,6 +110,25 @@ class SongRepository {
       }
     }
     await writeFileAtomic(path, jsonEncode(data));
+  });
+
+  /// Changes the display title of a song that is already in the library.
+  Future<SongMeta> rename(String id, String title) => _withSong(id, () async {
+    final trimmed = title.trim();
+    if (trimmed.isEmpty) throw ArgumentError.value(title, 'title', 'must not be blank');
+    final data = await _readSongData(id);
+    data['title'] = trimmed;
+    final meta = SongMeta.fromJson(data);
+    await writeFileAtomic(pathFor(id, songFile), jsonEncode(data));
+    return meta;
+  });
+
+  /// Updates the metadata produced by re-aligning a song's lyrics.
+  Future<void> saveAlignmentMetadata(String id, String lyrics, Map<String, String> modelInfo) => _withSong(id, () async {
+    final data = await _readSongData(id);
+    data['lyrics'] = lyrics;
+    data['modelInfo'] = modelInfo;
+    await writeFileAtomic(pathFor(id, songFile), jsonEncode(data));
   });
 
   Future<SongReference> loadReference(String id) async => SongReference.fromJson(

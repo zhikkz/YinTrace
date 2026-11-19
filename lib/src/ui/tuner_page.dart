@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
 import '../app/screen_awake.dart';
 import '../app/services.dart';
+import '../app/settings.dart';
 import '../dsp/pitch.dart';
 import '../practice/live_pitch.dart';
 import '../practice/scoring.dart';
@@ -14,7 +17,9 @@ import 'widgets.dart';
 /// Free practice: a live pitch monitor. The trace is coloured by how far
 /// the voice is from the nearest semitone.
 class TunerPage extends StatefulWidget {
-  const TunerPage({super.key});
+  const TunerPage({super.key, this.engineFactory});
+
+  final PracticeEngine Function()? engineFactory;
 
   @override
   State<TunerPage> createState() => _TunerPageState();
@@ -23,6 +28,7 @@ class TunerPage extends StatefulWidget {
 class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   PracticeEngine? _engine;
   LivePitchTracker? _tracker;
+  late AppSettings _settings;
   late final Ticker _ticker;
   final _points = <UserPoint>[];
   LivePitch? _last;
@@ -31,6 +37,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
   double _lo = 52, _hi = 76;
   bool _paused = false;
   bool _starting = false;
+  final _monitor = ValueNotifier((available: false, enabled: false));
 
   /// Held while the microphone is listening: a long note is sung without
   /// touching the screen, and a locked phone stops the capture.
@@ -44,10 +51,15 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     WidgetsBinding.instance.addPostFrameCallback((_) => _start());
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _settings = AppScope.of(context).settings;
+  }
+
   Future<void> _start() async {
     if (_starting || !mounted) return;
     _starting = true;
-    final settings = AppScope.of(context).settings;
     try {
       final permission = await NativeAudio.requestMicPermission();
       if (!mounted) return;
@@ -55,17 +67,23 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
         setState(() => _error = '没有麦克风权限。到 系统设置 → 隐私与安全性 → 麦克风，打开音迹。');
         return;
       }
-      NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
-      final e = PracticeEngine.create(mode: EngineMode.capture);
+      NativeAudio.configureSession(record: true, measurement: _settings.measurementMode);
+      // The wired route is supported on iOS. Keep the capture-only device
+      // elsewhere so a playback device is not required for pitch tracking.
+      final e =
+          widget.engineFactory?.call() ??
+          PracticeEngine.create(mode: Platform.isIOS ? EngineMode.duplex : EngineMode.capture);
       _engine = e;
+      e.setMonitorWhileCapturing(true);
       _tracker = LivePitchTracker(
         sampleRate: e.sampleRate,
-        options: LivePitchOptions(gateDb: settings.micGateDb),
+        options: LivePitchOptions(gateDb: _settings.micGateDb),
       );
       if (!_paused) {
         e.start();
         _awake.hold();
       }
+      _applyMonitor();
       _ticker.start();
     } catch (err) {
       if (mounted) setState(() => _error = '麦克风打不开：$err');
@@ -74,7 +92,15 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     }
   }
 
-  void _pause() {
+  void _applyMonitor({bool? enabled}) {
+    final e = _engine;
+    final available = e?.monitorAvailable ?? false;
+    final on = available && (enabled ?? _monitor.value.enabled);
+    e?.setMonitorGain(on && !_paused ? _settings.monitorVolume : 0);
+    _monitor.value = (available: available, enabled: on);
+  }
+
+  void _pause({bool deviceLost = false}) {
     _awake.release();
     _engine?.stop();
     _engine?.flushCapture();
@@ -84,6 +110,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
         _paused = true;
         _last = null;
       });
+      _applyMonitor(enabled: deviceLost ? false : null);
     }
   }
 
@@ -92,16 +119,18 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
       _paused = false;
       _error = null;
     });
-    if (_engine == null) {
+    final e = _engine;
+    if (e == null) {
       await _start();
       return;
     }
     try {
-      NativeAudio.configureSession(record: true, measurement: AppScope.of(context).settings.measurementMode);
-      _engine!.takeAudioEvents();
-      _engine!.flushCapture();
+      NativeAudio.configureSession(record: true, measurement: _settings.measurementMode);
+      final deviceLost = e.takeAudioEvents() & AudioEvents.deviceLost != 0;
+      e.flushCapture();
       _tracker?.reset();
-      _engine!.start();
+      e.start();
+      _applyMonitor(enabled: deviceLost ? false : null);
       _awake.hold();
     } catch (_) {
       _pause();
@@ -115,11 +144,17 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
 
   void _tick(Duration _) {
     final e = _engine, tr = _tracker;
-    if (e == null || tr == null || _paused) return;
-    if (e.takeAudioEvents() & AudioEvents.silencing != 0) {
-      _pause();
+    if (e == null || tr == null) return;
+    final events = e.takeAudioEvents();
+    final deviceLost = events & AudioEvents.deviceLost != 0;
+    if (!_paused && events & AudioEvents.silencing != 0) {
+      _pause(deviceLost: deviceLost);
       return;
     }
+    if (deviceLost || events & AudioEvents.routeChanged != 0) {
+      _applyMonitor(enabled: deviceLost ? false : null);
+    }
+    if (_paused) return;
     var changed = false;
     for (final b in e.readCapture()) {
       for (final p in tr.addBlock(b.samples, b.songFrame, b.clockFrame, false)) {
@@ -143,10 +178,54 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     if (changed) setState(() {});
   }
 
+  Future<void> _showMonitorSettings() async {
+    final settings = _settings;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => ListenableBuilder(
+        listenable: Listenable.merge([_monitor, settings]),
+        builder: (context, _) {
+          final (:available, :enabled) = _monitor.value;
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('耳返（有线耳机）'),
+                    subtitle: Text(available ? '练习时实时听见自己，暂停时静音' : '请连接有线耳机、耳机转接头或 USB 耳机'),
+                    value: enabled,
+                    onChanged: available ? (value) => _applyMonitor(enabled: value) : null,
+                  ),
+                  Text('耳返音量 ${(settings.monitorVolume * 100).round()}%'),
+                  Slider(
+                    value: settings.monitorVolume,
+                    onChanged: enabled
+                        ? (value) {
+                            settings.change((s) => s.monitorVolume = value);
+                            _applyMonitor();
+                          }
+                        : null,
+                    onChangeEnd: (_) => settings.save(),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    await settings.save();
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
+    _monitor.dispose();
     _awake.release();
     final e = _engine;
     if (e != null) {
@@ -163,7 +242,16 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     final recent = last != null && _now - last.clockTime < 0.4;
     final cents = recent ? (last.midi - last.midi.roundToDouble()) * 100 : null;
     return Scaffold(
-      appBar: AppBar(title: const Text('自由练习')),
+      appBar: AppBar(
+        title: const Text('自由练习'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.headphones_rounded),
+            tooltip: '耳返设置',
+            onPressed: _error == null ? _showMonitorSettings : null,
+          ),
+        ],
+      ),
       body: _error != null
           ? Padding(
               padding: const EdgeInsets.all(28),

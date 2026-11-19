@@ -129,10 +129,13 @@ YT_EXPORT void yt_engine_set_track_gain(yt_engine* engine, int32_t slot,
 // Whether this engine can monitor to a wired output (iOS headphones/USB).
 // False on unsupported platforms and null devices; true offline for tests.
 YT_EXPORT int32_t yt_engine_monitor_available(yt_engine* engine);
-// Mixes the microphone straight into stereo output while playing (0 = off,
-// 1 = unity). Unavailable routes reject the gain. Route changes and stops
-// clear it; the control thread must check the route before reapplying it.
+// Mixes the microphone straight into stereo output (0 = off, 1 = unity).
+// Unavailable routes reject the gain. Route changes and stops clear it;
+// the control thread must check the route before reapplying it.
 YT_EXPORT void yt_engine_set_monitor_gain(yt_engine* engine, float gain);
+// Allows monitoring during capture even when no track is playing. By
+// default the gain is heard only during track playback.
+YT_EXPORT void yt_engine_set_monitor_while_capturing(yt_engine* engine, int32_t enabled);
 
 YT_EXPORT void yt_engine_set_playing(yt_engine* engine, int32_t playing);
 YT_EXPORT int32_t yt_engine_is_playing(yt_engine* engine);
