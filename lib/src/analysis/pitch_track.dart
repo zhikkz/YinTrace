@@ -66,6 +66,12 @@ class PitchAnalysisOptions {
     this.relativeGateDb = -32,
     this.absoluteGateDb = -55,
     this.modelConfidence = SwiftF0.voicedConfidence,
+    this.voicedOnset = 0.7,
+    this.loudnessSeconds = 1.0,
+    this.onsetBelowLoudestDb = 18,
+    this.holdBelowLoudestDb = 24,
+    this.loudBelowLoudestDb = 8,
+    this.loudBelowSingingDb = 10,
     this.modelShifts = 4,
     this.modelPeak = 0.5,
   });
@@ -91,9 +97,37 @@ class PitchAnalysisOptions {
   final double relativeGateDb;
   final double absoluteGateDb;
 
-  /// [analyzePitchWithModel]: frames with a lower model confidence are
-  /// unvoiced.
+  /// [analyzePitchWithModel]: a voiced stretch holds while the model's
+  /// confidence stays at this or above ...
   final double modelConfidence;
+
+  /// ... and starts only where it reaches this. Reverb tails, breaths and
+  /// what the separation left of the accompaniment come with confidences
+  /// between the two (on two commercial songs the median of such frames
+  /// was 0.6–0.7, of sung frames 0.95), so they extend a sung note but do
+  /// not make lines of their own.
+  final double voicedOnset;
+
+  /// Both detectors: a frame is voiced only while it is near the loudest
+  /// part of the voice within [loudnessSeconds] on either side: a voiced
+  /// stretch starts no more than [onsetBelowLoudestDb] below it and holds
+  /// down to [holdBelowLoudestDb] below it. Sung frames are a few dB below
+  /// (10 % of them more than 7–9 dB), reverb tails and residue 20 dB and
+  /// more; the gate follows the singer through quiet and loud passages,
+  /// where one level for the whole song ([relativeGateDb]) cannot.
+  final double loudnessSeconds;
+  final double onsetBelowLoudestDb;
+  final double holdBelowLoudestDb;
+
+  /// [analyzePitchWithModel]: within this of the loudest, and no more than
+  /// [loudBelowSingingDb] below the median level of the song's singing,
+  /// where the singer is clearly singing, a voiced stretch starts at
+  /// [modelConfidence] already: the model is less sure of some loud first
+  /// syllables (0.6–0.75) than of the rest of the line. (In an interlude
+  /// what the separation left is near its own loudest, but far below the
+  /// singing.)
+  final double loudBelowLoudestDb;
+  final double loudBelowSingingDb;
 
   /// [analyzePitchWithModel]: the model's frames are 16 ms apart; it runs
   /// on this many copies of the vocal, each delayed by a fraction of a
@@ -113,8 +147,8 @@ class PitchAnalysisOptions {
 ///
 /// [mono] is sampled at [sampleRate]. The result is resampled to
 /// `options.analysisRate` first, analysed with YIN, then post-processed:
-/// level gate, octave-jump correction, median smoothing and removal of very
-/// short voiced blips.
+/// level gates, octave-jump correction, median smoothing and removal of
+/// very short voiced blips.
 PitchTrack analyzePitch(Float32List mono, int sampleRate,
     {PitchAnalysisOptions options = const PitchAnalysisOptions(),
     void Function(double)? onProgress}) {
@@ -149,6 +183,12 @@ PitchTrack analyzePitch(Float32List mono, int sampleRate,
     }
     if (onProgress != null && f % 2000 == 0) onProgress(f / frames * 0.9);
   }
+  _gateLevel(midi, db, o);
+  // YIN has no voiced stretches of its own to start and hold: its frames
+  // are gated at the hold level only.
+  _gateLoudness(midi, db, o, onsetBelowDb: o.holdBelowLoudestDb);
+  _fixOctaveJumps(midi);
+  _medianSmooth(midi, 2);
   final track = _finish(x, midi, db, ap, o);
   onProgress?.call(1);
   return track;
@@ -158,12 +198,18 @@ PitchTrack analyzePitch(Float32List mono, int sampleRate,
 /// pitch model (SwiftF0).
 ///
 /// The frames are the frames of [analyzePitch], with the same level and
-/// change of sound, and the same clean-up afterwards; only the pitch, and
-/// whether a frame is voiced, come from the model. The model's own frames
-/// are 16 ms apart: [PitchAnalysisOptions.modelShifts] runs on copies of
-/// the vocal delayed by fractions of a frame put them closer together, and
-/// each frame of the grid takes the confidence and pitch between the two
-/// model frames around it.
+/// change of sound. The model's own frames are 16 ms apart:
+/// [PitchAnalysisOptions.modelShifts] runs on copies of the vocal delayed by
+/// fractions of a frame put them closer together.
+///
+/// The pitch is not each model frame's best bin on its own: where two
+/// voices sound together (a lead doubled an octave lower, a harmony part),
+/// or a consonant starts a note, the best bin flips between them frame by
+/// frame and the melody jumps by an octave and back. [decodeMelody] takes
+/// the bin scores of all frames and finds the one continuous melody that
+/// they support best, so it stays with one voice. Whether a frame is
+/// voiced is decided separately, from the model's confidence and the
+/// loudness of the voice around the frame ([PitchAnalysisOptions]).
 Future<PitchTrack> analyzePitchWithModel(Float32List mono, int sampleRate, SwiftF0 model,
     {PitchAnalysisOptions options = const PitchAnalysisOptions(), void Function(double)? onProgress}) async {
   final o = options;
@@ -192,7 +238,7 @@ Future<PitchTrack> analyzePitchWithModel(Float32List mono, int sampleRate, Swift
     final delayed = Float32List(input.length + delay)..setRange(delay, delay + input.length, input);
     runs.add((
       delay,
-      await model.analyze(delayed, onProgress: (f) => onProgress?.call((k + f) / shifts * 0.85)),
+      await model.analyze(delayed, onProgress: (f) => onProgress?.call((k + f) / shifts * 0.75)),
     ));
   }
   // The model's frames in time order: frame i of the run delayed by d is
@@ -202,7 +248,9 @@ Future<PitchTrack> analyzePitchWithModel(Float32List mono, int sampleRate, Swift
   for (final (_, r) in runs) {
     count += r.length;
   }
+  final withBins = runs.every((r) => r.$2.bins != null);
   final times = Float64List(count), hz = Float32List(count), conf = Float32List(count);
+  final scores = withBins ? Float32List(count * SwiftF0.bins) : null;
   var j = 0;
   for (var i = 0; j < count; i++) {
     for (final (delay, r) in runs.reversed) {
@@ -210,9 +258,19 @@ Future<PitchTrack> analyzePitchWithModel(Float32List mono, int sampleRate, Swift
       times[j] = (i * SwiftF0.hop - delay) / SwiftF0.sampleRate;
       hz[j] = r.hz[i];
       conf[j] = r.confidence[i];
+      scores?.setRange(j * SwiftF0.bins, (j + 1) * SwiftF0.bins, r.bins!, i * SwiftF0.bins);
       j++;
     }
   }
+  runs.clear();
+  if (scores != null) {
+    final melody = decodeMelody(scores, conf);
+    for (var k = 0; k < count; k++) {
+      hz[k] = melody[k];
+    }
+  }
+  onProgress?.call(0.85);
+
   final midi = Float32List(frames);
   final ap = Float32List(frames);
   final seconds = o.hop / o.analysisRate;
@@ -228,9 +286,7 @@ Future<PitchTrack> analyzePitchWithModel(Float32List mono, int sampleRate, Swift
     final w = span > 0 ? ((t - times[a]) / span).clamp(0.0, 1.0) : 0.0;
     final c = conf[a] + (conf[b] - conf[a]) * w;
     ap[f] = 1 - c;
-    if (c < o.modelConfidence) continue;
-    final va = conf[a] >= o.modelConfidence && hz[a] > 0;
-    final vb = conf[b] >= o.modelConfidence && hz[b] > 0;
+    final va = hz[a] > 0, vb = hz[b] > 0;
     final double m;
     if (va && vb) {
       final ma = hzToMidi(hz[a]), mb = hzToMidi(hz[b]);
@@ -244,10 +300,406 @@ Future<PitchTrack> analyzePitchWithModel(Float32List mono, int sampleRate, Swift
     }
     midi[f] = m;
   }
+  _voiceStretches(midi, ap, db, o);
+  _medianSmooth(midi, 2);
   onProgress?.call(0.9);
   final track = _finish(x, midi, db, ap, o);
   onProgress?.call(1);
   return track;
+}
+
+/// The melody the pitch model heard: for each of its frames, the pitch in
+/// Hz (0 where no bin is in range) on the one path through the frames' bin
+/// scores that the scores support best, where moving away from the pitch
+/// of the frame before costs more the further it moves, and an octave
+/// costs about as much as 20 frames (80 ms) of its scores being clearly
+/// worse. [scores] holds [SwiftF0.bins] logits per frame (see
+/// [SwiftF0Frames.bins]); [confidence] weighs each frame: unsure frames
+/// say little about the pitch and hold it back little, so after a pause
+/// the melody starts wherever the next phrase does. A stretch where the
+/// path went with another voice an octave away is then moved back
+/// ([_foldOctaves]).
+///
+/// Within the chosen bin the pitch is the model's own estimate: the mean
+/// in log frequency of the bin and its two neighbours, weighted by their
+/// softmax.
+Float32List decodeMelody(Float32List scores, Float32List confidence) {
+  const bins = SwiftF0.bins;
+  final n = confidence.length;
+  assert(scores.length == n * bins);
+  final out = Float32List(n);
+  if (n == 0) return out;
+  // The bins the app searches.
+  var lo = 0, hi = bins - 1;
+  while (lo < bins && SwiftF0.binHz(lo) < SwiftF0.minHz) {
+    lo++;
+  }
+  while (hi >= 0 && SwiftF0.binHz(hi) > SwiftF0.maxHz) {
+    hi--;
+  }
+  final width = hi - lo + 1;
+  final logHz = Float64List(width);
+  for (var b = 0; b < width; b++) {
+    logHz[b] = math.log(SwiftF0.binHz(lo + b));
+  }
+  // Moving d bins (about 0.7 semitones each) costs this, times the frame's
+  // weight; one bin per frame is free, beyond three bins it gets steep.
+  const band = 24;
+  final cost = Float64List(2 * band + 1);
+  for (var d = -band; d <= band; d++) {
+    final a = d.abs();
+    cost[d + band] = 0.5 * math.max(0, a - 1) + 3.0 * math.max(0, a - 3);
+  }
+  const jumpCost = 60.0;
+
+  final emission = Float64List(width);
+  final norms = Float64List(n);
+  void emissions(int t) {
+    final row = t * bins + lo;
+    var peak = double.negativeInfinity;
+    for (var b = 0; b < width; b++) {
+      peak = math.max(peak, scores[row + b]);
+    }
+    var sum = 0.0;
+    for (var b = 0; b < width; b++) {
+      sum += math.exp(scores[row + b] - peak);
+    }
+    final norm = norms[t] = peak + math.log(sum);
+    final w = confidence[t].clamp(0.05, 1.0);
+    for (var b = 0; b < width; b++) {
+      emission[b] = w * math.max(-30.0, scores[row + b] - norm);
+    }
+  }
+
+  // back[t * width + b]: the bin the path came from (or `jumped`, then it
+  // came from the best bin of the frame before, in jumpFrom[t]).
+  const jumped = 255;
+  final back = Uint8List(n * width);
+  final jumpFrom = Uint8List(n);
+  var prev = Float64List(width), next = Float64List(width);
+  emissions(0);
+  prev.setAll(0, emission);
+  for (var t = 1; t < n; t++) {
+    emissions(t);
+    final scale = confidence[t].clamp(0.1, 1.0);
+    var best = 0;
+    for (var b = 1; b < width; b++) {
+      if (prev[b] > prev[best]) best = b;
+    }
+    jumpFrom[t] = best;
+    final jump = prev[best] - scale * jumpCost;
+    for (var b = 0; b < width; b++) {
+      var v = jump;
+      var from = jumped;
+      final a0 = math.max(0, b - band), a1 = math.min(width - 1, b + band);
+      for (var a = a0; a <= a1; a++) {
+        final c = prev[a] - scale * cost[b - a + band];
+        if (c > v) {
+          v = c;
+          from = a;
+        }
+      }
+      next[b] = v + emission[b];
+      back[t * width + b] = from;
+    }
+    final swap = prev;
+    prev = next;
+    next = swap;
+  }
+  final path = Int16List(n);
+  var b = 0;
+  for (var k = 1; k < width; k++) {
+    if (prev[k] > prev[b]) b = k;
+  }
+  for (var t = n - 1; t >= 0; t--) {
+    path[t] = b;
+    if (t > 0) {
+      final from = back[t * width + b];
+      b = from == jumped ? jumpFrom[t] : from;
+    }
+  }
+  _foldOctaves(path, scores, norms, confidence, lo: lo, width: width);
+  _skipSteppingStones(path, scores, norms, confidence, lo: lo);
+  for (var t = 0; t < n; t++) {
+    final b = path[t];
+    // The model's estimate within the bin: its softmax over the bin and
+    // its neighbours, as the model computes its own pitch.
+    final row = t * bins + lo;
+    var peak = double.negativeInfinity;
+    for (var k = math.max(0, b - 1); k <= math.min(width - 1, b + 1); k++) {
+      peak = math.max(peak, scores[row + k]);
+    }
+    var sum = 0.0, acc = 0.0;
+    for (var k = math.max(0, b - 1); k <= math.min(width - 1, b + 1); k++) {
+      final e = math.exp(scores[row + k] - peak);
+      sum += e;
+      acc += e * logHz[k];
+    }
+    out[t] = math.exp(acc / sum);
+  }
+  return out;
+}
+
+/// Frames where [path] goes through a pitch the model did not hear, on its
+/// way from one voice or note to another in a few frames (it moves a few
+/// bins a frame rather than jump): each takes the bin of the nearer frame
+/// on either side that the model did hear. Runs of up to 8 frames (32 ms)
+/// in voiced stretches; longer ones are left.
+void _skipSteppingStones(Int16List path, Float32List scores, Float64List norms, Float32List confidence,
+    {required int lo}) {
+  const bins = SwiftF0.bins;
+  const unheard = -6.0;
+  const longest = 8;
+  final n = path.length;
+  bool stone(int t) => confidence[t] >= 0.3 && scores[t * bins + lo + path[t]] - norms[t] < unheard;
+  var t = 0;
+  while (t < n) {
+    if (!stone(t)) {
+      t++;
+      continue;
+    }
+    var e = t;
+    while (e < n && stone(e)) {
+      e++;
+    }
+    if (t > 0 && e < n && e - t <= longest) {
+      final left = path[t - 1], right = path[e];
+      for (var k = t; k < e; k++) {
+        path[k] = k - t < e - k ? left : right;
+      }
+    }
+    t = e;
+  }
+}
+
+/// Moves stretches of [path] (bins from `lo`, `width` of them) to the
+/// octave above or below where that keeps the melody from jumping by an
+/// octave and back, and the model heard that octave too.
+///
+/// The path takes each step on its own: where a second voice an octave
+/// below takes over for a second (a harmony the separation left in), the
+/// path follows it down in a few small steps, each cheap, and comes back
+/// when it ends. Here the choice is made for 32 ms blocks, between the
+/// path and its octave above and below: a block's score is how well the
+/// model's scores support it, and a jump of more than 8 semitones from
+/// one block to the next costs as much as 200 frames of clearly worse
+/// scores (less where the model is unsure: at a breath, a consonant, a
+/// pause). A real leap of an octave stays: the model did not hear the
+/// other octave there.
+void _foldOctaves(Int16List path, Float32List scores, Float64List norms, Float32List confidence,
+    {required int lo, required int width}) {
+  const bins = SwiftF0.bins;
+  const block = 8;
+  const leapBins = 12;
+  const leapCost = 200.0;
+  final n = path.length;
+  if (n < 2 * block) return;
+  double logp(int t, int b) => math.max(-30.0, scores[t * bins + lo + b] - norms[t]);
+  // The octave below and above each frame's bin: the best of the bins
+  // 16–18 away (an octave is 17.15 bins), -1 where none is in range.
+  final alternative = [Int16List(n), path, Int16List(n)];
+  for (var t = 0; t < n; t++) {
+    for (final (k, sign) in [(0, -1), (2, 1)]) {
+      var best = -1;
+      for (var d = 16; d <= 18; d++) {
+        final c = path[t] + sign * d;
+        if (c >= 0 && c < width && (best < 0 || logp(t, c) > logp(t, best))) best = c;
+      }
+      alternative[k][t] = best;
+    }
+  }
+  final blocks = (n + block - 1) ~/ block;
+  final score = Float64List(blocks * 3), level = Float64List(blocks * 3), sure = Float64List(blocks);
+  final values = <double>[];
+  for (var j = 0; j < blocks; j++) {
+    final a = j * block, e = math.min(n, a + block);
+    var least = 1.0;
+    for (var t = a; t < e; t++) {
+      least = math.min(least, confidence[t]);
+    }
+    sure[j] = least.clamp(0.1, 1.0);
+    for (var o = 0; o < 3; o++) {
+      var sum = 0.0;
+      values.clear();
+      for (var t = a; t < e; t++) {
+        final b = alternative[o][t];
+        if (b < 0) {
+          sum = double.negativeInfinity;
+          break;
+        }
+        sum += confidence[t].clamp(0.05, 1.0) * logp(t, b);
+        values.add(b.toDouble());
+      }
+      score[j * 3 + o] = sum;
+      level[j * 3 + o] = sum.isFinite ? median(values) : -1000;
+    }
+  }
+  final back = Uint8List(blocks * 3);
+  var prev = Float64List(3), next = Float64List(3);
+  for (var o = 0; o < 3; o++) {
+    prev[o] = score[o];
+  }
+  for (var j = 1; j < blocks; j++) {
+    final leap = math.min(sure[j], sure[j - 1]) * leapCost;
+    for (var o = 0; o < 3; o++) {
+      var best = double.negativeInfinity, from = 1;
+      for (var p = 0; p < 3; p++) {
+        final v = prev[p] - ((level[j * 3 + o] - level[(j - 1) * 3 + p]).abs() >= leapBins ? leap : 0);
+        if (v > best) {
+          best = v;
+          from = p;
+        }
+      }
+      next[o] = best + score[j * 3 + o];
+      back[j * 3 + o] = from;
+    }
+    final swap = prev;
+    prev = next;
+    next = swap;
+  }
+  var o = 0;
+  for (var k = 1; k < 3; k++) {
+    if (prev[k] > prev[o]) o = k;
+  }
+  for (var j = blocks - 1; j >= 0; j--) {
+    if (o != 1) {
+      // Only the frames on the other voice: in the block where the path
+      // comes back by itself, the frames already back stay.
+      final target = level[j * 3 + o];
+      for (var t = j * block; t < math.min(n, (j + 1) * block); t++) {
+        final moved = alternative[o][t];
+        if ((moved - target).abs() < (path[t] - target).abs()) path[t] = moved;
+      }
+    }
+    o = back[j * 3 + o];
+  }
+}
+
+/// Voiced stretches of the model's track: a stretch starts where the
+/// model is sure ([PitchAnalysisOptions.voicedOnset]) and the voice is
+/// near its loudest (or where the singer is clearly singing,
+/// [PitchAnalysisOptions.loudBelowLoudestDb]), and holds while the model
+/// stays at [PitchAnalysisOptions.modelConfidence] and the voice within the
+/// hold level and above the song's level gate
+/// ([PitchAnalysisOptions.relativeGateDb]). Frames outside the stretches
+/// lose their pitch.
+void _voiceStretches(Float32List midi, Float32List unsure, Float32List db, PitchAnalysisOptions o) {
+  final n = midi.length;
+  final loudest = _loudest(db, o);
+  final melody = Float32List.fromList(midi);
+  // The level of the singing: of the frames the model is sure of.
+  final sung = <double>[
+    for (var i = 0; i < n; i++)
+      if (1 - unsure[i] >= o.voicedOnset && db[i] >= o.absoluteGateDb) db[i],
+  ]..sort();
+  final singing = sung.isEmpty ? 0.0 : sung[sung.length ~/ 2];
+  final gate = sung.isEmpty
+      ? o.absoluteGateDb
+      : math.max(o.absoluteGateDb, sung[(sung.length * 0.95).floor().clamp(0, sung.length - 1)] + o.relativeGateDb);
+  bool holds(int i) =>
+      midi[i] > 0 &&
+      1 - unsure[i] >= o.modelConfidence &&
+      db[i] >= gate &&
+      db[i] >= loudest[i] - o.holdBelowLoudestDb;
+  bool starts(int i) =>
+      (1 - unsure[i] >= o.voicedOnset && db[i] >= loudest[i] - o.onsetBelowLoudestDb) ||
+      (db[i] >= loudest[i] - o.loudBelowLoudestDb && db[i] >= singing - o.loudBelowSingingDb);
+  var i = 0;
+  while (i < n) {
+    if (!holds(i)) {
+      midi[i++] = 0;
+      continue;
+    }
+    var j = i;
+    var started = false;
+    while (j < n && holds(j)) {
+      started = started || starts(j);
+      j++;
+    }
+    if (!started) midi.fillRange(i, j, 0);
+    i = j;
+  }
+  // The model is less sure for a moment in the middle of a held note (two
+  // voices an octave apart, a change of vowel): where the voice stays loud
+  // and the melody goes on at the same pitch, the note goes on.
+  final bridge = (_bridgeSeconds * o.analysisRate / o.hop).round();
+  i = 1;
+  while (i < n) {
+    if (midi[i] > 0 || midi[i - 1] <= 0) {
+      i++;
+      continue;
+    }
+    var j = i;
+    while (j < n && midi[j] <= 0) {
+      j++;
+    }
+    if (j < n && j - i <= bridge && (midi[j] - midi[i - 1]).abs() < 1) {
+      var steady = true;
+      for (var k = i; k < j && steady; k++) {
+        steady = melody[k] > 0 &&
+            (melody[k] - midi[i - 1]).abs() < 1.5 &&
+            db[k] >= loudest[k] - _bridgeBelowLoudestDb;
+      }
+      if (steady) midi.setRange(i, j, melody, i);
+    }
+    i = j;
+  }
+}
+
+/// [_voiceStretches] bridges a gap this long in a held note ...
+const _bridgeSeconds = 0.25;
+
+/// ... where the voice stays within this of its loudest.
+const _bridgeBelowLoudestDb = 12.0;
+
+/// YIN's frames lose their pitch where the voice is more than
+/// [onsetBelowDb] below its loudest nearby.
+void _gateLoudness(Float32List midi, Float32List db, PitchAnalysisOptions o, {required double onsetBelowDb}) {
+  final loudest = _loudest(db, o);
+  for (var i = 0; i < midi.length; i++) {
+    if (db[i] < loudest[i] - onsetBelowDb) midi[i] = 0;
+  }
+}
+
+/// The loudest level within [PitchAnalysisOptions.loudnessSeconds] of each
+/// frame (a running maximum).
+Float32List _loudest(Float32List db, PitchAnalysisOptions o) {
+  final n = db.length;
+  final r = math.max(1, (o.loudnessSeconds * o.analysisRate / o.hop).round());
+  final out = Float32List(n);
+  // Monotonic deque of indices with decreasing levels.
+  final q = Int32List(n + 1);
+  var head = 0, tail = 0, added = 0;
+  for (var i = 0; i < n; i++) {
+    final limit = math.min(n - 1, i + r);
+    while (added <= limit) {
+      while (tail > head && db[q[tail - 1]] <= db[added]) {
+        tail--;
+      }
+      q[tail++] = added++;
+    }
+    while (q[head] < i - r) {
+      head++;
+    }
+    out[i] = db[q[head]];
+  }
+  return out;
+}
+
+/// Frames quieter than the loud (voiced) part of the whole track by more
+/// than [PitchAnalysisOptions.relativeGateDb] lose their pitch.
+void _gateLevel(Float32List midi, Float32List db, PitchAnalysisOptions o) {
+  final voicedLevels = <double>[];
+  for (var f = 0; f < midi.length; f++) {
+    if (midi[f] > 0) voicedLevels.add(db[f]);
+  }
+  if (voicedLevels.isEmpty) return;
+  voicedLevels.sort();
+  final p95 = voicedLevels[(voicedLevels.length * 0.95).floor().clamp(0, voicedLevels.length - 1)];
+  final gate = math.max(o.absoluteGateDb, p95 + o.relativeGateDb);
+  for (var f = 0; f < midi.length; f++) {
+    if (db[f] < gate) midi[f] = 0;
+  }
 }
 
 /// Level in dBFS of each frame of the grid: the RMS of the [size] samples
@@ -279,22 +731,6 @@ Float32List frameLevels(List<double> x, int frames, {required int hop, required 
 /// The clean-up shared by both detectors, and the change of sound.
 PitchTrack _finish(List<double> x, Float32List midi, Float32List db, Float32List ap, PitchAnalysisOptions o) {
   final frames = midi.length;
-  // Level gate relative to the loud (voiced) part of the track.
-  final voicedLevels = <double>[];
-  for (var f = 0; f < frames; f++) {
-    if (midi[f] > 0) voicedLevels.add(db[f]);
-  }
-  if (voicedLevels.isNotEmpty) {
-    voicedLevels.sort();
-    final p95 = voicedLevels[(voicedLevels.length * 0.95).floor().clamp(0, voicedLevels.length - 1)];
-    final gate = math.max(o.absoluteGateDb, p95 + o.relativeGateDb);
-    for (var f = 0; f < frames; f++) {
-      if (db[f] < gate) midi[f] = 0;
-    }
-  }
-
-  _fixOctaveJumps(midi);
-  _medianSmooth(midi, 2);
   _removeShortRuns(midi, minFrames: math.max(3, (0.03 * o.analysisRate / o.hop).round()));
   _bridgeShortGaps(midi, maxFrames: math.max(1, (0.02 * o.analysisRate / o.hop).round()));
   final change = spectralChange(x, o.analysisRate, frames, hop: o.hop, size: o.frameSize);

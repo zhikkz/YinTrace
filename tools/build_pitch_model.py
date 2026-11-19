@@ -10,12 +10,18 @@ plugin and `TensorModel` can run it:
   searches, FMIN to FMAX below;
 - `pitch` (float64) is cast to float32, which the Apple plugin can read
   (it has no float64 tensors); the rounding is below 1e-4 cent;
-- `pitch` and `confidence` are joined into one output `pitch_confidence`
-  of shape [2, frames]: row 0 the pitch in Hz, row 1 the confidence.
+- `pitch`, `confidence` and the scores the model gives each of its 95 pitch
+  bins (the tensor it takes the pitch from) are joined into one output
+  `pitch_confidence_bins` of shape [97, frames]: row 0 the pitch in Hz,
+  row 1 the confidence, rows 2..96 the bin scores (logits, before the
+  model limits them to FMIN..FMAX). The app decodes the most likely
+  continuous melody from the bin scores instead of taking each frame's
+  best bin on its own.
 
 The weights and every other node stay as they are. `verify` checks that the
 result gives the same pitch (to float32 rounding) and exactly the same
-confidence as the original model.
+confidence as the original model, and that the bin scores are the ones the
+original model takes its pitch from.
 
     python tools/build_pitch_model.py build [--wheel swift_f0-0.3.0-py3-none-any.whl]
     python tools/build_pitch_model.py verify [--wheel ...]
@@ -46,6 +52,12 @@ LICENSE_MEMBER = 'swift_f0-0.3.0.dist-info/licenses/LICENSE'
 # 2093.75 Hz; frames whose best pitch lies outside the range are unvoiced.
 FMIN = 60.0
 FMAX = 1400.0
+
+# The model's per-bin pitch scores [frames, 95] (before the FMIN..FMAX mask)
+# and the frequency of each bin (Hz).
+BIN_SCORES = 'v429'
+BIN_HZ = 'v438'
+BINS = 95
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, 'assets', 'models', 'swift_f0.onnx')
@@ -83,17 +95,27 @@ def convert(model_bytes):
     for name, value in (('fmin', FMIN), ('fmax', FMAX)):
         g.input.remove(next(i for i in g.input if i.name == name))
         g.initializer.append(numpy_helper.from_array(np.array(value, dtype=np.float32), name))
+    if not any(BIN_SCORES in n.output and n.op_type == 'Transpose' for n in g.node):
+        sys.exit(f'the model has no bin scores {BIN_SCORES}')
+    bin_hz = next(numpy_helper.to_array(i) for i in g.initializer if i.name == BIN_HZ)
+    expected = np.exp(np.linspace(np.log(46.875), np.log(2093.75), BINS))
+    if bin_hz.shape != (BINS,) or np.abs(bin_hz / expected - 1).max() > 1e-6:
+        sys.exit('unexpected pitch bins')
+    g.initializer.append(numpy_helper.from_array(np.array([BINS, -1], dtype=np.int64), 'yintrace_bins_shape'))
     g.node.extend([
         helper.make_node('Cast', ['pitch'], ['pitch_float'], to=TensorProto.FLOAT, name='yintrace_cast_pitch'),
-        helper.make_node('Concat', ['pitch_float', 'confidence'], ['pitch_confidence'], axis=0,
+        helper.make_node('Transpose', [BIN_SCORES], ['bin_scores_t'], perm=[0, 2, 1], name='yintrace_bins_by_row'),
+        helper.make_node('Reshape', ['bin_scores_t', 'yintrace_bins_shape'], ['bin_scores'], name='yintrace_bins_2d'),
+        helper.make_node('Concat', ['pitch_float', 'confidence', 'bin_scores'], ['pitch_confidence_bins'], axis=0,
                          name='yintrace_join_outputs'),
     ])
     del g.output[:]
-    g.output.append(helper.make_tensor_value_info('pitch_confidence', TensorProto.FLOAT, [2, 'frames']))
+    g.output.append(helper.make_tensor_value_info('pitch_confidence_bins', TensorProto.FLOAT, [2 + BINS, 'frames']))
     for key, value in (
         ('yintrace_source', f'swift-f0 0.3.0 model.onnx sha256 {MODEL_SHA256}'),
         ('yintrace_change', f'fmin={FMIN:g} and fmax={FMAX:g} fixed; pitch cast to float32; '
-                            'output pitch_confidence [2, frames] = (pitch Hz, confidence)'),
+                            f'output pitch_confidence_bins [{2 + BINS}, frames] = '
+                            f'(pitch Hz, confidence, {BINS} bin scores)'),
     ):
         entry = m.metadata_props.add()
         entry.key, entry.value = key, value
@@ -118,18 +140,31 @@ def test_audio():
 def verify(original, converted):
     import onnxruntime as ort
 
-    a = ort.InferenceSession(original, providers=['CPUExecutionProvider'])
+    import onnx
+    from onnx import helper
+
+    # The original, with its bin scores as an extra output to compare.
+    m = onnx.load_from_string(original)
+    m.graph.output.append(helper.make_empty_tensor_value_info(BIN_SCORES))
+    a = ort.InferenceSession(m.SerializeToString(), providers=['CPUExecutionProvider'])
     b = ort.InferenceSession(converted, providers=['CPUExecutionProvider'])
     assert [i.name for i in b.get_inputs()] == ['audio']
-    assert [o.name for o in b.get_outputs()] == ['pitch_confidence']
+    assert [o.name for o in b.get_outputs()] == ['pitch_confidence_bins']
     for x in test_audio():
-        pitch, conf = a.run(['pitch', 'confidence'], {'audio': x[None], 'fmin': np.array(FMIN, np.float32),
-                                                     'fmax': np.array(FMAX, np.float32)})
+        pitch, conf, scores = a.run(['pitch', 'confidence', BIN_SCORES],
+                                    {'audio': x[None], 'fmin': np.array(FMIN, np.float32),
+                                     'fmax': np.array(FMAX, np.float32)})
         (joined,) = b.run(None, {'audio': x[None]})
-        assert joined.dtype == np.float32 and joined.shape == (2, conf.shape[1]), joined.shape
+        assert joined.dtype == np.float32 and joined.shape == (2 + BINS, conf.shape[1]), joined.shape
         assert np.array_equal(joined[0], pitch[0].astype(np.float32)), 'pitch differs'
         assert np.array_equal(joined[1], conf[0]), 'confidence differs'
-    print(f'verified: same pitch and confidence as the original on {len(test_audio())} test signals')
+        assert np.array_equal(joined[2:], scores.reshape(-1, BINS).T), 'bin scores differ'
+        # The pitch is the bin-weighted mean around the best bin in range.
+        hz = np.exp(np.linspace(np.log(46.875), np.log(2093.75), BINS))
+        inside = (hz >= FMIN) & (hz <= FMAX)
+        best = np.where(inside[:, None], joined[2:], -np.inf).argmax(0)
+        assert np.all(np.abs(np.log(joined[0] / hz[best])) < np.log(hz[1] / hz[0]) * 1.01), 'pitch is not in its bin'
+    print(f'verified: same pitch, confidence and bin scores as the original on {len(test_audio())} test signals')
 
 
 def main():

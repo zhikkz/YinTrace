@@ -5,7 +5,8 @@ import '../separation/tensor_model.dart';
 
 /// Pitch and confidence of consecutive SwiftF0 frames.
 class SwiftF0Frames {
-  SwiftF0Frames(this.hz, this.confidence) : assert(hz.length == confidence.length);
+  SwiftF0Frames(this.hz, this.confidence, [this.bins])
+    : assert(hz.length == confidence.length && (bins == null || bins.length == hz.length * SwiftF0.bins));
 
   /// Pitch in Hz; frame `i` is centred at input sample `i * SwiftF0.hop`.
   final Float32List hz;
@@ -13,6 +14,13 @@ class SwiftF0Frames {
   /// How sure the model is that the frame is voiced and its pitch right
   /// (0..1); voiced at [SwiftF0.voicedConfidence] or above.
   final Float32List confidence;
+
+  /// The model's score (logit) for each of its [SwiftF0.bins] pitch bins,
+  /// frame by frame: bin `b` of frame `i` at `i * SwiftF0.bins + b`. The
+  /// pitch is taken from the best bin in range; the other bins say which
+  /// other pitches the model heard (the octave below, a second voice).
+  /// Null for a model that does not give them.
+  final Float32List? bins;
 
   int get length => hz.length;
 }
@@ -45,6 +53,15 @@ class SwiftF0 {
   /// The model's confidence is calibrated for this voicing threshold.
   static const voicedConfidence = 0.5;
 
+  /// The model classifies the pitch into this many bins, spaced evenly in
+  /// log frequency from [binMinHz] to [binMaxHz] (about 70 cents apart).
+  static const bins = 95;
+  static const binMinHz = 46.875;
+  static const binMaxHz = 2093.75;
+
+  /// The frequency of bin [b].
+  static double binHz(num b) => binMinHz * math.pow(binMaxHz / binMinHz, b / (bins - 1));
+
   /// The model hears 2815 samples on each side of a frame: a frame comes
   /// out as in one run over the whole recording when the run holds
   /// [history] frames before it and [lookahead] frames after it.
@@ -60,14 +77,29 @@ class SwiftF0 {
   static const silencePeak = 1e-3;
 
   /// Frames for [audio] (16 kHz): `max(1, audio.length ~/ hop)` of them.
+  ///
+  /// The bundled model gives `[2 + bins, frames]` (pitch, confidence, bin
+  /// scores); a model that gives only `[2, frames]` leaves out the bins.
   Future<SwiftF0Frames> run(Float32List audio) async {
     final n = math.max(1, audio.length ~/ hop);
     final out = await model.run(audio, [1, audio.length]);
-    if (out.length != 2 * n) {
+    if (out.length != 2 * n && out.length != (2 + bins) * n) {
       throw StateError('pitch model returned ${out.length} values for $n frames');
     }
     final hz = Float32List.fromList(Float32List.sublistView(out, 0, n));
     final confidence = Float32List.fromList(Float32List.sublistView(out, n, 2 * n));
+    Float32List? scores;
+    if (out.length > 2 * n) {
+      // Rows of bins -> frames of bins.
+      scores = Float32List(n * bins);
+      for (var b = 0; b < bins; b++) {
+        final row = (2 + b) * n;
+        for (var i = 0; i < n; i++) {
+          final v = out[row + i];
+          scores[i * bins + b] = v.isFinite ? v : -1e4;
+        }
+      }
+    }
     for (var i = 0; i < n; i++) {
       final a = audio.length >= hop ? i * hop : 0;
       final b = audio.length >= hop ? a + hop : audio.length;
@@ -78,7 +110,7 @@ class SwiftF0 {
       }
       if (peak < silencePeak || !hz[i].isFinite || !confidence[i].isFinite) confidence[i] = 0;
     }
-    return SwiftF0Frames(hz, confidence);
+    return SwiftF0Frames(hz, confidence, scores);
   }
 
   /// A whole recording (16 kHz), in runs of [runFrames] frames with the
@@ -87,6 +119,8 @@ class SwiftF0 {
   Future<SwiftF0Frames> analyze(Float32List audio, {void Function(double fraction)? onProgress}) async {
     final n = math.max(1, audio.length ~/ hop);
     final hz = Float32List(n), confidence = Float32List(n);
+    Float32List? scores;
+    var withBins = true;
     for (var start = 0; start < n; start += runFrames) {
       final end = math.min(start + runFrames, n);
       final left = math.max(0, start - history);
@@ -94,8 +128,15 @@ class SwiftF0 {
       final frames = await run(Float32List.sublistView(audio, left * hop, to));
       hz.setRange(start, end, frames.hz, start - left);
       confidence.setRange(start, end, frames.confidence, start - left);
+      final b = frames.bins;
+      if (b == null) {
+        withBins = false;
+      } else if (withBins) {
+        scores ??= Float32List(n * bins);
+        scores.setRange(start * bins, end * bins, b, (start - left) * bins);
+      }
       onProgress?.call(end / n);
     }
-    return SwiftF0Frames(hz, confidence);
+    return SwiftF0Frames(hz, confidence, withBins ? scores : null);
   }
 }
