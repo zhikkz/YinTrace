@@ -244,7 +244,8 @@ flutter run --release            # 连接 iPhone 后运行（人声分离很吃�
 - 分离模型先从 `hf-mirror.com`（Hugging Face 镜像上的同名文件）下载；连不上、太慢或出错时，自动改用
   UVR 在 GitHub 上的官方模型库，已下载的部分接着续传，两条线路都失败才报错
   （[什么时候换线路](docs/how-it-works.md#模型下载)）。
-- HuBERTFA 从官方 GitHub Release 下载，安装后模型和词典共占约 419 MB。
+- HuBERTFA 优先从 `ghfast.top` 下载原版压缩包，失败时自动改用上游的官方 GitHub Release。
+  安装后模型和词典共占约 419 MB。
   也可以在下载窗口点“已有模型文件？从‘文件’里选”导入所需的上游原版模型文件。
   [HuBERTFA v0.0.7](https://github.com/wolfgitpr/HubertFA/releases/tag/v0.0.7)
 - 模型保存在 App 的 Application Support 目录，不参与 iCloud 备份；可以在设置里删除以腾出空间，

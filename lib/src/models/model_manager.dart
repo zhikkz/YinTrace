@@ -23,14 +23,12 @@ enum ModelPhase {
 /// Downloads, verifies and installs models, and tells
 /// the rest of the app where they are.
 ///
-/// Each file is fetched from its first route ([ModelSpec.sources]:
-/// hf-mirror.com, then UVR's repository on GitHub) that works: a route is
-/// given up when it cannot be reached, hands the request on to another site
-/// (see [ResumableDownload.fetch]), answers with an error, stops, stays too
-/// slow or delivers a file with the wrong SHA-256. The next route continues
-/// the partial file (the bytes are the same). Only when every route failed
-/// is the download reported as failed. The route that worked is tried
-/// first for the next file.
+/// Each file is fetched from the first working route in [ModelSpec.sources].
+/// A route is given up when it cannot be reached, hands the request on to
+/// another site (see [ResumableDownload.fetch]), answers with an error, stops,
+/// stays too slow or delivers a file with the wrong SHA-256. The next route
+/// resumes the partial file. The download fails after all routes fail. Models
+/// with the same primary origin try the last successful route first.
 ///
 /// Files are only ever moved to their final name after their SHA-256 has
 /// been checked, so "the file exists with the right size" means "installed".
@@ -73,7 +71,7 @@ class ModelManager extends ChangeNotifier {
   List<ModelSpec> get requestedModels => _requestedModels ?? specs;
   String? _route;
   int _routeIndex = 0;
-  int _preferredRoute = 0;
+  final _preferredRouteByOrigin = <String, int>{};
 
   /// Test builds: the next [install] uses only the backup routes, to try
   /// them on a network where the main route works. Reset after it.
@@ -88,8 +86,7 @@ class ModelManager extends ChangeNotifier {
   ModelSpec? get current => _current;
   bool get busy => _running != null;
 
-  /// Host of the route the running download uses ("hf-mirror.com",
-  /// "github.com"), and whether it is a backup route.
+  /// Host of the current download route.
   String? get route => _route;
   bool get onBackupRoute => _route != null && _routeIndex > 0;
 
@@ -198,12 +195,14 @@ class ModelManager extends ChangeNotifier {
   /// its routes in turn (the one that worked last time first).
   Future<void> _fetchVerified(ModelSpec spec) async {
     final sources = spec.sources;
+    final primaryOrigin = Uri.parse(spec.url).origin;
+    final preferredRoute = _preferredRouteByOrigin[primaryOrigin] ?? 0;
     final order = backupOnly && sources.length > 1
         ? [for (var i = 1; i < sources.length; i++) i]
         : [
-            if (_preferredRoute < sources.length) _preferredRoute,
+            if (preferredRoute < sources.length) preferredRoute,
             for (var i = 0; i < sources.length; i++)
-              if (i != _preferredRoute) i,
+              if (i != preferredRoute) i,
           ];
     final failures = <String>[];
     for (final i in order) {
@@ -247,7 +246,7 @@ class ModelManager extends ChangeNotifier {
       }
       _received = base + spec.bytes;
       if (await _matches(spec, part.path)) {
-        _preferredRoute = i;
+        _preferredRouteByOrigin[primaryOrigin] = i;
         return;
       }
       part.deleteSync();
