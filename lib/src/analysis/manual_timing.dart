@@ -137,19 +137,29 @@ double lineEndLimit(SongReference ref, int line) =>
 ///
 /// With [lineOnly] (HuBERTFA aligns only the edited line again) the other
 /// lines stay: the range ends at [lineStartLimit] and [lineEndLimit].
-(double, double) pinRange(SongReference ref, int line, int token, {double perToken = 0.06, bool lineOnly = false}) {
+/// [pendingPins] holds the replacement pins for lines being edited before
+/// their alignment has finished.
+(double, double) pinRange(SongReference ref, int line, int token, {
+  double perToken = 0.06,
+  bool lineOnly = false,
+  Map<int, Map<int, double>> pendingPins = const {},
+}) {
+  double? pinOf(int line, int token) => pendingPins.containsKey(line)
+      ? pendingPins[line]![token]
+      : ref.lines[line].tokens[token].pinned;
+
   if (lineOnly) {
     final tokens = ref.lines[line].tokens;
     var lo = lineStartLimit(ref, line, perToken: perToken) + perToken * token;
     var hi = lineEndLimit(ref, line) - perToken * (tokens.length - token);
     for (var i = token - 1; i >= 0; i--) {
-      if (tokens[i].pinned case final pin?) {
+      if (pinOf(line, i) case final pin?) {
         lo = math.max(lo, pin + perToken * (token - i));
         break;
       }
     }
     for (var i = token + 1; i < tokens.length; i++) {
-      if (tokens[i].pinned case final pin?) {
+      if (pinOf(line, i) case final pin?) {
         hi = math.min(hi, pin - perToken * (i - token));
         break;
       }
@@ -164,15 +174,17 @@ double lineEndLimit(SongReference ref, int line) =>
   var lo = perToken * at, hi = ref.duration - perToken * (flat.length - 1 - at);
   for (var j = at - 1; j >= 0; j--) {
     final (k, i, t) = flat[j];
-    if (t.pinned != null || (k == line - 1 && i == 0) || k < line - 1) {
-      lo = math.max(lo, t.slotStart + perToken * (at - j));
+    final pin = pinOf(k, i);
+    if (pin != null || (k == line - 1 && i == 0) || k < line - 1) {
+      lo = math.max(lo, (pin ?? t.start) + perToken * (at - j));
       break;
     }
   }
   for (var j = at + 1; j < flat.length; j++) {
     final (k, i, t) = flat[j];
-    if (t.pinned != null || (k == line + 1 && i == ref.lines[k].tokens.length - 1) || k > line + 1) {
-      hi = math.min(hi, t.slotStart - perToken * (j - at));
+    final pin = pinOf(k, i);
+    if (pin != null || (k == line + 1 && i == ref.lines[k].tokens.length - 1) || k > line + 1) {
+      hi = math.min(hi, (pin ?? t.start) - perToken * (j - at));
       break;
     }
   }

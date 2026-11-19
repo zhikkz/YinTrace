@@ -15,6 +15,9 @@ import 'package:yintrace/src/app/services.dart';
 import 'package:yintrace/src/dsp/pitch.dart';
 import 'package:yintrace/src/dsp/resampler.dart';
 import 'package:yintrace/src/dsp/swift_f0.dart';
+import 'package:yintrace/src/import/import_job.dart';
+import 'package:yintrace/src/import/import_pipeline.dart';
+import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/models/model_catalog.dart';
 import 'package:yintrace/src/models/pitch_model.dart';
 import 'package:yintrace/src/separation/model_config.dart';
@@ -85,8 +88,45 @@ void main() {
       } finally {
         await pitch.model.close();
       }
+
+      final importAudio = '${tmp.path}/import.m4a';
+      final clip = Float32List.fromList(resample([...tone, ...tone], 16000, 44100));
+      expect(NativeAudio.encodeM4a(importAudio, clip, 44100, 1), isTrue);
+      final library = SongRepository(Directory('${tmp.path}/songs'));
+      final worker = await ImportWorker.start(library.root.path);
+      try {
+        final titles = ['第一首', '第二首'];
+        final events = await Future.wait([
+          for (final title in titles)
+            worker.startJob(ImportRequest(
+              audioPath: importAudio,
+              lyrics: '[00:00.10]一二\n[00:01.05]三四',
+              title: title,
+              vocalsOnly: true,
+              pitchModelPath: pitchPath,
+            )).events.toList(),
+        ]);
+        for (final (i, jobEvents) in events.indexed) {
+          expect(
+            jobEvents.last,
+            isA<ImportDoneEvent>(),
+            reason: jobEvents.whereType<ImportFailedEvent>().map((event) => event.message).join('\n'),
+          );
+          expect(
+            jobEvents.whereType<ImportProgressEvent>().map((event) => event.progress.stage),
+            containsAllInOrder([ImportStage.decoding, ImportStage.analyzingPitch, ImportStage.saving]),
+          );
+          final song = (jobEvents.last as ImportDoneEvent).song;
+          expect(song.title, titles[i]);
+          expect(song.modelInfo[ImportPipeline.pitchInfo], PitchModel.name, reason: '${song.modelInfo}');
+          expect((await library.loadReference(song.id)).lines, hasLength(2));
+        }
+        expect((await library.list()).map((song) => song.title), unorderedEquals(titles));
+      } finally {
+        await worker.close();
+      }
       // ignore: avoid_print
-      print('iOS simulator: native audio, AAC, bundled AGPL and pitch model OK; downloading models');
+      print('iOS simulator: native audio, AAC, bundled AGPL and shared import worker OK; downloading models');
 
       await services.models.install();
       expect(services.models.error, isNull);

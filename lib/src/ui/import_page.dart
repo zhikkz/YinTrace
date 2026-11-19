@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,16 +8,11 @@ import 'package:flutter/services.dart';
 import '../analysis/lrc.dart';
 import '../analysis/lyrics_language.dart';
 import '../app/picked_files.dart';
-import '../app/screen_awake.dart';
 import '../app/services.dart';
-import '../import/import_job.dart';
 import '../import/import_pipeline.dart';
-import '../import/vocal_acceleration.dart';
-import '../library/song.dart';
 import '../library/song_package.dart';
 import '../models/model_catalog.dart';
 import 'model_setup.dart';
-import 'song_page.dart';
 import 'theme.dart';
 
 const audioExtensions = ['mp3', 'm4a', 'aac', 'wav', 'flac', 'aif', 'aiff', 'caf', 'alac', 'mp4'];
@@ -75,6 +69,9 @@ enum _ImportSource {
 class ImportPage extends StatefulWidget {
   const ImportPage({super.key, this.pickSongFile, this.pickLyricsFile, this.background = true});
 
+  static Future<bool?> open(BuildContext context) =>
+      Navigator.of(context).push(MaterialPageRoute<bool>(builder: (_) => const ImportPage()));
+
   /// For tests: picks the song file someone sent, picks a lyrics file, and
   /// whether a song file is read in a background isolate.
   final Future<String?> Function()? pickSongFile;
@@ -100,8 +97,7 @@ class _ImportPageState extends State<ImportPage> {
   /// and most songs sound the same without it.
   bool _removeHarmony = false;
 
-  /// A song file someone sent is being added to the library.
-  bool _addingSongFile = false;
+  bool _submitting = false;
 
   /// What was filled in by the app (from the audio file's name, or the
   /// lyrics' [ti:] / [ar:] tags): a better guess replaces it, until it is
@@ -109,15 +105,7 @@ class _ImportPageState extends State<ImportPage> {
   String? _autoTitle;
   String? _autoArtist;
 
-  ImportJob? _job;
-  StreamSubscription<ImportEvent>? _sub;
-  ImportProgress? _progress;
   String? _error;
-  final _stopwatch = Stopwatch();
-  final _awake = ScreenAwake();
-  // Ticks the elapsed time every second, so the page visibly keeps going
-  // even while one model run takes a few seconds.
-  Timer? _ticker;
 
   @override
   void initState() {
@@ -141,11 +129,8 @@ class _ImportPageState extends State<ImportPage> {
 
   @override
   void dispose() {
-    _ticker?.cancel();
-    _sub?.cancel();
-    _job?.cancel();
-    _awake.release();
-    _discardPicked(); // leaving after a failure or a cancel, or without importing
+    discardPickedCopy(_audioPath);
+    discardPickedCopy(_accPath);
     _title.dispose();
     _artist.dispose();
     _lyrics.dispose();
@@ -156,6 +141,10 @@ class _ImportPageState extends State<ImportPage> {
     final f = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: audioExtensions);
     final path = f?.path;
     if (f == null || path == null) return;
+    if (!mounted || ModalRoute.isCurrentOf(context) != true) {
+      discardPickedCopy(path);
+      return;
+    }
     // The file picked before is not needed any more.
     final replaced = accompaniment ? _accPath : _audioPath;
     if (replaced != path) discardPickedCopy(replaced);
@@ -193,7 +182,12 @@ class _ImportPageState extends State<ImportPage> {
       ..showSnackBar(
         SnackBar(
           content: Text(done),
-          action: SnackBarAction(label: '撤销', onPressed: () => _lyrics.text = before),
+          action: SnackBarAction(
+            label: '撤销',
+            onPressed: () {
+              if (mounted && ModalRoute.isCurrentOf(context) == true) _lyrics.text = before;
+            },
+          ),
         ),
       );
   }
@@ -213,7 +207,11 @@ class _ImportPageState extends State<ImportPage> {
   Future<void> _readLyricsFile() async {
     // Any file can be picked: .lrc has no type the picker knows.
     final path = await (widget.pickLyricsFile ?? () async => (await FilePicker.pickFile(type: FileType.any))?.path)();
-    if (path == null || !mounted) return;
+    if (path == null) return;
+    if (!mounted) {
+      discardPickedCopy(path);
+      return;
+    }
     String? text;
     try {
       text = decodeLyricsFile(await File(path).readAsBytes());
@@ -233,33 +231,35 @@ class _ImportPageState extends State<ImportPage> {
   /// A song someone exported from their YinTrace (see `song_package.dart`):
   /// goes into the library as it is.
   Future<void> _importSongFile() async {
-    final songs = AppScope.of(context).songs;
-    // Any file can be picked: what it is shows in its content, and a name
-    // may have changed on the way.
-    final path = await (widget.pickSongFile ?? () async => (await FilePicker.pickFile(type: FileType.any))?.path)();
-    if (path == null || !mounted) return;
+    if (_submitting) return;
     setState(() {
+      _submitting = true;
       _error = null;
-      _addingSongFile = true;
     });
-    final SongMeta song;
+    String? path;
+    var queued = false;
     try {
-      song = widget.background
-          ? await importSongPackageInBackground(songs.root.path, path)
-          : importSongPackageSync(songs.root.path, path);
+      // The package is identified by its content, even if it was renamed.
+      path = await (widget.pickSongFile ?? () async => (await FilePicker.pickFile(type: FileType.any))?.path)();
+      if (path == null || !mounted || ModalRoute.isCurrentOf(context) != true) return;
+      final name = File(path).uri.pathSegments.last;
+      final suffix = '.$songPackageExtension';
+      final title = name.toLowerCase().endsWith(suffix) ? name.substring(0, name.length - suffix.length) : name;
+      AppScope.of(context).importQueue.enqueuePackage(
+        path,
+        title: title.isEmpty ? '音迹歌曲文件' : title,
+        background: widget.background,
+      );
+      queued = true;
+      Navigator.of(context).pop(true);
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _addingSongFile = false;
-          _error = e is SongPackageException ? e.message : '导入失败：$e';
-        });
-      }
-      return;
+      if (mounted) setState(() => _error = '无法选择音迹文件：$e');
     } finally {
-      discardPickedCopy(path); // the song is in the library, or will not be
+      if (!queued) {
+        discardPickedCopy(path);
+        if (mounted) setState(() => _submitting = false);
+      }
     }
-    if (!mounted) return;
-    await Navigator.of(context).pushReplacement(MaterialPageRoute<void>(builder: (_) => SongPage(songId: song.id)));
   }
 
   /// The lyrics as parsed, once per change of the text.
@@ -275,117 +275,46 @@ class _ImportPageState extends State<ImportPage> {
   LrcParseResult? _parsedLyrics;
   String? _parsedOf;
 
-  /// Deletes the picker's copies of the chosen files: the song is in the
-  /// library (or will not be imported from this page).
-  void _discardPicked() {
-    discardPickedCopy(_audioPath);
-    discardPickedCopy(_accPath);
-  }
-
   Future<void> _start() async {
+    if (_submitting || _audioPath == null) return;
     final services = AppScope.of(context);
-    if (_audioPath == null) return;
-    if (!await ensureModels(context, requiredModels: [
-      if (!_vocalsOnly) vocalModel,
-      if (!_vocalsOnly && _removeHarmony) karaokeModel,
-      if (!_vocalsOnly) hubertFaModel,
-    ])) {
-      return;
-    }
-    if (!mounted) return;
-    final mdx = services.models.pathFor(vocalModel);
-    final vr = services.models.pathFor(karaokeModel);
-    // Core ML for the vocal model where it works on this device.
-    final accel = _vocalsOnly || mdx == null
-        ? const ImportAcceleration()
-        : await services.acceleration.beforeImport(mdx);
-    if (!mounted) return;
-    final request = ImportRequest(
-      audioPath: _audioPath!,
-      lyrics: _lyrics.text,
-      title: _title.text,
-      artist: _artist.text,
-      vocalsOnly: _vocalsOnly,
-      accompanimentPath: _vocalsOnly ? _accPath : null,
-      mdxModelPath: _vocalsOnly ? null : mdx,
-      vrModelPath: !_vocalsOnly && _removeHarmony ? vr : null,
-      mdxCoreML: accel.coreML,
-      coreMLMarker: accel.marker,
-      verifyCoreML: accel.verify,
-      speed: accel.speed,
-      pitchModelPath: services.activePitchModel,
-      hubertFaPath: services.models.pathFor(hubertFaModel),
-    );
     setState(() {
+      _submitting = true;
       _error = null;
-      _progress = const ImportProgress(ImportStage.decoding, 0, 0);
     });
-    _awake.hold();
-    _stopwatch
-      ..reset()
-      ..start();
-    _ticker?.cancel();
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-    final job = await ImportJob.start(request, services.songs.root.path);
-    _job = job;
-    _sub = job.events.listen((e) async {
-      switch (e) {
-        case ImportProgressEvent(:final progress):
-          if (mounted) setState(() => _progress = progress);
-        case ImportDoneEvent(:final song):
-          _finish();
-          _discardPicked();
-          await services.acceleration.afterImport(song.modelInfo);
-          if (!mounted) return;
-          // Done while 取消导入？ was being asked: the question goes.
-          final page = ModalRoute.of(context);
-          if (page != null && !page.isCurrent) Navigator.of(context).popUntil((r) => r == page);
-          await Navigator.of(context)
-              .pushReplacement(MaterialPageRoute<void>(builder: (_) => SongPage(songId: song.id)));
-        case ImportFailedEvent(:final message, :final cancelled):
-          _finish();
-          if (mounted) {
-            setState(() {
-              _progress = null;
-              _error = cancelled ? null : '处理失败：$message';
-            });
-          }
+    var queued = false;
+    try {
+      if (!await ensureModels(context, requiredModels: [
+        if (!_vocalsOnly) vocalModel,
+        if (!_vocalsOnly && _removeHarmony) karaokeModel,
+        if (!_vocalsOnly) hubertFaModel,
+      ])) {
+        return;
       }
-    });
-  }
-
-  void _finish() {
-    _stopwatch.stop();
-    _ticker?.cancel();
-    _ticker = null;
-    _awake.release();
-    _job = null;
-  }
-
-  /// Whether to stop the import running: minutes of work are lost.
-  Future<bool> _confirmCancel() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('取消导入？'),
-        content: const Text('已经处理的部分不会保存，下次要从头开始。'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('继续导入')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('取消导入', style: TextStyle(color: ctx.yt.cinnabar)),
-          ),
-        ],
-      ),
-    );
-    return ok == true;
-  }
-
-  Future<void> _cancel() async {
-    if (!await _confirmCancel()) return;
-    await _job?.cancel();
+      if (!mounted || ModalRoute.isCurrentOf(context) != true) return;
+      final request = ImportRequest(
+        audioPath: _audioPath!,
+        lyrics: _lyrics.text,
+        title: _title.text,
+        artist: _artist.text,
+        vocalsOnly: _vocalsOnly,
+        accompanimentPath: _vocalsOnly ? _accPath : null,
+        mdxModelPath: _vocalsOnly ? null : services.models.pathFor(vocalModel),
+        vrModelPath: !_vocalsOnly && _removeHarmony ? services.models.pathFor(karaokeModel) : null,
+        pitchModelPath: services.activePitchModel,
+        hubertFaPath: services.models.pathFor(hubertFaModel),
+      );
+      services.importQueue.enqueue(request);
+      queued = true;
+      // The queue now owns these picker copies until the task finishes.
+      if (_accPath == request.accompanimentPath || _accPath == _audioPath) _accPath = null;
+      _audioPath = null;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) setState(() => _error = '无法添加导入任务：$e');
+    } finally {
+      if (!queued && mounted) setState(() => _submitting = false);
+    }
   }
 
   /// What the start button still waits for, or null when it can start.
@@ -400,60 +329,32 @@ class _ImportPageState extends State<ImportPage> {
     return missing.isEmpty ? null : '还差：${missing.join('；')}';
   }
 
-  /// Going back while a song is being separated asks first; leaving then
-  /// cancels it (see [dispose]).
-  Future<void> _onBack(bool didPop) async {
-    if (didPop || _progress == null) return;
-    if (await _confirmCancel() && mounted) Navigator.of(context).pop();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final busy = _progress != null || _addingSongFile;
     final parsed = _parsed;
-    final canStart = !busy && _audioPath != null && parsed.lines.isNotEmpty;
+    final canStart = !_submitting && _audioPath != null && parsed.lines.isNotEmpty;
     final missing = _missing(parsed);
-    return PopScope(
-      canPop: !busy,
-      onPopInvokedWithResult: (didPop, _) => _onBack(didPop),
-      child: Scaffold(
-        appBar: AppBar(title: Text(busy ? '' : '导入歌曲')),
-        body: _addingSongFile
-            ? Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 16),
-                    Text('正在导入…', style: context.type.bodyMedium),
-                  ],
-                ),
-              )
-            : busy
-            ? _buildProgress(context)
-            : _buildForm(context, parsed),
-        bottomNavigationBar: busy
-            ? null
-            : SafeArea(
-                minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                child: _source == _ImportSource.songFile
-                    ? FilledButton(onPressed: _importSongFile, child: const Text('选择音迹文件'))
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // A button that does nothing says why.
-                          if (missing != null)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Text(missing, textAlign: TextAlign.center, style: context.type.bodySmall),
-                            ),
-                          FilledButton(
-                            onPressed: canStart ? _start : null,
-                            child: Text(_vocalsOnly ? '生成逐字音高图' : '分离人声，生成音高图'),
-                          ),
-                        ],
-                      ),
+    return Scaffold(
+      appBar: AppBar(title: const Text('导入歌曲')),
+      body: AbsorbPointer(absorbing: _submitting, child: _buildForm(context, parsed)),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+        child: _source == _ImportSource.songFile
+            ? FilledButton(onPressed: _submitting ? null : _importSongFile, child: const Text('选择音迹文件'))
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (missing != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(missing, textAlign: TextAlign.center, style: context.type.bodySmall),
+                    ),
+                  FilledButton(
+                    onPressed: canStart ? _start : null,
+                    child: Text(_vocalsOnly ? '生成逐字音高图' : '分离人声，生成音高图'),
+                  ),
+                ],
               ),
       ),
     );
@@ -687,88 +588,5 @@ class _ImportPageState extends State<ImportPage> {
           ],
         ),
     ];
-  }
-
-  static String _clock(Duration d) {
-    final s = d.inSeconds;
-    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
-  }
-
-  Widget _buildProgress(BuildContext context) {
-    final pr = _progress!;
-    final p = context.yt;
-    final stages = ImportStage.values.where(
-      (s) => switch (s) {
-        ImportStage.separatingVocals => !_vocalsOnly,
-        ImportStage.removingHarmony => !_vocalsOnly && _removeHarmony,
-        _ => true,
-      },
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(28, 8, 28, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '${(pr.overall * 100).floor()}%',
-            style: context.type.displayLarge?.copyWith(fontFeatures: tabular),
-          ),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(value: pr.overall, minHeight: 4, borderRadius: BorderRadius.circular(2)),
-          const SizedBox(height: 10),
-          Text(
-            '${importRemainingText(pr.remaining)} · 已用 ${_clock(_stopwatch.elapsed)}',
-            style: context.type.bodyMedium?.copyWith(fontFeatures: tabular),
-          ),
-          const SizedBox(height: 28),
-          for (final s in stages)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 7),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 22,
-                    child: s.index < pr.stage.index
-                        ? Icon(Icons.check_rounded, size: 18, color: p.malachite)
-                        : s == pr.stage
-                        ? SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              value: pr.stageFraction > 0 ? pr.stageFraction : null,
-                            ),
-                          )
-                        : Icon(Icons.circle, size: 6, color: p.staffStrong),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    s.label,
-                    style: context.type.bodyLarge?.copyWith(
-                      color: s.index <= pr.stage.index ? p.ink : p.inkFaint,
-                      fontWeight: s == pr.stage ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
-                  if (s == pr.stage && pr.total != null) ...[
-                    const Spacer(),
-                    Text(
-                      '${pr.done ?? 0} / ${pr.total} ${s == ImportStage.aligning ? '句' : '段'}',
-                      style: context.type.bodyMedium?.copyWith(color: p.inkSoft, fontFeatures: tabular),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          const Spacer(),
-          Text('请让音迹保持在前台，屏幕会保持常亮。切到别的 App 可能会中断处理。', style: context.type.bodySmall),
-          const SizedBox(height: 16),
-          OutlinedButton(
-            onPressed: _cancel,
-            style: OutlinedButton.styleFrom(alignment: Alignment.center),
-            child: const Text('取消'),
-          ),
-        ],
-      ),
-    );
   }
 }

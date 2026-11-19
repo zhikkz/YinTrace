@@ -57,20 +57,11 @@ class HubertFaAligner {
     Future<T> Function(HubertFaAligner aligner) operation,
   ) async {
     final lexicon = await HubertFaLexicon.load(modelPath, lines);
-    final session = await OnnxRuntime().createSession(
-      modelPath,
-      options: OrtSessionOptions(
-        providers: const [OrtProvider.CPU],
-        intraOpNumThreads: 4,
-        useArena: false,
-        // Avoid an additional prepacked copy of the transformer's weights.
-        sessionConfigs: const {'session.disable_prepacking': '1'},
-      ),
-    );
+    final model = await HubertFaModel.load(modelPath);
     try {
-      return await operation(HubertFaAligner(lexicon, (waveform) => _infer(session, waveform)));
+      return await operation(model.aligner(lexicon));
     } finally {
-      await session.close();
+      await model.close();
     }
   }
 
@@ -456,4 +447,30 @@ class HubertFaAligner {
     }
     return math.min(limit, track.timeOf(last + 1));
   }
+}
+
+/// Native HuBERTFA session, independent of each song's lyrics and lexicon.
+class HubertFaModel {
+  HubertFaModel._(this._session);
+
+  final OrtSession _session;
+
+  static Future<HubertFaModel> load(String modelPath) async {
+    final session = await OnnxRuntime().createSession(
+      modelPath,
+      options: OrtSessionOptions(
+        providers: const [OrtProvider.CPU],
+        intraOpNumThreads: 4,
+        useArena: false,
+        // Avoid an additional prepacked copy of the transformer's weights.
+        sessionConfigs: const {'session.disable_prepacking': '1'},
+      ),
+    );
+    return HubertFaModel._(session);
+  }
+
+  HubertFaAligner aligner(HubertFaLexicon lexicon) =>
+      HubertFaAligner(lexicon, (waveform) => HubertFaAligner._infer(_session, waveform));
+
+  Future<void> close() => _session.close();
 }

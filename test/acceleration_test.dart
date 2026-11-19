@@ -10,6 +10,7 @@ import 'package:yintrace/src/app/services.dart';
 import 'package:yintrace/src/app/settings.dart';
 import 'package:yintrace/src/audio/audio_backend.dart';
 import 'package:yintrace/src/audio/wav.dart';
+import 'package:yintrace/src/import/import_model_pool.dart';
 import 'package:yintrace/src/import/import_pipeline.dart';
 import 'package:yintrace/src/import/vocal_acceleration.dart';
 import 'package:yintrace/src/library/song.dart';
@@ -91,6 +92,9 @@ void main() {
     String? marker,
     double voiceAt = 1.1,
     bool Function()? isCancelled,
+    ImportPipeline? pipeline,
+    String title = '测试',
+    void Function(ImportProgress)? onProgress,
   }) async {
     final syls = [
       for (var i = 0; i < 6; i++) Syl(voiceAt + i * 0.4, voiceAt + i * 0.4 + 0.33, <double>[60, 62, 64, 65, 67, 67][i]),
@@ -103,20 +107,21 @@ void main() {
       stereo[2 * i] = voice[i];
       stereo[2 * i + 1] = voice[i];
     }
-    writeWavFile('${tmp.path}/song.wav', stereo, 2, sr);
+    final audioPath = '${tmp.path}/$title.wav';
+    writeWavFile(audioPath, stereo, 2, sr);
     String at(double t) => '${(t ~/ 60).toString().padLeft(2, '0')}:${(t % 60).toStringAsFixed(2).padLeft(5, '0')}';
     // Original example lines written for this project.
     final lyrics = '[${at(voiceAt - 0.1)}]纸鸢飞过山岗\n[${at(voiceAt + 3.9)}]灯火渐明\n';
-    final pipeline = ImportPipeline(
+    pipeline ??= ImportPipeline(
       audio: const WavAudioBackend(),
       repository: SongRepository(Directory('${tmp.path}/songs')),
       loadModel: loader.call,
     );
     return pipeline.run(
       ImportRequest(
-        audioPath: '${tmp.path}/song.wav',
+        audioPath: audioPath,
         lyrics: lyrics,
-        title: '测试',
+        title: title,
         mdxModelPath: '${tmp.path}/mdx.onnx',
         vrModelPath: '${tmp.path}/vr.onnx',
         keepOriginal: false,
@@ -125,17 +130,56 @@ void main() {
         verifyCoreML: verify,
       ),
       isCancelled: isCancelled,
+      onProgress: onProgress,
     );
   }
 
   group('import with Core ML', () {
+    test('two imports overlap MDX processing and share the native models and verification', () async {
+      final pool = ImportModelPool();
+      addTearDown(pool.close);
+      final loader = Loader();
+      final repo = SongRepository(Directory('${tmp.path}/songs'));
+      final pipeline = ImportPipeline(
+        audio: const WavAudioBackend(),
+        repository: repo,
+        loadModel: loader.call,
+        sharedModels: pool,
+        availableMemory: () => 2000 * 1000 * 1000,
+      );
+      final progress = <String>[];
+      Future<SongMeta> start(String title) => importWith(loader, pipeline: pipeline, title: title, onProgress: (p) {
+        if (p.stage == ImportStage.separatingVocals && (p.done ?? 0) > 0) progress.add(title);
+      });
+
+      final songs = await Future.wait([start('第一首'), start('第二首')]);
+      expect(songs.map((song) => song.title), ['第一首', '第二首']);
+      expect((await repo.list()).map((song) => song.id), unorderedEquals(songs.map((song) => song.id)));
+      expect(progress.indexOf('第二首'), lessThan(progress.lastIndexOf('第一首')));
+      expect(progress.indexOf('第一首'), lessThan(progress.lastIndexOf('第二首')));
+      expect(loader.calls, ['mdx coreml', 'mdx', 'vr']);
+      expect(loader.vocalCpu.single.runs, 1);
+      for (final song in songs) {
+        expect(song.modelInfo['mdxRuntime'], 'Core ML');
+        expect(song.modelInfo[ImportPipeline.coreMLInfo], 'checked 300.0 dB');
+      }
+    });
+
     test('agreeing with the CPU: Core ML separates the song, checked once', () async {
       final marker = '${tmp.path}/coreml-trial';
       var markerWhileLoading = false;
-      final loader = Loader(onCoreMLLoad: () => markerWhileLoading = File(marker).existsSync());
+      var markerDuringFirstRun = false;
+      final loader = Loader(
+        onCoreMLLoad: () => markerWhileLoading = File(marker).existsSync(),
+        coreML: (input, run) {
+          if (run == 0) markerDuringFirstRun = File(marker).existsSync();
+          return same(input, run);
+        },
+      );
       final meta = await importWith(loader, marker: marker);
       expect(loader.calls, ['mdx coreml', 'mdx', 'vr'], reason: 'one CPU model only for the check');
       expect(markerWhileLoading, isTrue);
+      expect(markerDuringFirstRun, isTrue);
       expect(File(marker).existsSync(), isFalse);
       expect(meta.modelInfo['mdxRuntime'], 'Core ML');
       expect(meta.modelInfo[ImportPipeline.coreMLInfo], 'checked 300.0 dB');
@@ -211,6 +255,29 @@ void main() {
         throwsA(isA<SeparationCancelled>()),
       );
       expect(File(marker).existsSync(), isFalse);
+    });
+
+    test('cancelling before inference leaves no crash marker on an idle shared session', () async {
+      final marker = File('${tmp.path}/coreml-trial');
+      final pool = ImportModelPool();
+      addTearDown(pool.close);
+      var loaded = false;
+      final loader = Loader(onCoreMLLoad: () {
+        expect(marker.existsSync(), isTrue);
+        loaded = true;
+      });
+      final pipeline = ImportPipeline(
+        audio: const WavAudioBackend(),
+        repository: SongRepository(Directory('${tmp.path}/songs')),
+        loadModel: loader.call,
+        sharedModels: pool,
+      );
+      await expectLater(
+        importWith(loader, marker: marker.path, pipeline: pipeline, isCancelled: () => loaded),
+        throwsA(isA<SeparationCancelled>()),
+      );
+      expect(loader.vocalCoreML?.closed, isFalse);
+      expect(marker.existsSync(), isFalse);
     });
 
     test('the request carries the Core ML choice to the import worker', () {
