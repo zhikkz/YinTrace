@@ -555,9 +555,7 @@ class ImportPipeline {
     final prior = info[coreMLInfo];
     if (options == null || (prior != null && !prior.startsWith('checked '))) return cpu();
     final marker = r.coreMLMarker == null ? null : File(r.coreMLMarker!);
-    try {
-      marker?.writeAsStringSync(DateTime.now().toIso8601String(), flush: true);
-    } catch (_) {}
+    _CoreMLGuard.writeMarker(marker);
     try {
       final model = await loadModel(
         r.mdxModelPath!,
@@ -565,6 +563,7 @@ class ImportPipeline {
         outputName: cfg.outputName,
         coreML: options,
       );
+      _CoreMLGuard.removeMarker(marker);
       info['mdxRuntime'] = 'Core ML';
       return _CoreMLGuard(model, cpu, verifyPending: prior == null && r.verifyCoreML, marker: marker, info: info);
     } catch (e) {
@@ -671,8 +670,8 @@ class _NoModel implements TensorModel {
 
 /// Runs the vocal model with Core ML, and finishes the song on the CPU when
 /// Core ML fails, returns values that are not finite or, on the checked
-/// chunk, does not agree with the CPU. The marker file is removed once the
-/// first chunk is back (or Core ML is given up).
+/// chunk, does not agree with the CPU. The marker is held during session
+/// creation and during the first inference, even when a session is reused.
 class _CoreMLGuard implements TensorModel {
   _CoreMLGuard(this._coreML, this._loadCpu, {required this.verifyPending, required this.marker, required this.info});
 
@@ -691,6 +690,12 @@ class _CoreMLGuard implements TensorModel {
   bool _first = true;
   bool _closed = false;
 
+  static void writeMarker(File? marker) {
+    try {
+      marker?.writeAsStringSync(DateTime.now().toIso8601String(), flush: true);
+    } catch (_) {}
+  }
+
   static void removeMarker(File? marker) {
     try {
       if (marker != null && marker.existsSync()) marker.deleteSync();
@@ -706,6 +711,7 @@ class _CoreMLGuard implements TensorModel {
     }
     final Float32List out;
     try {
+      if (_first) writeMarker(marker);
       out = await coreML.run(input, shape);
     } catch (e) {
       if (_closed) rethrow;
