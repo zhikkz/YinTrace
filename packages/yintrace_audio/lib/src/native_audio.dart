@@ -389,11 +389,19 @@ class PracticeEngine {
     return _b.engineMonitorAvailable(_ptr) != 0;
   }
 
-  /// Direct mic-to-stereo mix, only while playing. Gain is limited to 0..1;
-  /// route changes clear it, so check [monitorAvailable] before reapplying.
+  /// Direct mic-to-stereo mix. Gain is limited to 0..1 and normally heard
+  /// while tracks play. Route changes clear it, so check [monitorAvailable]
+  /// before reapplying.
   void setMonitorGain(double gain) {
     _check();
     _b.engineSetMonitorGain(_ptr, gain);
+  }
+
+  /// Allows mic monitoring whenever capture is running, including with no
+  /// track playing. This still requires a wired output and a nonzero gain.
+  void setMonitorWhileCapturing(bool enabled) {
+    _check();
+    _b.engineSetMonitorWhileCapturing(_ptr, enabled ? 1 : 0);
   }
 
   void play() {

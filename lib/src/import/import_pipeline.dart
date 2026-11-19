@@ -806,6 +806,5 @@ Future<void> realignSong(SongRepository repo, String id, String lyrics, {
   }
   await repo.saveReference(id, reference);
   if (old != null) await repo.remapHistory(id, old, moved!);
-  meta.lyrics = lyrics;
-  await repo.save(meta);
+  await repo.saveAlignmentMetadata(id, lyrics, meta.modelInfo);
 }

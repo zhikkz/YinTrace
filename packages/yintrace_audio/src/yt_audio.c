@@ -298,6 +298,7 @@ struct yt_engine {
   volatile ma_uint32 playing;
   volatile ma_int64 end_count;
   volatile float monitor_gain;
+  volatile ma_uint32 monitor_while_capturing;
   volatile ma_uint32 monitor_route_allowed;
   ma_int64 clock;  // audio thread only
 
@@ -421,6 +422,7 @@ void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames)
   const ma_int64 loop_end = ma_atomic_load_i64(&e->loop_end);
   const ma_bool32 looping = loop_end > loop_start && loop_start >= 0;
   const float monitor = ma_atomic_load_f32(&e->monitor_gain);
+  const ma_bool32 monitor_capture = ma_atomic_load_32(&e->monitor_while_capturing) != 0;
   ma_bool32 ended = MA_FALSE;
 
   if (out != NULL) memset(out, 0, (size_t)frame_count * 2 * sizeof(float));
@@ -450,7 +452,7 @@ void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames)
     if (in != NULL) {
       yt_push_capture(e, in + done, seg, pos, e->clock + done,
                       seg_playing ? YT_CAPTURE_FLAG_PLAYING : 0);
-      if (out != NULL && seg_playing && monitor > 0.0f &&
+      if (out != NULL && (seg_playing || monitor_capture) && monitor > 0.0f &&
           ma_atomic_load_32(&e->monitor_route_allowed)) {
         float* o = out + (size_t)done * 2;
         const float* s = in + done;
@@ -742,6 +744,11 @@ void yt_engine_set_monitor_gain(yt_engine* e, float gain) {
   if (!isfinite(gain) || gain < 0.0f || !yt_engine_monitor_available(e)) gain = 0.0f;
   if (gain > 1.0f) gain = 1.0f;
   ma_atomic_store_f32(&e->monitor_gain, gain);
+}
+
+void yt_engine_set_monitor_while_capturing(yt_engine* e, int32_t enabled) {
+  if (e == NULL) return;
+  ma_atomic_store_32(&e->monitor_while_capturing, enabled ? 1 : 0);
 }
 
 void yt_engine_set_playing(yt_engine* e, int32_t playing) {

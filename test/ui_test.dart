@@ -48,6 +48,7 @@ import 'package:yintrace/src/ui/results_sheet.dart';
 import 'package:yintrace/src/ui/score_trend.dart';
 import 'package:yintrace/src/ui/song_page.dart';
 import 'package:yintrace/src/ui/song_share.dart';
+import 'package:yintrace/src/ui/tuner_page.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
 import 'support/benchmark_sample.dart';
@@ -223,6 +224,57 @@ void main() {
     expect(find.text('先练这几句'), findsOneWidget);
     expect(find.widgetWithText(ActionChip, '下雨了 记得带…  71 分'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, '整首练习'), findsOneWidget);
+  });
+
+  testWidgets('an imported song can be renamed from its menu', (tester) async {
+    phone(tester);
+    final source = services.songs;
+    final repo = SongRepository(Directory('${tmp.path}/rename'));
+    repo.dirFor(song.id).createSync(recursive: true);
+    for (final file in source.dirFor(song.id).listSync().whereType<File>()) {
+      file.copySync(repo.pathFor(song.id, file.uri.pathSegments.last));
+    }
+    final renameServices = AppServices(settings: AppSettings(null), songs: repo, models: services.models);
+    await tester.pumpWidget(host(renameServices, const LibraryPage()));
+    await settleIo(tester);
+    await tester.tap(find.text(song.title));
+    await settleIo(tester, rounds: 40);
+
+    Future<void> openRename() async {
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('修改歌名'));
+      await tester.pumpAndSettle();
+    }
+
+    String? songPageTitle() => (tester.widget<SliverAppBar>(find.byType(SliverAppBar)).title as Text).data;
+
+    await openRename();
+    final field = find.byType(TextFormField);
+    expect(tester.widget<TextFormField>(field).initialValue, song.title);
+    await tester.enterText(field, '   ');
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+    expect(find.text('请输入歌名'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(songPageTitle(), song.title);
+
+    await openRename();
+    await tester.enterText(field, '  夜航新名  ');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await settleIo(tester, rounds: 30);
+    expect(songPageTitle(), '夜航新名');
+    expect(find.text('得分趋势'), findsOneWidget);
+    await tester.pageBack();
+    await settleIo(tester, rounds: 30);
+    expect(find.text('夜航新名'), findsOneWidget);
+    expect(find.text('82'), findsOneWidget);
+
+    final stored = await tester.runAsync(() => SongRepository(repo.root).load(song.id));
+    expect(stored?.title, '夜航新名');
+    expect(stored?.artist, song.artist);
+    expect(stored?.lyrics, song.lyrics);
   });
 
   testWidgets('pitch editor moves a character, leaves it out of the score and restores it', (tester) async {
@@ -951,6 +1003,55 @@ void main() {
   }
 
   final lib = Platform.environment['YINTRACE_AUDIO_LIB'];
+
+  testWidgets('free practice monitors the mic without tracks and disarms when headphones are lost', (tester) async {
+    phone(tester);
+    final settings = AppSettings(null);
+    final tunerServices = AppServices(settings: settings, songs: services.songs, models: services.models);
+    late PracticeEngine engine;
+    await tester.pumpWidget(
+      host(tunerServices, TunerPage(engineFactory: () => engine = PracticeEngine.create(mode: EngineMode.offline))),
+    );
+    await tester.pump();
+    final mic = Float32List(64)..[7] = 0.4;
+    Float32List render() => engine.render(64, input: mic);
+    expect(engine.isPlaying, isFalse);
+    expect(render()[14], 0);
+
+    await tester.tap(find.byTooltip('耳返设置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final monitor = find.widgetWithText(SwitchListTile, '耳返（有线耳机）');
+    expect(tester.widget<SwitchListTile>(monitor).value, isFalse);
+    await tester.tap(monitor);
+    await tester.pump();
+    final output = render();
+    expect(output[14], closeTo(0.2, 1e-6));
+    expect(output[15], output[14]);
+    expect(engine.readCapture().last.samples[7], closeTo(0.4, 1e-6));
+
+    await tester.tapAt(tester.getCenter(find.byType(Slider)) + const Offset(60, 0));
+    await tester.pump();
+    expect(settings.monitorVolume, greaterThan(0.5));
+    expect(render()[14], closeTo(0.4 * settings.monitorVolume, 1e-6));
+
+    engine.signalAudioEvent(AudioEvents.routeChanged);
+    expect(render()[14], 0);
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(render()[14], closeTo(0.4 * settings.monitorVolume, 1e-6));
+
+    engine.signalAudioEvent(AudioEvents.deviceLost);
+    expect(render()[14], 0);
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(tester.widget<SwitchListTile>(monitor).value, isFalse);
+    Navigator.of(tester.element(monitor)).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('继续练习'));
+    await tester.pump();
+    expect(render()[14], 0);
+    expect(engine.readCapture().last.samples[7], closeTo(0.4, 1e-6));
+  }, skip: lib == null);
   testWidgets('scores hide line playback when the scored line has no recording', (tester) async {
     phone(tester);
     final reference = SongReference(
@@ -1402,6 +1503,54 @@ void main() {
       await tester.pump(const Duration(milliseconds: 11));
     }
   }
+
+  testWidgets('dragging the practice pitch graph seeks at the graph scale', (tester) async {
+    phone(tester);
+    final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    late PracticeSession session;
+    await tester.pumpWidget(practiceLauncher(ref, onSession: (s) => session = s, onLeave: (_) {}));
+    await tester.tap(find.text('练习'));
+    await settleIo(tester);
+    expect(session.started, isTrue);
+
+    final graph = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
+    final painter = tester.widget<CustomPaint>(graph).painter! as PitchGraphPainter;
+    final secondsPerPixel = (painter.t1 - painter.t0) / (tester.getSize(graph).width - painter.gutter);
+    final engine = session.engine!;
+    session.seek(3);
+    await tester.pump();
+
+    await tester.tap(graph);
+    await tester.drag(graph, const Offset(0, 80));
+    expect(engine.positionSeconds, closeTo(3, 0.001));
+
+    final gesture = await tester.startGesture(tester.getCenter(graph));
+    await gesture.moveBy(const Offset(-60, 0));
+    expect(engine.positionSeconds, closeTo(3 + 60 * secondsPerPixel, 0.001));
+    await tester.pump(); // the moving chart must keep the same drag anchor
+    await gesture.moveBy(const Offset(-40, 0));
+    expect(engine.positionSeconds, closeTo(3 + 100 * secondsPerPixel, 0.001));
+    await gesture.up();
+    expect(session.isPlaying, isFalse);
+
+    session.play();
+    await tester.pump();
+    await tester.drag(graph, const Offset(80, 0));
+    expect(engine.positionSeconds, closeTo(3 + 20 * secondsPerPixel, 0.001));
+    expect(session.isPlaying, isTrue);
+
+    session.seek(0.3);
+    final atStart = await tester.startGesture(tester.getCenter(graph));
+    await atStart.moveBy(const Offset(80, 0));
+    expect(engine.positionSeconds, 0);
+    await atStart.moveBy(const Offset(-60, 0));
+    expect(engine.positionSeconds, closeTo(60 * secondsPerPixel, 0.001));
+    await atStart.up();
+
+    await tester.drag(graph, const Offset(-1000, 0));
+    expect(engine.positionSeconds, closeTo(session.duration, 0.001));
+    await tester.pumpWidget(const SizedBox());
+  }, skip: lib == null || lib.isEmpty);
 
   testWidgets('leaving the practice page keeps what was sung, and asks about the recording', (tester) async {
     phone(tester);
