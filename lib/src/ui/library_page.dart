@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../app/services.dart';
+import '../import/import_queue.dart';
 import '../library/song.dart';
 import '../models/model_catalog.dart';
 import '../models/model_manager.dart';
 import 'import_page.dart';
+import 'import_queue_page.dart';
 import 'model_setup.dart';
 import 'pitch_graph.dart';
 import 'settings_page.dart';
@@ -34,25 +36,50 @@ class LibraryPage extends StatefulWidget {
 
 class _LibraryPageState extends State<LibraryPage> {
   List<SongMeta>? _songs;
-  bool _loaded = false;
+  AppServices? _services;
+  int _completedImports = 0;
+  int _loadVersion = 0;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_loaded) {
-      _loaded = true;
+    final services = AppScope.of(context);
+    if (_services != services) {
+      _services?.importQueue.removeListener(_importsChanged);
+      _services = services;
+      _completedImports = services.importQueue.completedCount;
+      services.importQueue.addListener(_importsChanged);
       _reload();
     }
   }
 
+  @override
+  void dispose() {
+    _services?.importQueue.removeListener(_importsChanged);
+    super.dispose();
+  }
+
+  void _importsChanged() {
+    final completed = _services!.importQueue.completedCount;
+    if (_completedImports == completed) return;
+    _completedImports = completed;
+    _reload();
+  }
+
   Future<void> _reload() async {
-    final songs = await AppScope.of(context).songs.list();
-    if (mounted) setState(() => _songs = songs);
+    final version = ++_loadVersion;
+    final songs = await _services!.songs.list();
+    if (mounted && version == _loadVersion) setState(() => _songs = songs);
   }
 
   Future<void> _open(Widget page) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
-    await _reload();
+    if (mounted) await _reload();
+  }
+
+  Future<void> _openImport() async {
+    final added = await ImportPage.open(context);
+    if (mounted && added == true) await _open(const ImportQueuePage());
   }
 
   @override
@@ -69,6 +96,7 @@ class _LibraryPageState extends State<LibraryPage> {
             SliverAppBar.large(
               title: const Text('曲库'),
               actions: [
+                _ImportQueueAction(queue: services.importQueue, onPressed: () => _open(const ImportQueuePage())),
                 IconButton(
                   tooltip: '自由练习',
                   icon: const Icon(Icons.graphic_eq_rounded),
@@ -92,7 +120,7 @@ class _LibraryPageState extends State<LibraryPage> {
               SliverFillRemaining(
                 hasScrollBody: false,
                 child: _EmptyLibrary(
-                  onImport: () => _open(const ImportPage()),
+                  onImport: _openImport,
                   onTuner: () => _open(const TunerPage()),
                 ),
               ),
@@ -112,13 +140,36 @@ class _LibraryPageState extends State<LibraryPage> {
           : SafeArea(
               minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
               child: FilledButton.icon(
-                onPressed: () => _open(const ImportPage()),
+                onPressed: _openImport,
                 icon: const Icon(Icons.add_rounded),
                 label: const Text('导入歌曲'),
               ),
             ),
     );
   }
+}
+
+class _ImportQueueAction extends StatelessWidget {
+  const _ImportQueueAction({required this.queue, required this.onPressed});
+  final ImportQueue queue;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: queue,
+    builder: (context, _) {
+      final count = queue.activeCount;
+      return IconButton(
+        tooltip: count == 0 ? '导入队列' : '导入队列，$count 个任务',
+        icon: Badge.count(
+          count: count,
+          isLabelVisible: count > 0,
+          child: const Icon(Icons.playlist_add_check_rounded),
+        ),
+        onPressed: onPressed,
+      );
+    },
+  );
 }
 
 /// Says that the vocal model still has to be downloaded (or is on its way).

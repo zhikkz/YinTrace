@@ -98,59 +98,67 @@ class MdxSeparator {
     }
 
     prepare(0, inputs[0]);
-    var pending = launch(0);
     onStep?.call(0, nChunks);
-    for (var index = 0; index < nChunks; index++) {
-      final start = index * step;
-      final hasNext = index + 1 < nChunks;
-      if (hasNext) prepare(start + step, inputs[(index + 1) % 2]);
-      final out = await pending;
-      if (hasNext) pending = launch(index + 1);
-      if (out.length != inputs[0].length) {
-        throw StateError('MDX model returned ${out.length} values, expected ${inputs[0].length}');
-      }
+    Future<Float32List>? pending = launch(0);
+    try {
+      for (var index = 0; index < nChunks; index++) {
+        final start = index * step;
+        final hasNext = index + 1 < nChunks;
+        if (hasNext) prepare(start + step, inputs[(index + 1) % 2]);
+        final out = await pending!;
+        pending = hasNext ? launch(index + 1) : null;
+        if (out.length != inputs[0].length) {
+          throw StateError('MDX model returned ${out.length} values, expected ${inputs[0].length}');
+        }
 
-      final end = math.min(start + chunk, total);
-      final actual = end - start;
-      final window = useWindow ? _hanning(actual) : null;
-      for (var ch = 0; ch < 2; ch++) {
-        final re = Float32List.sublistView(out, 2 * ch * planeSize, (2 * ch + 1) * planeSize);
-        final im = Float32List.sublistView(out, (2 * ch + 1) * planeSize, (2 * ch + 2) * planeSize);
-        final wave = _stft.inverse(Spectrogram.from(c.dimF, c.dimT, re, im), length: chunk);
+        final end = math.min(start + chunk, total);
+        final actual = end - start;
+        final window = useWindow ? _hanning(actual) : null;
+        for (var ch = 0; ch < 2; ch++) {
+          final re = Float32List.sublistView(out, 2 * ch * planeSize, (2 * ch + 1) * planeSize);
+          final im = Float32List.sublistView(out, (2 * ch + 1) * planeSize, (2 * ch + 2) * planeSize);
+          final wave = _stft.inverse(Spectrogram.from(c.dimF, c.dimT, re, im), length: chunk);
+          if (window != null) {
+            for (var i = 0; i < actual; i++) {
+              result[2 * ((start + i) % chunk) + ch] += wave[i] * window[i];
+            }
+          } else {
+            for (var i = 0; i < actual; i++) {
+              result[2 * ((start + i) % chunk) + ch] += wave[i];
+            }
+          }
+        }
         if (window != null) {
           for (var i = 0; i < actual; i++) {
-            result[2 * ((start + i) % chunk) + ch] += wave[i] * window[i];
+            divider[(start + i) % chunk] += window[i];
           }
         } else {
           for (var i = 0; i < actual; i++) {
-            result[2 * ((start + i) % chunk) + ch] += wave[i];
+            divider[(start + i) % chunk] += 1;
           }
         }
-      }
-      if (window != null) {
-        for (var i = 0; i < actual; i++) {
-          divider[(start + i) % chunk] += window[i];
+        final until = math.min(start + step, total);
+        for (; finalized < until; finalized++) {
+          final slot = finalized % chunk;
+          final i = finalized - trim;
+          final d = divider[slot];
+          if (i >= 0 && i < frames && d > 1e-8) {
+            output[2 * i] = result[2 * slot] / d * c.compensate;
+            output[2 * i + 1] = result[2 * slot + 1] / d * c.compensate;
+          }
+          result[2 * slot] = 0;
+          result[2 * slot + 1] = 0;
+          divider[slot] = 0;
         }
-      } else {
-        for (var i = 0; i < actual; i++) {
-          divider[(start + i) % chunk] += 1;
-        }
+        onStep?.call(index + 1, nChunks);
+        onProgress?.call((index + 1) / nChunks);
       }
-      final until = math.min(start + step, total);
-      for (; finalized < until; finalized++) {
-        final slot = finalized % chunk;
-        final i = finalized - trim;
-        final d = divider[slot];
-        if (i >= 0 && i < frames && d > 1e-8) {
-          output[2 * i] = result[2 * slot] / d * c.compensate;
-          output[2 * i + 1] = result[2 * slot + 1] / d * c.compensate;
-        }
-        result[2 * slot] = 0;
-        result[2 * slot + 1] = 0;
-        divider[slot] = 0;
-      }
-      onStep?.call(index + 1, nChunks);
-      onProgress?.call((index + 1) / nChunks);
+    } finally {
+      // A progress callback can cancel after the next chunk was launched.
+      // Wait before this stage gives up its lease on the shared model.
+      try {
+        await pending;
+      } catch (_) {}
     }
 
     return output;
