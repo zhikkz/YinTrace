@@ -21,8 +21,8 @@ class TakeRecorder {
 
   static const _chunkFrames = 4096;
   final _chunks = <int, Float32List>{};
-  int _first = -1;
-  int _end = -1;
+  // Sorted, disjoint captured ranges, with exclusive ends.
+  final _recordedRanges = <({int start, int end})>[];
   int _version = 0;
 
   /// The singer's pitch while recording, in song time order. Like the audio,
@@ -30,7 +30,7 @@ class TakeRecorder {
   final List<UserPoint> points = [];
   int _cursor = -1; // index of the newest point of the current pass
 
-  bool get isEmpty => _chunks.isEmpty;
+  bool get isEmpty => _recordedRanges.isEmpty;
 
   /// How long a voice was heard in the take (the points with a pitch, one
   /// per [hopSeconds]); the audio itself is recorded whether anyone sings
@@ -43,8 +43,8 @@ class TakeRecorder {
 
   /// Allocated mono sample capacity, in frames.
   int get allocatedFrames => _chunks.length * _chunkFrames;
-  int get startFrame => isEmpty ? 0 : _first;
-  int get endFrame => isEmpty ? 0 : _end;
+  int get startFrame => isEmpty ? 0 : _recordedRanges.first.start;
+  int get endFrame => isEmpty ? 0 : _recordedRanges.last.end;
 
   /// A snapshot from frame [from] up to (but excluding) [to]. Unrecorded frames are silent.
   Float32List readFrames(int from, int to) {
@@ -67,12 +67,18 @@ class TakeRecorder {
   int get version => _version;
 
   /// Song time span that contains everything recorded.
-  double get startSeconds => _first < 0 ? 0 : _first / sampleRate;
-  double get endSeconds => _end < 0 ? 0 : _end / sampleRate;
+  double get startSeconds => isEmpty ? 0 : startFrame / sampleRate;
+  double get endSeconds => isEmpty ? 0 : endFrame / sampleRate;
 
-  /// Whether any audio was recorded between [from] and [to] seconds.
-  bool covers(double from, double to) =>
-      !isEmpty && _first < (to * sampleRate).round() && _end > (from * sampleRate).round();
+  /// Whether any captured frames, including silence, overlap [from] to [to] seconds.
+  bool covers(double from, double to) {
+    if (isEmpty) return false;
+    final start = (from * sampleRate).round();
+    final end = (to * sampleRate).round();
+    if (start >= end) return false;
+    final i = _firstRangeEndingAfter(start);
+    return i < _recordedRanges.length && _recordedRanges[i].start < end;
+  }
 
   /// Adds a captured block whose first sample was captured while song frame
   /// [songFrame] was playing. Only the part heard between song frames
@@ -90,9 +96,33 @@ class TakeRecorder {
       chunk.setRange(offset, offset + count, block, at - start);
       at += count;
     }
-    _first = _first < 0 ? a : math.min(_first, a);
-    _end = math.max(_end, b);
+    _addRecordedRange(a, b);
     _version++;
+  }
+
+  void _addRecordedRange(int start, int end) {
+    // Merge touching ranges so consecutive capture blocks stay one range.
+    final first = _firstRangeEndingAfter(start - 1);
+    var last = first;
+    while (last < _recordedRanges.length && _recordedRanges[last].start <= end) {
+      final range = _recordedRanges[last++];
+      start = math.min(start, range.start);
+      end = math.max(end, range.end);
+    }
+    _recordedRanges.replaceRange(first, last, [(start: start, end: end)]);
+  }
+
+  int _firstRangeEndingAfter(int frame) {
+    var lo = 0, hi = _recordedRanges.length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (_recordedRanges[mid].end <= frame) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
   }
 
   void addPoint(UserPoint p) {

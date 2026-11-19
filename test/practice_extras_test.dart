@@ -65,6 +65,48 @@ void main() {
       expect(take.endFrame, at + 6000);
     });
 
+    test('separate recordings leave an uncovered gap between them', () {
+      final take = TakeRecorder(sampleRate: 1000, lengthFrames: 12000)
+        ..addAudio(ramp(100, 0.5), 1000, 0)
+        ..addAudio(ramp(100, -0.5), 10000, 0);
+
+      expect(take.covers(1, 1.1), isTrue);
+      expect(take.covers(10, 10.1), isTrue);
+      expect(take.covers(5, 6), isFalse);
+      expect(take.readFrames(5000, 6000), everyElement(0));
+    });
+
+    test('coverage respects the clipped frames within one allocated block', () {
+      final take = TakeRecorder(sampleRate: 1000, lengthFrames: 4096)
+        ..addAudio(ramp(100, 0.5), 150, 50, fromFrame: 120, toFrame: 170)
+        ..addAudio(Float32List(50), 300, 0);
+
+      expect(take.allocatedFrames, 4096);
+      expect(take.covers(0.100, 0.120), isFalse);
+      expect(take.covers(0.169, 0.170), isTrue);
+      expect(take.covers(0.170, 0.300), isFalse);
+      expect(take.covers(0.300, 0.301), isTrue); // captured silence
+      expect(take.readFrames(300, 350), everyElement(0));
+      expect(take.covers(0.140, 0.140), isFalse);
+    });
+
+    test('recording again across a block boundary can fill a gap', () {
+      final take = TakeRecorder(sampleRate: 1000, lengthFrames: 8192)
+        ..addAudio(ramp(4, -0.5), 4100, 0)
+        ..addAudio(ramp(4, 0.5), 4092, 0);
+
+      expect(take.covers(4.096, 4.100), isFalse);
+      final capacity = take.allocatedFrames;
+      take.addAudio(Float32List(8), 4094, 0);
+
+      expect(take.allocatedFrames, capacity);
+      expect(take.covers(4.095, 4.097), isTrue);
+      expect(take.covers(4.096, 4.100), isTrue);
+      expect(take.covers(4.103, 4.104), isTrue);
+      expect(take.covers(4.104, 4.105), isFalse);
+      expect(take.readFrames(4092, 4104), [0.5, 0.5, ...List.filled(8, 0), -0.5, -0.5]);
+    });
+
     test('a passage sung again replaces only that part of the pitch trail', () {
       final take = TakeRecorder(sampleRate: 1000, lengthFrames: 1000);
       for (var i = 0; i < 100; i++) {
