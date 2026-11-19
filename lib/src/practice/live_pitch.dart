@@ -94,14 +94,12 @@ class LivePitchTracker {
   int _pushed = 0;
   final _segments = Queue<_Segment>();
   final _recent = <double>[];
-  double _lastMidi = 0;
 
   void reset() {
     _stream.reset();
     _pushed = 0;
     _segments.clear();
     _recent.clear();
-    _lastMidi = 0;
   }
 
   /// Feeds one captured block.
@@ -129,7 +127,6 @@ class LivePitchTracker {
       } else {
         _recent.clear();
       }
-      _lastMidi = midi;
       out.add(LivePitch(
         songTime: songT,
         clockTime: clockT,
@@ -142,15 +139,9 @@ class LivePitchTracker {
     return out;
   }
 
-  /// Short median filter plus suppression of single-frame octave jumps.
+  /// Median of raw estimates: rejects one octave outlier and follows a
+  /// sustained octave change as soon as two of the three frames agree.
   double _stabilise(double m) {
-    if (_lastMidi > 0) {
-      final d = m - _lastMidi;
-      if ((d.abs() - 12).abs() < 1.0 && _recent.length >= 3) {
-        // A lone octave jump: keep the previous estimate's octave.
-        m -= 12 * d.sign;
-      }
-    }
     _recent.add(m);
     if (_recent.length > 3) _recent.removeAt(0);
     return median(_recent);
