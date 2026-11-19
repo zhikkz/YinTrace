@@ -290,6 +290,35 @@ void main() {
       expect(host.requests, ['/dl/a.bin -', '/blob/a.bin -']);
     });
 
+    test('stops oversized fresh and resumed downloads before writing past the catalog size', () async {
+      final d = ResumableDownload();
+      addTearDown(d.close);
+      final part = File('${tmp.path}/a.part');
+      for (final resume in [false, true]) {
+        if (resume) part.writeAsBytesSync(payload.sublist(0, 500));
+        final progress = <int>[];
+        await expectLater(
+          d.fetch(Uri.parse(host.url('a.bin')), part, expectedBytes: 1024, onProgress: progress.add),
+          throwsA(isA<ModelDownloadException>().having((e) => e.message, 'message', contains('超过'))),
+        );
+        expect(progress.every((n) => n <= 1024), isTrue);
+        expect(part.existsSync(), isFalse);
+      }
+    });
+
+    test('a repeated 416 gives up after restarting a partial once', () async {
+      final part = File('${tmp.path}/a.part')..writeAsBytesSync([1, 2]);
+      final d = ResumableDownload();
+      addTearDown(d.close);
+      host.failWith = HttpStatus.requestedRangeNotSatisfiable;
+      await expectLater(
+        d.fetch(Uri.parse(host.url('a.bin')), part, expectedBytes: payload.length),
+        throwsA(isA<ModelDownloadException>().having((e) => e.message, 'message', contains('416'))),
+      );
+      expect(host.requests, ['/dl/a.bin bytes=2-', '/dl/a.bin -']);
+      expect(part.existsSync(), isFalse);
+    });
+
     test('continues a broken download with a range request', () async {
       final part = File('${tmp.path}/a.part');
       host.breakAfter = 250000;
