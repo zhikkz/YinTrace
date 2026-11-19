@@ -178,6 +178,148 @@ void main() {
     });
   });
 
+  group('melody and voicing', () {
+    int bin(double hz) =>
+        ((SwiftF0.bins - 1) * math.log(hz / SwiftF0.binMinHz) / math.log(SwiftF0.binMaxHz / SwiftF0.binMinHz)).round();
+
+    test('stays with one voice where the best bin flips between two an octave apart', () {
+      // A lead and its double an octave below: the model's best bin flips
+      // between them, slightly more often to the lead.
+      const n = 200;
+      final scores = Float32List(n * SwiftF0.bins)..fillRange(0, n * SwiftF0.bins, -6);
+      final confidence = Float32List(n)..fillRange(0, n, 0.8);
+      final lead = bin(330), double = bin(165);
+      for (var t = 0; t < n; t++) {
+        final leadWins = t % 5 != 1 && t % 5 != 3;
+        scores[t * SwiftF0.bins + lead] = leadWins ? 3 : 2;
+        scores[t * SwiftF0.bins + double] = leadWins ? 2 : 3;
+      }
+      final melody = decodeMelody(scores, confidence);
+      expect(melody.every((hz) => (hzToMidi(hz) - hzToMidi(330)).abs() < 0.8), isTrue,
+          reason: '${melody.map(hzToMidi).map((m) => m.round()).toSet()}');
+    });
+
+    test('a voice an octave below that takes over for a second in a held note is not followed', () {
+      // The lead holds 330 Hz for 1.2 s; for 0.6 s of it a harmony an octave
+      // below (left in by the separation) is what the model hears best.
+      const n = 300;
+      final scores = Float32List(n * SwiftF0.bins)..fillRange(0, n * SwiftF0.bins, -6);
+      final confidence = Float32List(n)..fillRange(0, n, 0.8);
+      final lead = bin(330), low = bin(165);
+      for (var t = 0; t < n; t++) {
+        final harmony = t >= 80 && t < 230;
+        scores[t * SwiftF0.bins + lead] = harmony ? 2.5 : 4;
+        if (harmony) scores[t * SwiftF0.bins + low] = 4;
+        // The bins between them a little above the rest: the path can walk
+        // down through them, as it does on real recordings.
+        for (var b = low + 1; b < lead; b++) {
+          scores[t * SwiftF0.bins + b] = -3;
+        }
+      }
+      final midi = decodeMelody(scores, confidence).map(hzToMidi).toList();
+      // Never an octave off; the pitch of the lead except in the frames
+      // where the path walks between the voices (smoothed out later).
+      final lead330 = hzToMidi(330);
+      expect(midi.every((m) => (m - lead330).abs() < 2), isTrue, reason: '$midi');
+      final settled = [for (var t = 0; t < n; t++) if ((t - 80).abs() > 2 && (t - 230).abs() > 2) midi[t]];
+      expect(settled.every((m) => (m - lead330).abs() < 0.8), isTrue, reason: '$midi');
+    });
+
+    test('a real leap of an octave is kept', () {
+      // 220 Hz, a consonant, then 440 Hz, where the model hears nothing an
+      // octave below.
+      const n = 260;
+      final scores = Float32List(n * SwiftF0.bins)..fillRange(0, n * SwiftF0.bins, -6);
+      final confidence = Float32List(n);
+      for (var t = 0; t < n; t++) {
+        final second = t >= 110;
+        if (t >= 100 && t < 110) {
+          confidence[t] = 0.2;
+          continue;
+        }
+        confidence[t] = 0.85;
+        scores[t * SwiftF0.bins + bin(second ? 440 : 220)] = 4;
+      }
+      final midi = decodeMelody(scores, confidence).map(hzToMidi).toList();
+      expect(midi.sublist(0, 100).every((m) => (m - 57).abs() < 0.8), isTrue);
+      expect(midi.sublist(112).every((m) => (m - 69).abs() < 0.8), isTrue, reason: '${midi.sublist(105, 130)}');
+    });
+
+    test('a short slip to another pitch is not followed, a new phrase after a pause is', () {
+      const n = 300;
+      final scores = Float32List(n * SwiftF0.bins)..fillRange(0, n * SwiftF0.bins, -6);
+      final confidence = Float32List(n);
+      void sing(int from, int to, double hz, double c) {
+        for (var t = from; t < to; t++) {
+          scores[t * SwiftF0.bins + bin(hz)] = 4;
+          confidence[t] = c;
+        }
+      }
+
+      sing(0, 100, 220, 0.9);
+      sing(60, 66, 440, 0.9); // six frames (24 ms) an octave up
+      sing(100, 150, 220, 0.02); // a pause: the model is not sure of anything
+      for (var t = 100; t < 150; t++) {
+        scores[t * SwiftF0.bins + bin(220)] = -6;
+      }
+      sing(150, 300, 523.25, 0.9); // the next phrase, an octave and a third higher
+      final midi = decodeMelody(scores, confidence).map(hzToMidi).toList();
+      expect(midi.sublist(0, 100).every((m) => (m - 57).abs() < 0.8), isTrue, reason: '${midi.sublist(55, 70)}');
+      expect(midi.sublist(152, 300).every((m) => (m - 72).abs() < 0.8), isTrue, reason: '${midi.sublist(148, 160)}');
+    });
+
+    test('voiced where the singer sings: dips are held, tails and residue are not lines', () async {
+      // 0.5–1.5 s a sung note (the model unsure for 0.1 s in the middle),
+      // a reverb tail 30 dB down, a pause with what the separation left
+      // 36 dB down, then a loud syllable the model is not quite sure of.
+      const sr = 44100;
+      final x = Float32List(6 * sr);
+      void tone(double from, double to, double amp) {
+        for (var i = (from * sr).round(); i < (to * sr).round(); i++) {
+          var v = 0.0;
+          for (var h = 1; h <= 6; h++) {
+            v += math.sin(2 * math.pi * 220 * h * i / sr) / h;
+          }
+          x[i] = amp * v / 2;
+        }
+      }
+
+      tone(0.5, 1.5, 0.3);
+      tone(1.5, 2.0, 0.3 * 0.0316);
+      tone(3.5, 4.0, 0.3 * 0.0158);
+      tone(4.5, 5.5, 0.3);
+      double confidenceAt(double t) {
+        if (t >= 0.5 && t < 1.5) return t >= 1.0 && t < 1.1 ? 0.4 : 0.95;
+        if (t >= 1.5 && t < 2.0) return 0.6;
+        if (t >= 3.5 && t < 4.0) return 0.75;
+        if (t >= 4.5 && t < 5.5) return 0.6;
+        return 0;
+      }
+
+      final model = _BinsModel(bin(220), confidenceAt);
+      final track = await analyzePitchWithModel(x, sr, SwiftF0(model));
+      bool voiced(double from, double to) {
+        for (var t = from; t < to; t += 0.01) {
+          if (track.midiAt(t) <= 0) return false;
+        }
+        return true;
+      }
+
+      bool silent(double from, double to) {
+        for (var t = from; t < to; t += 0.01) {
+          if (track.midiAt(t) > 0) return false;
+        }
+        return true;
+      }
+
+      expect(track.midiAt(0.8), closeTo(hzToMidi(220), 0.3));
+      expect(voiced(0.6, 1.4), isTrue, reason: 'the dip at 1.0 s is part of the note');
+      expect(silent(1.6, 2.0), isTrue, reason: 'the tail');
+      expect(silent(3.5, 4.0), isTrue, reason: 'the residue');
+      expect(voiced(4.6, 5.4), isTrue, reason: 'a loud syllable at a lower confidence');
+    });
+  });
+
   group('with the real model', () {
     late PythonOrtModel model;
     setUpAll(() async {
@@ -201,6 +343,16 @@ void main() {
       }
       final silence = await f0.run(Float32List(sr));
       expect(silence.confidence.every((c) => c == 0), isTrue);
+      // The bin scores are the ones the pitch is taken from.
+      final frames = await f0.run(_tone(220, 0.6, sr));
+      final bins = frames.bins!;
+      for (var i = 10; i < frames.length - 10; i++) {
+        var best = 0;
+        for (var b = 1; b < SwiftF0.bins; b++) {
+          if (bins[i * SwiftF0.bins + b] > bins[i * SwiftF0.bins + best]) best = b;
+        }
+        expect((hzToMidi(SwiftF0.binHz(best)) - hzToMidi(frames.hz[i])).abs(), lessThan(0.75), reason: 'frame $i');
+      }
       final rng = math.Random(3);
       final noise = Float32List.fromList([for (var i = 0; i < sr; i++) (rng.nextDouble() * 2 - 1) * 0.2]);
       final n = await f0.run(noise);
@@ -315,7 +467,7 @@ void main() {
           },
         );
         final meta = await importWith(pipeline);
-        expect(loaded, ['${PitchModel.asset} audio pitch_confidence']);
+        expect(loaded, ['${PitchModel.asset} audio pitch_confidence_bins']);
         expect(meta.modelInfo[ImportPipeline.pitchInfo], PitchModel.name);
         expect(meta.modelInfo['pitchModelError'], isNull);
         final tokens = (await repo.loadReference(meta.id)).tokens.toList();
@@ -354,6 +506,31 @@ void main() {
       });
     });
   });
+}
+
+/// A pitch model with bin scores: the bin [best] in every frame, with the
+/// confidence [confidenceAt] the frame's time.
+class _BinsModel implements TensorModel {
+  _BinsModel(this.best, this.confidenceAt);
+  final int best;
+  final double Function(double seconds) confidenceAt;
+
+  @override
+  Future<Float32List> run(Float32List input, List<int> shape) async {
+    final n = math.max(1, input.length ~/ SwiftF0.hop);
+    final out = Float32List((2 + SwiftF0.bins) * n);
+    for (var i = 0; i < n; i++) {
+      out[i] = SwiftF0.binHz(best).toDouble();
+      out[n + i] = confidenceAt(i * SwiftF0.frameSeconds);
+      for (var b = 0; b < SwiftF0.bins; b++) {
+        out[(2 + b) * n + i] = b == best ? 5 : -5;
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<void> close() async {}
 }
 
 class _BadModel implements TensorModel {

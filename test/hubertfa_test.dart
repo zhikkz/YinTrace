@@ -112,6 +112,88 @@ void main() {
     expect(result.last.end, closeTo(0.82, 0.04));
   });
 
+  // 长啊, and the next line starts with 啊 inside the clip. The model hears
+  // this line's 啊 less clearly than the next one (a held vowel heard as
+  // the one before it), so without the next line in the transcript the
+  // decoder gives 长 both and puts 啊 on the next line's syllable.
+  HubertFaLogits heardLess(int frames) {
+    final logits = _scores(frames, 0, [(0.5, 0.6, 1), (0.6, 1.0, 2), (1.0, 1.3, 7), (2.0, 2.3, 7)]);
+    for (var i = 100; i < 130; i++) {
+      logits.phones[7 * frames + i] = 2;
+      logits.phones[2 * frames + i] = 1;
+    }
+    return logits;
+  }
+
+  test('the next line\'s first syllable in the clip is not taken for this line\'s last one', () {
+    const frames = 240;
+    final alone = HubertFaDecoder([
+      [1, 2],
+      [7],
+    ]).decode(heardLess(frames), frames: frames, vocabularySize: _phones.length)!;
+    expect(alone.last.start, greaterThan(1.9), reason: 'the failure the guard prevents');
+    final guarded = HubertFaDecoder([
+      [1, 2],
+      [7],
+      [7],
+    ], guard: 1).decode(heardLess(frames), frames: frames, vocabularySize: _phones.length, anchors: {2: 2.0})!;
+    expect(guarded, hasLength(2));
+    expect(guarded.first.start, closeTo(0.5, 0.03));
+    expect(guarded.last.start, closeTo(1.0, 0.03));
+    expect(guarded.last.end, lessThan(1.4));
+  });
+
+  test('the guard is optional: a next line that starts after the clip is not forced into it', () {
+    const frames = 160;
+    final logits = _scores(frames, 0, [(0.5, 0.6, 1), (0.6, 1.0, 2), (1.0, 1.3, 7)]);
+    final spans = HubertFaDecoder([
+      [1, 2],
+      [7],
+      [4, 5],
+    ], guard: 1).decode(logits, frames: frames, vocabularySize: _phones.length)!;
+    expect(spans, hasLength(2));
+    expect(spans.last.start, closeTo(1.0, 0.03));
+    expect(spans.last.end, closeTo(1.3, 0.05));
+  });
+
+  test('a line before an interlude is aligned on its own part, not on an ad-lib in the break', () async {
+    final lines = parseLrc('[00:00.80]长啊\n[00:30.00]了\n').lines;
+    final lexicon = await HubertFaLexicon.load(modelPath, lines);
+    const frames = 3200;
+    final midi = Float32List(frames);
+    final db = Float32List(frames)..fillRange(0, frames, -100);
+    for (final (a, b) in [(52, 140), (800, 860)]) {
+      midi.fillRange(a, b, 64);
+      db.fillRange(a, b, -21);
+    }
+    final track = PitchTrack(hopSeconds: 0.01, midi: midi, rmsDb: db, aperiodicity: Float32List(frames));
+    final widths = <double>[];
+    final reference = await HubertFaAligner(lexicon, (audio) async {
+      final offset = widths.isEmpty ? 0.4 : 29.6;
+      widths.add(audio.length / HubertFaAligner.sampleRate);
+      final n = audio.length ~/ 441 + 1;
+      final logits = _scores(n, offset, [(0.5, 0.6, 1), (0.6, 1.0, 2), (1.0, 1.4, 7), (8.0, 8.6, 7)]);
+      if (offset < 1) {
+        for (var i = 60; i < 100; i++) {
+          logits.phones[7 * n + i] = 2;
+        }
+      }
+      return logits;
+    }).alignSong(Float32List(32 * 44100), track, lines);
+    // Two characters at the song's pace (0.6 s each by default), and at
+    // least 3 s: the clip ends at 0.8 + 3 + 0.4 s, before the ad-lib at 8 s.
+    expect(widths.first, closeTo(3.8, 0.01));
+    final tokens = reference.lines.first.tokens;
+    expect(tokens.last.start, closeTo(1.0, 0.05));
+    expect(tokens.last.end, closeTo(1.4, 0.05));
+    expect(tokens.last.notes, isNotEmpty);
+  });
+
+  test('the song\'s pace: the median time per character of lines that another line follows soon', () {
+    expect(HubertFaAligner.secondsPerToken([(0, 4, 8), (4, 7, 6), (7, 40, 4), (40, null, 5)]), 0.5);
+    expect(HubertFaAligner.secondsPerToken([(0, 30, 2)]), HubertFaAligner.defaultSecondsPerToken);
+  });
+
   test('padded clips recover early starts and use pitch and energy for tails', () async {
     final lines = parseLrc(_lyrics).lines;
     final lexicon = await HubertFaLexicon.load(modelPath, lines);

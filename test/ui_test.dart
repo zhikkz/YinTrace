@@ -278,6 +278,10 @@ void main() {
 
     await tester.tap(find.text('升八度'));
     await settleIo(tester, rounds: 5);
+    // Saved in the background: a busy machine takes longer (as below).
+    for (var i = 0; i < 40 && (await stored()).shift != 12; i++) {
+      await settleIo(tester, rounds: 2);
+    }
     expect((await stored()).notes.first.midi, closeTo(detected + 12, 1e-6));
     expect(find.textContaining('调高了 1 个八度'), findsOneWidget);
     await tester.tap(find.text('降半音'));

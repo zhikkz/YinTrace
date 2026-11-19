@@ -11,6 +11,13 @@ Future<void> writeFileAtomic(String path, String content) async {
   await tmp.rename(path);
 }
 
+/// [writeFileAtomic] for bytes.
+Future<void> writeBytesAtomic(String path, List<int> bytes) async {
+  final tmp = File('$path.tmp');
+  await tmp.writeAsBytes(bytes, flush: true);
+  await tmp.rename(path);
+}
+
 /// Keeps a file up to date with a state that changes quickly (a slider being
 /// dragged): one write at a time, each of the newest state. A change that
 /// arrives while a write is running is written right after it; changes in

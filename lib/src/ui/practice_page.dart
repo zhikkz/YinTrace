@@ -512,16 +512,25 @@ class _NoteReadout extends StatelessWidget {
   );
 }
 
-class _Stage extends StatelessWidget {
+class _Stage extends StatefulWidget {
   const _Stage({required this.session, this.contour});
   final PracticeSession session;
   final PitchTrack? contour;
 
+  @override
+  State<_Stage> createState() => _StageState();
+}
+
+class _StageState extends State<_Stage> {
   /// Keep the singer's pitch range through a short gap between lines.
   static const _pitchRangeHoldSeconds = 4.0;
 
+  final _axis = PitchAxisFollower();
+
   @override
   Widget build(BuildContext context) {
+    final session = widget.session;
+    final contour = widget.contour;
     final ph = session.position;
     final span = session.settings.practiceWindowSeconds;
     final t0 = ph - span * 0.3, t1 = ph + span * 0.7;
@@ -541,10 +550,9 @@ class _Stage extends StatelessWidget {
     final user = session.displayPoints;
     // Keep both voices on the same axis, and let recent pitches keep their
     // space for a few seconds after the trail scrolls off the graph.
-    for (final point in user) {
-      if (point.midi <= 0 || point.time < t0 - _pitchRangeHoldSeconds || point.time > t1) continue;
-      lo = math.min(lo, point.midi);
-      hi = math.max(hi, point.midi);
+    if (steadyPitchRange(user, t0 - _pitchRangeHoldSeconds, t1) case (final a, final b)) {
+      lo = math.min(lo, a);
+      hi = math.max(hi, b);
     }
     final playing = session.isPlaying;
     final live = playing && !session.reviewing;
@@ -556,7 +564,7 @@ class _Stage extends StatelessWidget {
       language: session.reference.language,
     );
     return TweenAnimationBuilder<(double, double)>(
-      tween: _PitchRangeTween(paddedRange(lo, hi, minSpan: 14)),
+      tween: _PitchRangeTween(_axis.follow(lo, hi)),
       duration: const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
       builder: (context, range, _) => CustomPaint(
