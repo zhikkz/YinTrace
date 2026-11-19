@@ -219,6 +219,30 @@ void main() {
       expect(out[11].clockTime - out[10].clockTime, closeTo(0.01, 1e-9));
     });
 
+    test('rejects an isolated octave error but follows sustained octave changes in both directions', () {
+      const frames = 2048;
+      final tracker = LivePitchTracker(sampleRate: sr, options: const LivePitchOptions(hop: frames));
+      var clock = 0;
+      double frame(double hz) {
+        final block = Float32List.fromList(List.generate(frames, (i) => 0.3 * math.sin(2 * math.pi * hz * i / sr)));
+        final pitch = tracker.addBlock(block, clock, clock, true).single;
+        clock += frames;
+        return pitch.midi;
+      }
+
+      for (var i = 0; i < 3; i++) {
+        expect(frame(220), closeTo(57, 0.2));
+      }
+      expect(frame(440), closeTo(57, 0.2));
+      expect(frame(220), closeTo(57, 0.2));
+      frame(220);
+      frame(440);
+      expect(frame(440), closeTo(69, 0.2));
+      frame(440);
+      frame(220);
+      expect(frame(220), closeTo(57, 0.2));
+    });
+
     test('silence and noise are unvoiced', () {
       final tracker = LivePitchTracker(sampleRate: sr);
       final rng = math.Random(1);
