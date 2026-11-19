@@ -27,6 +27,26 @@ class HubertFaAligner {
   static const _samplesPerFrame = 441;
   static const padding = 0.4;
   static const _maxInferenceSeconds = 20.0;
+
+  /// A line is aligned in a clip of at most [_lineLengthFactor] times its
+  /// characters at the song's pace ([secondsPerToken]), and at least
+  /// [_minLineSeconds].
+  static const _lineLengthFactor = 1.8;
+  static const _minLineSeconds = 3.0;
+
+  /// A character shorter than this after a long one gets a share of it.
+  static const _squeezedSeconds = 0.08;
+  static const defaultSecondsPerToken = 0.6;
+
+  /// The time the singer takes per character: the median over the lines
+  /// that another line follows within 12 s (start, end, tokens).
+  static double secondsPerToken(Iterable<(double, double?, int)> lines) {
+    final paces = [
+      for (final (start, end, tokens) in lines)
+        if (end != null && tokens > 0 && end > start && end - start < 12) (end - start) / tokens,
+    ]..sort();
+    return paces.isEmpty ? defaultSecondsPerToken : paces[paces.length ~/ 2];
+  }
   static const _minClipSamples = 2205;
 
   /// Opens exactly one ONNX session for the operation and closes all native
@@ -85,13 +105,17 @@ class HubertFaAligner {
   }) async {
     final duration = _duration(vocal, track);
     final language = detectLyricsLanguage(lines);
+    final pace = secondsPerToken([for (final l in lines) (l.start, l.end, l.tokens.length)]);
     final matches = <_LineMatch>[];
     Map<int, V> forLine<V>(Map<(int, int), V> entries, int line) => {
       for (final MapEntry(key: (k, i), :value) in entries.entries)
         if (k == line) i: value,
     };
     for (final (i, line) in lines.indexed) {
-      matches.add(await _align(vocal, track, duration, line, language, forLine(pins, i), forLine(readings, i)));
+      matches.add(await _align(
+        vocal, track, duration, line, language, forLine(pins, i), forLine(readings, i),
+        pace: pace, next: i + 1 < lines.length ? lines[i + 1] : null,
+      ));
       await onProgress?.call(i + 1, lines.length);
     }
 
@@ -142,12 +166,15 @@ class HubertFaAligner {
     required Map<int, double> pins,
     required Map<int, String> readings,
     Set<int> restore = const {},
+    LyricLine? next,
   }) async {
     final updated = await alignEditedLine(
       vocal, track, line, index, current.language,
       lower: lineStartLimit(current, index),
       upper: lineEndLimit(current, index),
       pins: pins, readings: readings,
+      next: next,
+      pace: secondsPerToken([for (final l in current.lines) (l.lrcStart, l.lrcEnd, l.tokens.length)]),
     );
     for (final (i, token) in updated.tokens.indexed) {
       if (!restore.contains(i)) token.applyCorrections(current.lines[index].tokens[i]);
@@ -220,9 +247,11 @@ class HubertFaAligner {
     required double upper,
     required Map<int, double> pins,
     required Map<int, String> readings,
+    LyricLine? next,
+    double pace = defaultSecondsPerToken,
   }) async {
     final duration = _duration(vocal, track);
-    final match = await _align(vocal, track, duration, line, language, pins, readings);
+    final match = await _align(vocal, track, duration, line, language, pins, readings, pace: pace, next: next);
     final end = math.min(duration, upper);
     if (!match.hasAlignment || lower >= end) {
       throw const FormatException('这句附近没有足够的人声音频');
@@ -243,13 +272,19 @@ class HubertFaAligner {
     LyricLine line,
     LyricsLanguage language,
     Map<int, double> pins,
-    Map<int, String> readings,
-  ) async {
+    Map<int, String> readings, {
+    required double pace,
+    LyricLine? next,
+  }) async {
     final transcript = lexicon.phones(line, language, readings);
     final nominalEnd = line.end ?? line.start + 12;
     final limit = (line.end == null ? duration : nominalEnd + padding).clamp(0.0, duration);
     final start = (line.start - padding).clamp(0.0, duration);
-    final end = math.min(nominalEnd + padding, start + _maxInferenceSeconds).clamp(start, duration);
+    // A line before a long break (an interlude) is not sung for all of it:
+    // what the clip hears there is backing vocals or ad-libs, and the
+    // line's last characters would go to them.
+    final expectedEnd = line.start + math.max(_minLineSeconds, line.tokens.length * pace * _lineLengthFactor);
+    final end = math.min(math.min(nominalEnd, expectedEnd) + padding, start + _maxInferenceSeconds).clamp(start, duration);
     var left = start;
     var right = end;
     for (final pin in pins.values) {
@@ -274,7 +309,14 @@ class HubertFaAligner {
         for (final (i, t) in line.tokens.indexed)
           if (t.time case final time? when time >= clipStart && time < clipEnd) i: time - clipStart,
       };
-      final decoder = HubertFaDecoder(transcript);
+      // The clip reaches into the next line: its first syllable is part of
+      // the transcript, so that this line's last ones are not put on it.
+      final guard = next != null && next.tokens.isNotEmpty && next.start < clipEnd
+          ? lexicon.phones(LyricLine(start: next.start, text: next.tokens.first.text, tokens: [next.tokens.first]),
+                language, const {})
+          : const <List<int>>[];
+      if (guard.isNotEmpty) anchors[transcript.length] = next!.start - clipStart;
+      final decoder = HubertFaDecoder([...transcript, ...guard], guard: guard.length);
       List<AcousticSpan>? decode(Map<int, double> pins) =>
           decoder.decode(logits, vocabularySize: lexicon.size, frames: frames, pins: pins, anchors: anchors);
       var spans = decode(relativePins);
@@ -330,6 +372,19 @@ class HubertFaAligner {
     final starts = <double>[];
     for (final (i, span) in match.spans.indexed) {
       starts.add((match.pins[i] ?? span.start).clamp(starts.lastOrNull ?? from, to));
+    }
+    // A character the model barely heard, sung on the held note of the one
+    // before it (two characters on one note), still gets the end of that note: a
+    // character with no note at all is neither drawn nor scored.
+    if (match.hasAlignment) {
+      for (var i = 1; i < starts.length; i++) {
+        if (match.pins.containsKey(i)) continue;
+        final next = i + 1 < starts.length ? starts[i + 1] : to;
+        final before = starts[i] - starts[i - 1];
+        if (next - starts[i] < _squeezedSeconds && before > 5 * _squeezedSeconds) {
+          starts[i] = math.max(starts[i - 1] + 0.7 * before, next - 1.5 * _squeezedSeconds);
+        }
+      }
     }
     final tokens = <RefToken>[];
     for (final (i, span) in match.spans.indexed) {

@@ -12,11 +12,13 @@
 
 - 输入 `fmin`、`fmax` 改成常量：在 60–1400 Hz 里找音高（最好的音高落在范围外的帧算没有人声）；
 - 输出 `pitch` 从 float64 转成 float32（Apple 上的插件不支持 float64 张量），误差小于万分之一音分；
-- `pitch` 和 `confidence` 合成一个输出 `pitch_confidence`，形状 `[2, 帧数]`。
+- `pitch`、`confidence` 和模型给 95 个音高格（约 70 音分一格）各自的打分合成一个输出 `pitch_confidence_bins`，
+  形状 `[97, 帧数]`：第 0 行音高，第 1 行置信度，后面 95 行是每一格的打分（模型就是从这里取最好的一格算出音高的）。
+  App 用这些打分找出整首最连贯的旋律，而不是每一帧各取最好的一格（见 [AI 音高模型](../../docs/pitch-model.md#怎么接进-app)）。
 
 ```bash
 python tools/build_pitch_model.py build    # 下载官方 wheel，校验，生成 assets/models/swift_f0.onnx
-python tools/build_pitch_model.py verify   # 检查仓库里的文件就是脚本生成的，并且和原模型算出同样的音高和置信度
+python tools/build_pitch_model.py verify   # 检查仓库里的文件就是脚本生成的，并且和原模型算出同样的音高、置信度和音高格打分
 ```
 
 换模型版本时，重新生成后把 `lib/src/models/pitch_model.dart` 里的 SHA-256 和大小一起改掉（有测试核对）。
