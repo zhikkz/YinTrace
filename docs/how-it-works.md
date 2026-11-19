@@ -96,14 +96,14 @@
 
 ### 模型下载
 
-主线路是 `hf-mirror.com`（Hugging Face 镜像上 `Blane187/all_public_uvr_models` 固定提交的同名文件，
+分离模型的主线路是 `hf-mirror.com`（Hugging Face 镜像上 `Blane187/all_public_uvr_models` 固定提交的同名文件，
 已核对与官方文件的大小和 SHA-256 相同）。连不上、被转到 Hugging Face 主站（301/308 重定向，
 在中国大陆以外会这样）、服务器报错、下载中断、半分钟内一直慢于 48 KB/秒，或者文件校验不对时，
 App 自动改用备用线路：UVR 官方模型库（`github.com/TRvlvr/model_repo` 的 release），
 已下载的部分接着续传。下一个分离模型先用刚才成功的线路。
 
-HuBERTFA 使用上游的 GitHub Release 压缩包。下载后校验 SHA-256，流式解压权重和词典，
-安装完成后删除压缩包。
+HuBERTFA 的主线路是 `ghfast.top` 的 GitHub Release 镜像，备用线路是上游的官方 GitHub Release。
+下载后校验 SHA-256，流式解压权重和词典，安装完成后删除压缩包。
 
 ## 界面设计
 

@@ -711,6 +711,34 @@ void main() {
         expect(mirror.requests.where((r) => r.startsWith('/blob/')), hasLength(2));
       });
 
+      test('a different primary origin tries its own main route first', () async {
+        host.failWith = HttpStatus.serviceUnavailable;
+        final alignmentHost = FakeModelHost({'align.onnx': plain});
+        await alignmentHost.start();
+        addTearDown(alignmentHost.stop);
+        mirror.files['align.onnx'] = plain;
+        specs = [
+          ...specs,
+          ModelSpec(
+            id: 'alignment',
+            title: '逐句对齐',
+            purpose: '',
+            fileName: 'align.onnx',
+            url: alignmentHost.url('align.onnx'),
+            bytes: plain.length,
+            sha256: hex(plain),
+            installedName: 'align.onnx',
+            installedBytes: plain.length,
+            mirrors: [mirror.url('align.onnx')],
+          ),
+        ];
+        final m = manager();
+        await m.install();
+        expect(m.isReady, isTrue);
+        expect(alignmentHost.requests, ['/dl/align.onnx -', '/blob/align.onnx -']);
+        expect(mirror.requests.where((r) => r.contains('align.onnx')), isEmpty);
+      });
+
       test('a file that does not match its SHA-256 is fetched again from the mirror', () async {
         host.files['kara.pth'] = Uint8List.fromList(weights)..[1234] ^= 0xff;
         final m = manager();
