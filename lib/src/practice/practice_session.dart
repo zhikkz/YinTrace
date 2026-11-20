@@ -271,7 +271,7 @@ class PracticeSession extends ChangeNotifier {
     );
     e.setTrackGain(TrackSlot.take, kind == ListenKind.take ? 1 : 0);
     _refreshMonitorRoute();
-    e.setMonitorGain(_monitorEnabled && kind == null ? settings.monitorVolume : 0);
+    e.setMonitorGain(_monitorEnabled && kind == null ? settings.monitorGain : 0);
     scorer.options = _scoringOptions();
     final t = _tracker;
     if (t != null) {
