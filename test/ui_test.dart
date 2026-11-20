@@ -732,6 +732,19 @@ void main() {
     engine.seek(const Duration(milliseconds: 400));
     final before = engine.render(4096);
     expect(before.fold<double>(0, (m, v) => math.max(m, v.abs())), lessThan(1e-3), reason: 'nothing sung yet');
+    final preview = find.byType(Slider).first;
+    final beforeDrag = engine.positionFrame;
+    final drag = await tester.startGesture(tester.getCenter(preview));
+    await drag.moveBy(const Offset(45, 0));
+    await tester.pump();
+    final target = tester.widget<Slider>(preview).value;
+    expect(target, greaterThan(5));
+    expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+    expect(engine.render(64), everyElement(0));
+    expect(engine.positionFrame, beforeDrag);
+    await drag.up();
+    expect(engine.isPlaying, isTrue);
+    expect(engine.positionSeconds, closeTo(target, 0.001));
     await tester.tap(find.byIcon(Icons.pause_rounded));
     await tester.pump();
     expect(awake, [true, false]);
@@ -1729,29 +1742,77 @@ void main() {
 
     final gesture = await tester.startGesture(tester.getCenter(graph));
     await gesture.moveBy(const Offset(-60, 0));
-    expect(engine.positionSeconds, closeTo(3 + 60 * secondsPerPixel, 0.001));
+    expect(session.position, closeTo(3 + 60 * secondsPerPixel, 0.001));
+    expect(engine.positionSeconds, closeTo(3, 0.001));
     await tester.pump(); // the moving chart must keep the same drag anchor
     await gesture.moveBy(const Offset(-40, 0));
-    expect(engine.positionSeconds, closeTo(3 + 100 * secondsPerPixel, 0.001));
+    expect(session.position, closeTo(3 + 100 * secondsPerPixel, 0.001));
     await gesture.up();
+    expect(engine.positionSeconds, closeTo(3 + 100 * secondsPerPixel, 0.001));
     expect(session.isPlaying, isFalse);
 
     session.play();
+    session.setMonitorEnabled(true);
     await tester.pump();
-    await tester.drag(graph, const Offset(80, 0));
+    final mic = Float32List(64)..fillRange(0, 64, 0.4);
+    final playingDrag = await tester.startGesture(tester.getCenter(graph));
+    await playingDrag.moveBy(const Offset(80, 0));
+    expect(session.isPlaying, isTrue);
+    expect(engine.render(64, input: mic), everyElement(0));
+    await playingDrag.up();
     expect(engine.positionSeconds, closeTo(3 + 20 * secondsPerPixel, 0.001));
     expect(session.isPlaying, isTrue);
+    expect(engine.render(64, input: mic), anyElement(isNot(0)));
 
     session.seek(0.3);
     final atStart = await tester.startGesture(tester.getCenter(graph));
     await atStart.moveBy(const Offset(80, 0));
-    expect(engine.positionSeconds, 0);
+    expect(session.position, 0);
     await atStart.moveBy(const Offset(-60, 0));
-    expect(engine.positionSeconds, closeTo(60 * secondsPerPixel, 0.001));
+    expect(session.position, closeTo(60 * secondsPerPixel, 0.001));
     await atStart.up();
 
     await tester.drag(graph, const Offset(-1000, 0));
     expect(engine.positionSeconds, closeTo(session.duration, 0.001));
+    await tester.pumpWidget(const SizedBox());
+  }, skip: lib == null || lib.isEmpty);
+
+  testWidgets('the practice timeline is silent while dragging and resumes on release or cancel', (tester) async {
+    phone(tester);
+    final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    late PracticeSession session;
+    await tester.pumpWidget(practiceLauncher(ref, onSession: (s) => session = s, onLeave: (_) {}));
+    await tester.tap(find.text('练习'));
+    await settleIo(tester);
+    final engine = session.engine!;
+    session.seek(2);
+    session.play();
+    session.setMonitorEnabled(true);
+    await tester.pump();
+
+    final timeline = find.byKey(const ValueKey('practice-timeline'));
+    final bounds = tester.getRect(timeline);
+    final start = bounds.center;
+    final mic = Float32List(64)..fillRange(0, 64, 0.4);
+    final before = engine.positionFrame;
+    final canceled = await tester.startGesture(start);
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(engine.positionFrame, before, reason: 'a held pointer has not committed a tap');
+    await canceled.moveBy(Offset(bounds.width, 0));
+    expect(session.position, session.duration);
+    expect(engine.render(64, input: mic), everyElement(0));
+    expect(engine.positionFrame, before);
+    await canceled.cancel();
+    expect(engine.isPlaying, isTrue);
+    expect(engine.positionFrame, before);
+
+    final drag = await tester.startGesture(start);
+    await drag.moveBy(Offset(bounds.width * 0.2, 0));
+    expect(session.position, closeTo(session.duration * 0.7, 0.001));
+    expect(engine.render(64, input: mic), everyElement(0));
+    await drag.up();
+    expect(engine.positionSeconds, closeTo(session.duration * 0.7, 0.001));
+    expect(engine.render(64, input: mic), anyElement(isNot(0)));
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);
 
