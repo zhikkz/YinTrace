@@ -62,6 +62,7 @@ class PitchCorrectionSession extends ChangeNotifier {
   Timer? _nudgeTimer;
   Future<void> _retimeQueue = Future.value();
   Future<void> _saving = Future.value();
+  Future<void>? _alignmentWrite;
 
   SongReference? get reference => _reference;
   PitchTrack? get track => _track;
@@ -132,29 +133,40 @@ class PitchCorrectionSession extends ChangeNotifier {
 
   Future<void> changePitch(int line, int token, void Function(RefToken) edit) async {
     if (!canEditPitch) return;
+    // Apply this edit to the reference chosen by any in-flight alignment
+    // write. Keep counting the edit as pending if the editor closes meanwhile.
+    if (_alignmentWrite case final write?) {
+      _writes++;
+      await write;
+      _writes--;
+    }
     final ref = _reference!;
     edit(ref.lines[line].tokens[token]);
     _revision++;
     await _save(ref);
   }
 
-  /// Queues writes so edits in either screen state cannot overlap the same file.
-  Future<bool> _save(SongReference ref, {String errorPrefix = '没能保存'}) {
+  /// Queues writes and publishes a new alignment only once it is on disk.
+  Future<void> _save(SongReference ref, {bool commitAlignment = false}) {
     _writes++;
     final write = _saving.then((_) async {
       try {
         await _songs.saveReference(songId, ref);
+        if (commitAlignment) {
+          _reference = ref;
+          _revision++;
+        }
         _savedRevision++;
-        return true;
       } catch (error) {
-        _report('$errorPrefix：$error', failure: true);
-        return false;
+        _report('没能保存：$error', failure: true);
       } finally {
+        if (commitAlignment) _alignmentWrite = null;
         _writes--;
         notifyListeners();
       }
     });
-    _saving = write.then((_) {});
+    _saving = write;
+    if (commitAlignment) _alignmentWrite = write;
     notifyListeners();
     return write;
   }
@@ -240,9 +252,7 @@ class PitchCorrectionSession extends ChangeNotifier {
       return;
     }
     fresh.applyCorrectionsFrom(_reference!);
-    _reference = fresh;
-    _revision++;
-    await _save(fresh);
+    await _save(fresh, commitAlignment: true);
   }
 
   Future<void> restoreLine(int line, {String? modelPath}) async {
@@ -346,10 +356,6 @@ class PitchCorrectionSession extends ChangeNotifier {
               next: line + 1 < lines.length ? lines[line + 1] : null,
             ));
     if (isCurrent?.call() == false) return;
-    if (await _save(fresh, errorPrefix: '没能重新对齐')) {
-      _reference = fresh;
-      _revision++;
-      notifyListeners();
-    }
+    await _save(fresh, commitAlignment: true);
   }
 }
