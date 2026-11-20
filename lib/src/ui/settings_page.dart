@@ -56,10 +56,10 @@ class _SettingsPageState extends State<SettingsPage> {
               _Group(
                 children: [
                   ListenableBuilder(
-                    listenable: Listenable.merge([services.models, services.importQueue]),
+                    listenable: Listenable.merge([services.models, services.importQueue, services.pitchCorrections]),
                     builder: (context, _) => _ModelsRow(
                       models: services.models,
-                      inUse: services.importQueue.usesDownloadedModels,
+                      inUse: _modelsInUse(services),
                     ),
                   ),
                   if (services.acceleration.supported)
@@ -315,6 +315,9 @@ class _SliderRow extends StatelessWidget {
   );
 }
 
+bool _modelsInUse(AppServices services) =>
+    services.importQueue.usesDownloadedModels || services.pitchCorrections.usesModel;
+
 /// Status of downloaded models, with download / delete.
 class _ModelsRow extends StatelessWidget {
   const _ModelsRow({required this.models, required this.inUse});
@@ -322,8 +325,8 @@ class _ModelsRow extends StatelessWidget {
   final bool inUse;
 
   Future<void> _delete(BuildContext context) async {
-    final queue = AppScope.of(context).importQueue;
-    if (queue.usesDownloadedModels) return;
+    final services = AppScope.of(context);
+    if (_modelsInUse(services)) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -338,7 +341,7 @@ class _ModelsRow extends StatelessWidget {
         ],
       ),
     );
-    if (ok == true && !queue.usesDownloadedModels) await models.deleteAll();
+    if (ok == true && !_modelsInUse(services)) await models.deleteAll();
   }
 
   @override
@@ -379,7 +382,7 @@ class _ModelsRow extends StatelessWidget {
                   models.specs.contains(hubertFaModel) ? '人声分离、去和声和逐句对齐' : '人声分离和去和声',
                   style: context.type.bodyLarge,
                 ),
-                Text(inUse ? '$status · 导入队列使用中' : status,
+                Text(inUse ? '$status · 正在使用模型' : status,
                     style: context.type.bodySmall?.copyWith(fontFeatures: tabular)),
               ],
             ),

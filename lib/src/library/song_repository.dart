@@ -135,8 +135,11 @@ class SongRepository {
       jsonDecode(await File(pathFor(id, referenceFile)).readAsString()) as Map<String, dynamic>);
 
   Future<void> saveReference(String id, SongReference ref) {
-    _melodyCache.remove(id);
-    return writeFileAtomic(pathFor(id, referenceFile), jsonEncode(ref.toJson()));
+    final data = jsonEncode(ref.toJson());
+    return _withSong(id, () async {
+      await writeFileAtomic(pathFor(id, referenceFile), data);
+      _melodyCache.remove(id);
+    }, recover: false);
   }
 
   final _melodyCache = <String, List<(double, double, double)>>{};

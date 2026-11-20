@@ -64,6 +64,7 @@ class PitchGraphPainter extends CustomPainter {
     this.live = false,
     this.playbackPoint,
     this.highlight,
+    this.tokenTimeOffsets = const {},
     this.revision = 0,
   });
 
@@ -90,6 +91,10 @@ class PitchGraphPainter extends CustomPainter {
 
   /// A time span to mark with a light band (the pitch editor's selection).
   final (double, double)? highlight;
+
+  /// Display offsets for pending lyric timing edits. The recorded contour
+  /// and the stored reference remain on their original timeline.
+  final Map<RefToken, double> tokenTimeOffsets;
 
   /// Bump to repaint after the reference was changed in place.
   final int revision;
@@ -197,12 +202,14 @@ class PitchGraphPainter extends CustomPainter {
         ..strokeCap = StrokeCap.round
         ..strokeWidth = stroke;
       for (final ln in ref.lines) {
-        if (ln.end < t0 - 1 || ln.start > t1 + 1) continue;
+        if (tokenTimeOffsets.isEmpty && (ln.end < t0 - 1 || ln.start > t1 + 1)) continue;
         for (final tok in ln.tokens) {
-          if (tok.end < t0 || tok.start > t1) continue;
-          final active = playhead != null && playhead! >= tok.start && playhead! < tok.end;
+          final offset = tokenTimeOffsets[tok] ?? 0.0;
+          final start = tok.start + offset, end = tok.end + offset;
+          if (end < t0 || start > t1) continue;
+          final active = playhead != null && playhead! >= start && playhead! < end;
           final scored = tokenScores?[tok];
-          final past = playhead != null && tok.end <= playhead!;
+          final past = playhead != null && end <= playhead!;
           Color color;
           if (scored != null && !scored.isNaN) {
             // Sung: a light wash of the score colour, so the voice trace
@@ -219,7 +226,8 @@ class PitchGraphPainter extends CustomPainter {
             ..strokeWidth = tok.skip ? stroke * 0.45 : stroke;
           for (final n in tok.notes) {
             final yy = y(n.midi + transpose);
-            final x0 = x(n.start) + stroke / 2, x1 = math.max(x(n.end) - stroke / 2, x0 + 0.5);
+            final x0 = x(n.start + offset) + stroke / 2;
+            final x1 = math.max(x(n.end + offset) - stroke / 2, x0 + 0.5);
             if (active) {
               canvas.drawLine(
                   Offset(x0, yy),
@@ -236,7 +244,7 @@ class PitchGraphPainter extends CustomPainter {
           final tp = _text(tok.text, tok.isWord ? glyphSize * 0.8 : glyphSize,
               tok.skip ? p.inkFaint : (past ? p.inkSoft : p.ink),
               weight: active ? FontWeight.w700 : FontWeight.w500);
-          final lx = x(tok.start);
+          final lx = x(start);
           final above = Rect.fromLTWH(lx, y(anchor) - stroke / 2 - tp.height - 4, tp.width, tp.height);
           final below = Rect.fromLTWH(lx, y(anchor) + stroke / 2 + 4, tp.width, tp.height);
           // Dense passages: move a label under its note, or leave it out.
@@ -338,6 +346,7 @@ class PitchGraphPainter extends CustomPainter {
       old.tokenScores != tokenScores ||
       old.transpose != transpose ||
       old.highlight != highlight ||
+      old.tokenTimeOffsets != tokenTimeOffsets ||
       old.revision != revision ||
       old.style.palette != style.palette;
 }
