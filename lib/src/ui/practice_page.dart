@@ -527,7 +527,17 @@ class _StageState extends State<_Stage> {
   static const _pitchRangeHoldSeconds = 4.0;
 
   final _axis = PitchAxisFollower();
-  double _dragSeconds = 0;
+  double? _dragSeconds;
+
+  void _finishDrag({required bool canceled}) {
+    if (_dragSeconds == null) return;
+    _dragSeconds = null;
+    if (canceled) {
+      widget.session.cancelScrub();
+    } else {
+      widget.session.endScrub();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -598,15 +608,17 @@ class _StageState extends State<_Stage> {
           behavior: HitTestBehavior.opaque,
           dragStartBehavior: DragStartBehavior.down,
           onHorizontalDragStart: (_) {
-            // Seek uses the engine clock. Anchor once so playback cannot
-            // add drift as the user drags.
-            _dragSeconds = session.engine?.positionSeconds ?? 0;
+            if (session.beginScrub()) _dragSeconds = session.engine!.positionSeconds;
           },
           onHorizontalDragUpdate: (details) {
-            final seconds = _dragSeconds - details.delta.dx * span / plotWidth;
+            final previous = _dragSeconds;
+            if (previous == null) return;
+            final seconds = previous - details.delta.dx * span / plotWidth;
             _dragSeconds = seconds.clamp(0.0, session.duration).toDouble();
-            session.seek(_dragSeconds);
+            session.updateScrub(_dragSeconds!);
           },
+          onHorizontalDragEnd: (_) => _finishDrag(canceled: false),
+          onHorizontalDragCancel: () => _finishDrag(canceled: true),
           child: graph,
         );
       },
@@ -841,7 +853,7 @@ class _Transport extends StatelessWidget {
               duration: dur,
               lineStarts: [for (final l in session.reference.lines) l.start],
               loop: looping ? session.reference.lines[session.loopLine!] : null,
-              onSeek: session.seek,
+              session: session,
             ),
             Row(
               children: [
@@ -897,33 +909,62 @@ class _Transport extends StatelessWidget {
 }
 
 /// Progress line with a tick at the start of every lyric line.
-class _Timeline extends StatelessWidget {
+class _Timeline extends StatefulWidget {
   const _Timeline({
     required this.position,
     required this.duration,
     required this.lineStarts,
-    required this.onSeek,
+    required this.session,
     this.loop,
   });
   final double position;
   final double duration;
   final List<double> lineStarts;
   final RefLine? loop;
-  final void Function(double) onSeek;
+  final PracticeSession session;
+
+  @override
+  State<_Timeline> createState() => _TimelineState();
+}
+
+class _TimelineState extends State<_Timeline> {
+  bool _dragging = false;
+
+  void _finishDrag({required bool canceled}) {
+    if (!_dragging) return;
+    _dragging = false;
+    if (canceled) {
+      widget.session.cancelScrub();
+    } else {
+      widget.session.endScrub();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final p = context.yt;
     return LayoutBuilder(
       builder: (context, c) {
-        void seekAt(double dx) => onSeek((dx / c.maxWidth).clamp(0.0, 1.0) * duration);
+        double secondsAt(double dx) => (dx / c.maxWidth).clamp(0.0, 1.0) * widget.duration;
         return GestureDetector(
+          key: const ValueKey('practice-timeline'),
           behavior: HitTestBehavior.opaque,
-          onTapDown: (d) => seekAt(d.localPosition.dx),
-          onHorizontalDragUpdate: (d) => seekAt(d.localPosition.dx),
+          onTapUp: (d) => widget.session.seek(secondsAt(d.localPosition.dx)),
+          onHorizontalDragStart: (d) {
+            _dragging = widget.session.beginScrub();
+            if (_dragging) widget.session.updateScrub(secondsAt(d.localPosition.dx));
+          },
+          onHorizontalDragUpdate: (d) {
+            if (_dragging) widget.session.updateScrub(secondsAt(d.localPosition.dx));
+          },
+          onHorizontalDragEnd: (_) => _finishDrag(canceled: false),
+          onHorizontalDragCancel: () => _finishDrag(canceled: true),
           child: SizedBox(
             height: 26,
-            child: CustomPaint(size: Size.infinite, painter: _TimelinePainter(position, duration, lineStarts, loop, p)),
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: _TimelinePainter(widget.position, widget.duration, widget.lineStarts, widget.loop, p),
+            ),
           ),
         );
       },

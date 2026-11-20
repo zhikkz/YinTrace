@@ -7,6 +7,7 @@ import 'package:yintrace_audio/yintrace_audio.dart';
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../app/settings.dart';
+import '../audio/playback_scrub.dart';
 import '../library/song.dart';
 import '../library/song_repository.dart';
 import 'live_pitch.dart';
@@ -61,6 +62,7 @@ class PracticeSession extends ChangeNotifier {
 
   late PracticeScorer scorer;
   PracticeEngine? _engine;
+  final _scrub = PlaybackScrub();
   LivePitchTracker? _tracker;
   int _endCount = 0;
   double _latency = 0;
@@ -113,7 +115,7 @@ class PracticeSession extends ChangeNotifier {
   (int, int, int)? _loadedTake; // version and song-frame interval in the take slot
 
   PracticeEngine? get engine => _engine;
-  bool get isPlaying => _engine?.isPlaying ?? false;
+  bool get isPlaying => _scrub.isPlaying(_engine);
 
   bool _monitorEnabled = false;
   bool _monitorAvailable = false;
@@ -165,8 +167,10 @@ class PracticeSession extends ChangeNotifier {
   /// Total compensation applied to captured audio (seconds).
   double get latency => _latency;
 
-  /// Song position the singer currently hears.
+  /// Song position the singer currently hears or is previewing by dragging.
   double get position {
+    final target = _scrub.position;
+    if (target != null) return target;
     final e = _engine;
     if (e == null) return 0;
     return math.max(0, e.positionSeconds - _latency / 2);
@@ -291,6 +295,7 @@ class PracticeSession extends ChangeNotifier {
   void play() {
     final e = _engine;
     if (e == null || _suspended || _disposed) return;
+    _scrub.cancel(e, resume: false);
     _log('play at ${position.toStringAsFixed(1)} s');
     try {
       NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
@@ -384,6 +389,7 @@ class PracticeSession extends ChangeNotifier {
   void stopListening() {
     final e = _engine;
     if (_review == null) return;
+    _scrub.cancel(e, resume: false);
     final kind = _listenKind;
     _review = null;
     _listenKind = null;
@@ -425,6 +431,7 @@ class PracticeSession extends ChangeNotifier {
 
   void pause() {
     if (isPlaying) _log('pause at ${position.toStringAsFixed(1)} s');
+    _scrub.stayPaused();
     _engine?.pause();
     notifyListeners();
   }
@@ -435,6 +442,7 @@ class PracticeSession extends ChangeNotifier {
     _suspended = true;
     pauseReason = reason;
     final e = _engine;
+    _scrub.cancel(e, resume: false);
     if (e != null) {
       e.pause();
       e.stop();
@@ -453,6 +461,27 @@ class PracticeSession extends ChangeNotifier {
   }
 
   void togglePlay() => isPlaying ? pause() : play();
+
+  bool beginScrub() => !_suspended && _scrub.begin(_engine);
+
+  void updateScrub(double seconds) {
+    if (!_scrub.active) return;
+    _scrub.update(seconds);
+    notifyListeners();
+  }
+
+  void endScrub() {
+    _scrub.end(_engine, seek);
+    notifyListeners();
+  }
+
+  void cancelScrub() {
+    if (!_scrub.active) return;
+    _engine?.flushCapture();
+    _tracker?.reset();
+    _scrub.cancel(_engine);
+    notifyListeners();
+  }
 
   /// Moves playback to [seconds]. What was sung stays until it is sung
   /// again from there.
@@ -615,6 +644,10 @@ class PracticeSession extends ChangeNotifier {
     if (events & AudioEvents.routeChanged != 0) {
       applyMix();
       notifyListeners(); // update an open mix sheet even while paused
+    }
+    if (_scrub.active) {
+      e.flushCapture();
+      return;
     }
     final review = _review;
     if (review != null) {
