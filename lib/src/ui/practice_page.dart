@@ -1137,13 +1137,14 @@ class _MixSheetState extends State<_MixSheet> {
             ),
             slider(
               '耳返音量',
-              '${(s.monitorVolume * 100).round()}%',
+              '${(s.monitorLevel * 100).round()}%',
               Slider(
-                value: s.monitorVolume,
-                onChanged: widget.session.monitorEnabled ? (v) => drag(() => s.monitorVolume = v) : null,
+                value: s.monitorLevel,
+                onChanged: widget.session.monitorEnabled ? (v) => drag(() => s.monitorLevel = v) : null,
                 onChangeEnd: dragEnd,
               ),
             ),
+            Text('建议从 50% 左右开始。轻声会被自动托起，大声会被压住，不会爆音。', style: context.type.bodySmall),
             slider(
               '音准容差',
               '±${s.toleranceCents} 音分',

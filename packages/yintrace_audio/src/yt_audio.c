@@ -7,6 +7,7 @@
 //   * Everywhere else it is compiled as plain C (see CMakeLists.txt).
 
 #include "yt_audio.h"
+#include "yt_monitor.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -300,6 +301,7 @@ struct yt_engine {
   volatile float monitor_gain;
   volatile ma_uint32 monitor_while_capturing;
   volatile ma_uint32 monitor_route_allowed;
+  yt_monitor monitor_chain;  // what the mic goes through to be heard (audio thread)
   ma_int64 clock;  // audio thread only
 
   // Capture ring (single producer: audio thread, single consumer: Dart).
@@ -454,15 +456,17 @@ void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames)
     if (in != NULL) {
       yt_push_capture(e, in + done, seg, pos, e->clock + done,
                       seg_playing ? YT_CAPTURE_FLAG_PLAYING : 0);
-      if (out != NULL && (seg_playing || monitor_capture) && monitor > 0.0f &&
-          ma_atomic_load_32(&e->monitor_route_allowed)) {
-        float* o = out + (size_t)done * 2;
-        const float* s = in + done;
-        for (ma_uint32 i = 0; i < seg; i++) {
-          o[2 * i] += s[i] * monitor;
-          o[2 * i + 1] += s[i] * monitor;
-        }
-      }
+    }
+    // The capture above stays the dry mic; only what is heard is processed.
+    if (in != NULL && out != NULL && (seg_playing || monitor_capture) && monitor > 0.0f &&
+        ma_atomic_load_32(&e->monitor_route_allowed)) {
+      yt_monitor* chain = &e->monitor_chain;
+      // Switched off and on again between two callbacks: start clean anyway.
+      if (ma_atomic_exchange_32(&chain->reset_pending, 0)) yt_monitor_idle(chain);
+      yt_monitor_process(chain, in + done, out + (size_t)done * 2, seg, monitor);
+    } else {
+      // Muted at once; it fades in from a clean state when it is heard again.
+      yt_monitor_idle(&e->monitor_chain);
     }
     if (seg_playing) pos += seg;
     done += seg;
@@ -471,12 +475,9 @@ void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames)
   if (have_tracks) yt_track_unlock(e);
 
   if (out != NULL) {
-    // Soft safety clip.
-    for (ma_uint32 i = 0; i < frame_count * 2; i++) {
-      float v = out[i];
-      if (v > 1.0f) out[i] = 1.0f;
-      else if (v < -1.0f) out[i] = -1.0f;
-    }
+    // Safety clip for loud tracks plus the monitor: exactly transparent up
+    // to YT_SOFT_CLIP_KNEE, smooth saturation below full scale above it.
+    for (ma_uint32 i = 0; i < frame_count * 2; i++) out[i] = yt_soft_clip(out[i]);
   }
 
   ma_atomic_store_i64(&e->position, pos);
@@ -558,6 +559,7 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
   e->loop_start = 0;
   e->loop_end = 0;
   for (int i = 0; i < YT_MAX_TRACKS; i++) e->gains[i] = 1.0f;
+  yt_monitor_init(&e->monitor_chain, (float)sample_rate);
   e->cap_samples = (float*)calloc(YT_CAP_RING_FRAMES, sizeof(float));
   if (e->cap_samples == NULL) {
     free(e);
@@ -744,7 +746,12 @@ int32_t yt_engine_monitor_available(yt_engine* e) {
 void yt_engine_set_monitor_gain(yt_engine* e, float gain) {
   if (e == NULL) return;
   if (!isfinite(gain) || gain < 0.0f || !yt_engine_monitor_available(e)) gain = 0.0f;
-  if (gain > 1.0f) gain = 1.0f;
+  if (gain > YT_MONITOR_MAX_GAIN) gain = YT_MONITOR_MAX_GAIN;
+  // Off -> on (a stop or route change may have cleared it without the audio
+  // thread noticing): ask for a clean start, before the gain can be seen.
+  if (gain > 0.0f && ma_atomic_load_f32(&e->monitor_gain) == 0.0f) {
+    ma_atomic_store_32(&e->monitor_chain.reset_pending, 1);
+  }
   ma_atomic_store_f32(&e->monitor_gain, gain);
 }
 

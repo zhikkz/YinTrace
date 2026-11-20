@@ -274,6 +274,9 @@ class PracticeEngine {
   static const int maxTracks = 4;
   static const int _capMax = 4096;
 
+  /// Highest [setMonitorGain], +24 dB (YT_MONITOR_MAX_GAIN in yt_audio.h).
+  static const double maxMonitorGain = 16;
+
   final Pointer<YtEngine> _ptr;
   final int sampleRate;
   final EngineMode mode;
@@ -389,9 +392,13 @@ class PracticeEngine {
     return _b.engineMonitorAvailable(_ptr) != 0;
   }
 
-  /// Direct mic-to-stereo mix. Gain is limited to 0..1 and normally heard
-  /// while tracks play. Route changes clear it, so check [monitorAvailable]
-  /// before reapplying.
+  /// Live mic in both ears, normally heard while tracks play. The engine
+  /// high-passes, compresses and peak-limits the mic first, and keeps room
+  /// noise between phrases down; [gain] is the linear gain after that, 0
+  /// (off) to [maxMonitorGain]. A phone mic hears singing 10-20 dB under a
+  /// mastered accompaniment, hence the boost. Invalid values mean off,
+  /// larger ones are capped. Route changes clear it, so check
+  /// [monitorAvailable] before reapplying. Captured audio stays the dry mic.
   void setMonitorGain(double gain) {
     _check();
     _b.engineSetMonitorGain(_ptr, gain);
