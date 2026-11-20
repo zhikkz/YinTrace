@@ -7,6 +7,7 @@
 //   * Everywhere else it is compiled as plain C (see CMakeLists.txt).
 
 #include "yt_audio.h"
+#include "yt_monitor.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -142,6 +143,10 @@ static void yt_platform_unwatch_routes(yt_engine* e);
 static int32_t yt_platform_monitor_available(void);
 #if defined(__APPLE__) && defined(__OBJC__) && TARGET_OS_IOS
 static void yt_update_monitor_route(yt_engine* e, int32_t available);
+// The platform's own duplex device (yt_device_ios.inc) hears about
+// interruptions and media services resets from the observers.
+static void yt_platform_device_interrupted(yt_engine* e, int began);
+static void yt_platform_device_media_reset(yt_engine* e);
 #endif
 
 #if defined(__APPLE__) && defined(__OBJC__)
@@ -279,6 +284,12 @@ struct yt_engine {
   ma_device device;
   int has_context;
   int has_device;
+  // A duplex device run by the platform layer instead of miniaudio (iOS:
+  // one RemoteIO unit, see yt_device_ios.inc); NULL otherwise.
+  void* platform_device;
+  // Set from start until stop is asked for, so the platform device can tell
+  // a stop by the system from its own.
+  volatile ma_uint32 running_requested;
   int32_t mode;
   int32_t sample_rate;
   volatile ma_uint32 audio_events;
@@ -300,6 +311,8 @@ struct yt_engine {
   volatile float monitor_gain;
   volatile ma_uint32 monitor_while_capturing;
   volatile ma_uint32 monitor_route_allowed;
+  yt_monitor monitor_chain;  // what the mic goes through to be heard (audio thread)
+  yt_bus_limiter bus_limiter;  // keeps tracks + monitor under full scale (audio thread)
   ma_int64 clock;  // audio thread only
 
   // Capture ring (single producer: audio thread, single consumer: Dart).
@@ -318,6 +331,30 @@ static void yt_update_monitor_route(yt_engine* e, int32_t available) {
   ma_atomic_store_32(&e->monitor_route_allowed, available ? 1 : 0);
   if (!available) ma_atomic_store_f32(&e->monitor_gain, 0.0f);
 }
+#endif
+
+#if YT_HAS_APPLE_PLATFORM && TARGET_OS_IOS
+#include "yt_device_ios.inc"
+#else
+// Elsewhere miniaudio runs every device.
+static int yt_platform_device_init(yt_engine* e) {
+  (void)e;
+  return 0;
+}
+static int32_t yt_platform_device_start(yt_engine* e) {
+  (void)e;
+  return -2;
+}
+static int32_t yt_platform_device_stop(yt_engine* e) {
+  (void)e;
+  return -2;
+}
+static void yt_platform_device_uninit(yt_engine* e) { (void)e; }
+static int32_t yt_platform_device_period_frames(yt_engine* e) {
+  (void)e;
+  return 0;
+}
+static void yt_platform_device_maintain(yt_engine* e) { (void)e; }
 #endif
 
 static void yt_track_lock(yt_engine* e) {
@@ -454,15 +491,17 @@ void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames)
     if (in != NULL) {
       yt_push_capture(e, in + done, seg, pos, e->clock + done,
                       seg_playing ? YT_CAPTURE_FLAG_PLAYING : 0);
-      if (out != NULL && (seg_playing || monitor_capture) && monitor > 0.0f &&
-          ma_atomic_load_32(&e->monitor_route_allowed)) {
-        float* o = out + (size_t)done * 2;
-        const float* s = in + done;
-        for (ma_uint32 i = 0; i < seg; i++) {
-          o[2 * i] += s[i] * monitor;
-          o[2 * i + 1] += s[i] * monitor;
-        }
-      }
+    }
+    // The capture above stays the dry mic; only what is heard is processed.
+    if (in != NULL && out != NULL && (seg_playing || monitor_capture) && monitor > 0.0f &&
+        ma_atomic_load_32(&e->monitor_route_allowed)) {
+      yt_monitor* chain = &e->monitor_chain;
+      // Switched off and on again between two callbacks: start clean anyway.
+      if (ma_atomic_exchange_32(&chain->reset_pending, 0)) yt_monitor_idle(chain);
+      yt_monitor_process(chain, in + done, out + (size_t)done * 2, seg, monitor);
+    } else {
+      // Muted at once; it fades in from a clean state when it is heard again.
+      yt_monitor_idle(&e->monitor_chain);
     }
     if (seg_playing) pos += seg;
     done += seg;
@@ -471,12 +510,11 @@ void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames)
   if (have_tracks) yt_track_unlock(e);
 
   if (out != NULL) {
-    // Soft safety clip.
-    for (ma_uint32 i = 0; i < frame_count * 2; i++) {
-      float v = out[i];
-      if (v > 1.0f) out[i] = 1.0f;
-      else if (v < -1.0f) out[i] = -1.0f;
-    }
+    // Loud tracks plus the monitor: limited to YT_BUS_CEILING (untouched
+    // below it), then the soft clip as a last resort, exactly transparent up
+    // to YT_SOFT_CLIP_KNEE.
+    yt_bus_limiter_process(&e->bus_limiter, out, frame_count);
+    for (ma_uint32 i = 0; i < frame_count * 2; i++) out[i] = yt_soft_clip(out[i]);
   }
 
   ma_atomic_store_i64(&e->position, pos);
@@ -510,7 +548,11 @@ void yt_engine_signal_audio_event(yt_engine* e, int32_t events) {
 }
 
 int32_t yt_engine_take_audio_events(yt_engine* e) {
-  return e ? (int32_t)ma_atomic_exchange_32(&e->audio_events, 0) : 0;
+  if (e == NULL) return 0;
+  // The control thread polls this every UI frame: the platform device
+  // rebuilds itself here when it has to (yt_device_ios.inc).
+  if (e->platform_device != NULL) yt_platform_device_maintain(e);
+  return (int32_t)ma_atomic_exchange_32(&e->audio_events, 0);
 }
 
 static void yt_device_notification(const ma_device_notification* notification) {
@@ -558,6 +600,8 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
   e->loop_start = 0;
   e->loop_end = 0;
   for (int i = 0; i < YT_MAX_TRACKS; i++) e->gains[i] = 1.0f;
+  yt_monitor_init(&e->monitor_chain, (float)sample_rate);
+  yt_bus_limiter_init(&e->bus_limiter, (float)sample_rate);
   e->cap_samples = (float*)calloc(YT_CAP_RING_FRAMES, sizeof(float));
   if (e->cap_samples == NULL) {
     free(e);
@@ -565,6 +609,14 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
     return NULL;
   }
   if (mode == YT_MODE_OFFLINE) return e;
+
+  // Where the platform has a lower-latency duplex device, it runs practice
+  // (the live monitor hears the microphone in the same cycle); miniaudio is
+  // the fallback when it cannot be set up.
+  if (mode == YT_MODE_DUPLEX && !use_null_backend && yt_platform_device_init(e)) {
+    yt_platform_watch_routes(e);
+    return e;
+  }
 
   ma_context_config ctx_cfg = ma_context_config_init();
   // The audio session is configured by yt_configure_session().
@@ -594,7 +646,10 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
   cfg.capture.format = ma_format_f32;
   cfg.capture.channels = 1;
   cfg.performanceProfile = ma_performance_profile_low_latency;
-  cfg.periodSizeInMilliseconds = 10;
+  // Recording (practice, the free tuner) asks for short periods: the live
+  // monitor goes through one capture and one playback period. The same
+  // values as yt_configure_session() keep the two from undoing each other.
+  cfg.periodSizeInMilliseconds = mode == YT_MODE_PLAYBACK ? 10 : 5;
   cfg.dataCallback = yt_data_callback;
   cfg.notificationCallback = yt_device_notification;
   cfg.pUserData = e;
@@ -616,6 +671,11 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
 int32_t yt_engine_start(yt_engine* e) {
   if (e == NULL) return -1;
   ma_atomic_store_32(&e->capture_suspended, 0);
+  if (e->platform_device != NULL) {
+    if (yt_platform_device_start(e) == 0) return 0;
+    ma_atomic_store_32(&e->capture_suspended, 1);
+    return -2;
+  }
   if (!e->has_device) return 0;
   if (ma_device_start(&e->device) == MA_SUCCESS) return 0;
   ma_atomic_store_32(&e->capture_suspended, 1);
@@ -627,6 +687,7 @@ int32_t yt_engine_stop(yt_engine* e) {
   ma_atomic_store_f32(&e->monitor_gain, 0.0f);
   ma_atomic_store_32(&e->playing, 0);
   ma_atomic_store_32(&e->capture_suspended, 1);
+  if (e->platform_device != NULL) return yt_platform_device_stop(e);
   if (!e->has_device) return 0;
   ma_atomic_store_32(&e->stopping, 1);
   ma_result r = ma_device_stop(&e->device);
@@ -638,6 +699,7 @@ void yt_engine_destroy(yt_engine* e) {
   if (e == NULL) return;
   // Unconditional: a no-op for engines that never watched routes.
   yt_platform_unwatch_routes(e);
+  yt_platform_device_uninit(e);
   if (e->has_device) ma_device_uninit(&e->device);
   if (e->has_context) ma_context_uninit(&e->context);
   for (int i = 0; i < YT_MAX_TRACKS; i++) free(e->tracks[i].data);
@@ -648,7 +710,9 @@ void yt_engine_destroy(yt_engine* e) {
 int32_t yt_engine_sample_rate(yt_engine* e) { return e ? e->sample_rate : 0; }
 
 int32_t yt_engine_period_frames(yt_engine* e) {
-  if (e == NULL || !e->has_device) return 0;
+  if (e == NULL) return 0;
+  if (e->platform_device != NULL) return yt_platform_device_period_frames(e);
+  if (!e->has_device) return 0;
   ma_uint32 p = e->device.playback.internalPeriodSizeInFrames;
   if (e->mode == YT_MODE_CAPTURE || p == 0) p = e->device.capture.internalPeriodSizeInFrames;
   // Report in engine frames (the device may run at a different rate).
@@ -744,7 +808,12 @@ int32_t yt_engine_monitor_available(yt_engine* e) {
 void yt_engine_set_monitor_gain(yt_engine* e, float gain) {
   if (e == NULL) return;
   if (!isfinite(gain) || gain < 0.0f || !yt_engine_monitor_available(e)) gain = 0.0f;
-  if (gain > 1.0f) gain = 1.0f;
+  if (gain > YT_MONITOR_MAX_GAIN) gain = YT_MONITOR_MAX_GAIN;
+  // Off -> on (a stop or route change may have cleared it without the audio
+  // thread noticing): ask for a clean start, before the gain can be seen.
+  if (gain > 0.0f && ma_atomic_load_f32(&e->monitor_gain) == 0.0f) {
+    ma_atomic_store_32(&e->monitor_chain.reset_pending, 1);
+  }
   ma_atomic_store_f32(&e->monitor_gain, gain);
 }
 

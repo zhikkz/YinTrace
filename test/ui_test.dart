@@ -1235,10 +1235,30 @@ void main() {
       host(tunerServices, TunerPage(engineFactory: () => engine = PracticeEngine.create(mode: EngineMode.offline))),
     );
     await tester.pump();
-    final mic = Float32List(64)..[7] = 0.4;
-    Float32List render() => engine.render(64, input: mic);
+    // The monitor high-passes the mic: sing a tone (whole periods per
+    // callback) and measure the settled RMS of what both ears hear.
+    final mic = Float32List.fromList([for (var i = 0; i < 256; i++) 0.05 * math.sin(2 * math.pi * i / 128)]);
+    double heard() {
+      var out = Float32List(0);
+      var peak = 0.0;
+      for (var i = 0; i < 8; i++) {
+        out = engine.render(mic.length, input: mic);
+        for (final v in out) {
+          peak = math.max(peak, v.abs());
+        }
+      }
+      var sum = 0.0;
+      for (var i = 0; i < out.length; i += 2) {
+        expect(out[i + 1], out[i]);
+        sum += out[i] * out[i];
+      }
+      // Silent means silent from the very first callback, not a late mute.
+      if (sum == 0) expect(peak, 0, reason: 'the monitor must be muted at once');
+      return math.sqrt(sum / mic.length);
+    }
+
     expect(engine.isPlaying, isFalse);
-    expect(render()[14], 0);
+    expect(heard(), 0);
 
     await tester.tap(find.byTooltip('耳返设置'));
     await tester.pump();
@@ -1247,23 +1267,24 @@ void main() {
     expect(tester.widget<SwitchListTile>(monitor).value, isFalse);
     await tester.tap(monitor);
     await tester.pump();
-    final output = render();
-    expect(output[14], closeTo(0.2, 1e-6));
-    expect(output[15], output[14]);
-    expect(engine.readCapture().last.samples[7], closeTo(0.4, 1e-6));
+    expect(settings.monitorLevel, 0.5);
+    final atHalf = heard();
+    expect(atHalf, greaterThan(0.05)); // +12 dB on a compressed -29 dBFS tone
+    expect(engine.readCapture().last.samples, mic); // recorded dry
 
     await tester.tapAt(tester.getCenter(find.byType(Slider)) + const Offset(60, 0));
     await tester.pump();
-    expect(settings.monitorVolume, greaterThan(0.5));
-    expect(render()[14], closeTo(0.4 * settings.monitorVolume, 1e-6));
+    expect(settings.monitorLevel, greaterThan(0.5));
+    final louder = heard();
+    expect(louder / atHalf, closeTo(settings.monitorGain / 4, 1e-3));
 
     engine.signalAudioEvent(AudioEvents.routeChanged);
-    expect(render()[14], 0);
+    expect(heard(), 0);
     await tester.pump(const Duration(milliseconds: 16));
-    expect(render()[14], closeTo(0.4 * settings.monitorVolume, 1e-6));
+    expect(heard(), closeTo(louder, louder * 1e-3));
 
     engine.signalAudioEvent(AudioEvents.deviceLost);
-    expect(render()[14], 0);
+    expect(heard(), 0);
     await tester.pump(const Duration(milliseconds: 16));
     expect(tester.widget<SwitchListTile>(monitor).value, isFalse);
     Navigator.of(tester.element(monitor)).pop();
@@ -1271,8 +1292,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.text('继续练习'));
     await tester.pump();
-    expect(render()[14], 0);
-    expect(engine.readCapture().last.samples[7], closeTo(0.4, 1e-6));
+    expect(heard(), 0);
+    expect(engine.readCapture().last.samples, mic);
   }, skip: lib == null);
   testWidgets('scores hide line playback when the scored line has no recording', (tester) async {
     phone(tester);

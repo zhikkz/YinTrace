@@ -1129,7 +1129,7 @@ class _MixSheetState extends State<_MixSheet> {
               title: const Text('耳返（有线耳机）'),
               subtitle: Text(
                 widget.session.monitorAvailable
-                    ? '练习播放时实时听见自己；暂停、听原唱或回听时静音'
+                    ? '练习播放时实时听见自己，暂停、听原唱或回听时静音；打开时关掉系统的人声处理，延迟更低'
                     : '请连接有线耳机、耳机转接头或 USB 耳机；蓝牙和外放不可用',
               ),
               value: widget.session.monitorEnabled,
@@ -1137,13 +1137,14 @@ class _MixSheetState extends State<_MixSheet> {
             ),
             slider(
               '耳返音量',
-              '${(s.monitorVolume * 100).round()}%',
+              '${(s.monitorLevel * 100).round()}%',
               Slider(
-                value: s.monitorVolume,
-                onChanged: widget.session.monitorEnabled ? (v) => drag(() => s.monitorVolume = v) : null,
+                value: s.monitorLevel,
+                onChanged: widget.session.monitorEnabled ? (v) => drag(() => s.monitorLevel = v) : null,
                 onChangeEnd: dragEnd,
               ),
             ),
+            Text('建议从 50% 左右开始：轻声会被自动托起，大声会被压住。听到啸叫时把耳机戴好或调低耳返音量。', style: context.type.bodySmall),
             slider(
               '音准容差',
               '±${s.toleranceCents} 音分',
@@ -1169,7 +1170,8 @@ class _MixSheetState extends State<_MixSheet> {
               ),
             ),
             Text(
-              '系统测得的延迟 ${(widget.session.latency * 1000).round()} ms。你的音高线总比原唱靠右时，把补偿调大。',
+              '系统测得的延迟 ${(widget.session.latency * 1000 - s.latencyOffsetMs).round()} ms，加上补偿共 ${(widget.session.latency * 1000).round()} ms。'
+              '你的音高线总比原唱靠右时，把补偿调大。',
               style: context.type.bodySmall,
             ),
             const SizedBox(height: 6),

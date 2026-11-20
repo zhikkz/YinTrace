@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yintrace/src/app/atomic_file.dart';
 import 'package:yintrace/src/app/settings.dart';
 import 'package:yintrace/src/import/vocal_acceleration.dart';
+import 'package:yintrace_audio/yintrace_audio.dart' show PracticeEngine;
 
 void main() {
   late Directory tmp;
@@ -82,13 +83,33 @@ void main() {
   test('monitor level persists with safe defaults for old or out-of-range settings', () async {
     final file = File('${tmp.path}/monitor.json')..writeAsStringSync('{}');
     final settings = await AppSettings.load(file);
-    expect(settings.monitorVolume, 0.5);
-    await settings.update((s) => s.monitorVolume = 0.3);
-    expect((await AppSettings.load(file)).monitorVolume, 0.3);
+    expect(settings.monitorLevel, 0.5);
+    await settings.update((s) => s.monitorLevel = 0.3);
+    expect((await AppSettings.load(file)).monitorLevel, 0.3);
     expect(settings.toJson().containsKey('monitorEnabled'), isFalse);
+    expect(settings.toJson().containsKey('monitorVolume'), isFalse);
     for (final (stored, expected) in [(2, 1.0), (-1, 0.0)]) {
-      file.writeAsStringSync(jsonEncode({'monitorVolume': stored}));
-      expect((await AppSettings.load(file)).monitorVolume, expected);
+      file.writeAsStringSync(jsonEncode({'monitorLevel': stored}));
+      expect((await AppSettings.load(file)).monitorLevel, expected);
+    }
+    // The old linear volume is not carried over: pushed to the top to hear
+    // the old, quiet monitor, it would now mean +24 dB.
+    file.writeAsStringSync(jsonEncode({'monitorVolume': 1.0}));
+    expect((await AppSettings.load(file)).monitorLevel, 0.5);
+  });
+
+  test('the monitor level maps to a gain with a square taper', () {
+    final s = AppSettings(null);
+    double gainAt(double level) => (s..monitorLevel = level).monitorGain;
+    expect(gainAt(0), 0);
+    expect(gainAt(0.25), closeTo(1, 1e-12)); // unity, the old maximum
+    expect(gainAt(0.5), closeTo(4, 1e-12)); // +12 dB, the default
+    expect(gainAt(0.75), closeTo(9, 1e-12));
+    expect(gainAt(1), PracticeEngine.maxMonitorGain); // +24 dB
+    expect(gainAt(2), PracticeEngine.maxMonitorGain);
+    expect(gainAt(double.nan), 0);
+    for (var v = 0.0; v < 1; v += 0.01) {
+      expect(gainAt(v + 0.01), greaterThan(gainAt(v)));
     }
   });
 

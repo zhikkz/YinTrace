@@ -79,13 +79,32 @@ void main() {
     }
   }
 
-  /// Mute the file tracks so that only the live microphone can be heard.
-  double monitorSample() {
+  /// What the live microphone alone sounds like (the file tracks muted): the
+  /// RMS of the left channel once the monitor has settled. The monitor
+  /// high-passes the mic, so the mic plays a tone (whole periods per
+  /// callback), not DC. Both ears must hear the same.
+  final mic = Float32List.fromList([for (var i = 0; i < 256; i++) 0.05 * math.sin(2 * math.pi * i / 128)]);
+  double monitorLevel() {
     final e = session.engine!;
     for (var slot = 0; slot < 3; slot++) {
       e.setTrackGain(slot, 0);
     }
-    return e.render(64, input: Float32List(64)..fillRange(0, 64, 0.4))[0];
+    var out = Float32List(0);
+    var peak = 0.0;
+    for (var i = 0; i < 8; i++) {
+      out = e.render(mic.length, input: mic);
+      for (final v in out) {
+        peak = math.max(peak, v.abs());
+      }
+    }
+    var sum = 0.0;
+    for (var i = 0; i < out.length; i += 2) {
+      expect(out[i + 1], out[i]);
+      sum += out[i] * out[i];
+    }
+    // Silent means silent from the very first callback, not a late mute.
+    if (sum == 0) expect(peak, 0, reason: 'the monitor must be muted at once');
+    return math.sqrt(sum / mic.length);
   }
 
   test('a short take late in the song plays at its original absolute position', () {
@@ -105,62 +124,82 @@ void main() {
     expect(session.monitorAvailable, isTrue); // offline test route
     expect(session.monitorEnabled, isFalse);
     session.play();
-    expect(monitorSample(), 0);
-    session.settings.monitorVolume = 0.25;
+    expect(monitorLevel(), 0);
+    session.settings.monitorLevel = 0.25; // unity gain
     session.setMonitorEnabled(true);
-    expect(monitorSample(), closeTo(0.1, 1e-6));
+    // Every resume starts the monitor afresh, so the same mic sounds the same.
+    final level = monitorLevel();
+    expect(level, greaterThan(0.02));
     session.pause();
-    expect(monitorSample(), 0);
+    expect(monitorLevel(), 0);
     session.play();
-    expect(monitorSample(), closeTo(0.1, 1e-6));
+    expect(monitorLevel(), closeTo(level, 1e-9));
     // Capture an actual take, then check both listening modes with a live mic.
     session.applyMix();
     run(5.5);
     expect(session.canListenBack(), isTrue);
     session.listenOriginal(line: 0);
-    expect(monitorSample(), 0);
+    expect(monitorLevel(), 0);
     session.listenBack(line: 0);
-    expect(monitorSample(), 0);
+    expect(monitorLevel(), 0);
     session.stopListening();
-    expect(monitorSample(), 0); // still paused
+    expect(monitorLevel(), 0); // still paused
     session.play();
-    expect(monitorSample(), closeTo(0.1, 1e-6));
+    expect(monitorLevel(), closeTo(level, 1e-9));
     session.setMonitorEnabled(false);
-    expect(monitorSample(), 0);
-    expect(session.settings.monitorVolume, 0.25);
+    expect(monitorLevel(), 0);
+    expect(session.settings.monitorLevel, 0.25);
+  }, skip: lib == null);
+
+  test('the monitor level slider sets the gain after compression', () {
+    session.play();
+    session.settings.monitorLevel = 0.25;
+    session.setMonitorEnabled(true);
+    final unity = monitorLevel();
+    // A -29 dBFS tone, just inside the compressor's knee: a little under unity.
+    expect(unity, inInclusiveRange(0.7 * 0.05 / math.sqrt2, 0.05 / math.sqrt2));
+    for (final (level, gain) in [(0.5, 4.0), (0.75, 9.0), (0.1, 0.16)]) {
+      session.settings.monitorLevel = level;
+      session.applyMix();
+      expect(monitorLevel() / unity, closeTo(gain, gain * 1e-3), reason: 'slider $level');
+    }
+    session.settings.monitorLevel = 0;
+    session.applyMix();
+    expect(monitorLevel(), 0);
   }, skip: lib == null);
 
   test('monitoring is silenced on backgrounding and disarmed when headphones are lost', () {
     session.play();
     session.setMonitorEnabled(true);
-    expect(monitorSample(), closeTo(0.2, 1e-6));
+    final level = monitorLevel();
+    expect(level, greaterThan(0.02));
     session.suspend();
-    expect(monitorSample(), 0);
+    expect(monitorLevel(), 0);
     session.resume();
-    expect(monitorSample(), 0);
+    expect(monitorLevel(), 0);
     session.play();
-    expect(monitorSample(), closeTo(0.2, 1e-6));
+    expect(monitorLevel(), closeTo(level, 1e-9));
     final e = session.engine!;
     e.signalAudioEvent(AudioEvents.routeChanged);
-    expect(monitorSample(), 0); // native mute, before the app sees the event
+    expect(monitorLevel(), 0); // native mute, before the app sees the event
     session.tick();
     expect(session.monitorEnabled, isTrue); // a safe route reconfiguration
-    expect(monitorSample(), closeTo(0.2, 1e-6));
+    expect(monitorLevel(), closeTo(level, 1e-9));
     e.signalAudioEvent(AudioEvents.routeChanged | AudioEvents.deviceLost);
-    expect(monitorSample(), 0);
+    expect(monitorLevel(), 0);
     session.tick();
     expect(session.monitorEnabled, isFalse);
     e.signalAudioEvent(AudioEvents.routeChanged); // headphones reconnected
     session.tick();
     session.play();
-    expect(monitorSample(), 0);
+    expect(monitorLevel(), 0);
     session.setMonitorEnabled(true);
-    expect(monitorSample(), closeTo(0.2, 1e-6));
+    expect(monitorLevel(), closeTo(level, 1e-9));
     // A quick resume before tick() must also consume the pending loss.
     e.signalAudioEvent(AudioEvents.deviceLost);
     session.play();
     expect(session.monitorEnabled, isFalse);
-    expect(monitorSample(), 0);
+    expect(monitorLevel(), 0);
   }, skip: lib == null);
 
   test('the original singer is heard loud, then practice waits at that line', () {
