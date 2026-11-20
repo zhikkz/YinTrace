@@ -14,6 +14,13 @@ static void sleep_ms(int ms) { usleep(ms * 1000); }
 #endif
 
 #include "../../src/yt_audio.h"
+// The sample-rate bridge of the iOS device (plain C, tested here).
+#define MA_NO_ENGINE
+#define MA_NO_NODE_GRAPH
+#define MA_NO_RESOURCE_MANAGER
+#define MA_NO_GENERATION
+#include "../../src/miniaudio.h"
+#include "../../src/yt_rate_bridge.h"
 
 static int failures = 0;
 #define CHECK(cond)                                                    \
@@ -395,6 +402,101 @@ static void test_track_offset(void) {
   yt_engine_destroy(e);
 }
 
+// The engine at 44.1 kHz inside 48 kHz device callbacks (most iPhones): every
+// callback gets exactly its frames, the tone keeps its pitch without clicks,
+// capture stays continuous and tagged, and the microphone reaches the
+// capture (and the monitor) with well under a millisecond of extra delay.
+static void test_rate_bridge(void) {
+  char err[256];
+  yt_engine* e = yt_engine_create(44100, YT_MODE_OFFLINE, 0, err, sizeof err);
+  CHECK(e != NULL);
+  const int track_frames = 44100 * 4;
+  float* track = malloc(sizeof(float) * track_frames);
+  for (int i = 0; i < track_frames; i++) track[i] = 0.5f * sinf(2.0f * 3.14159265f * 1000.0f * i / 44100.0f);
+  CHECK(yt_engine_load_track_pcm(e, 0, track, track_frames, 1) == 0);
+  yt_engine_set_playing(e, 1);
+
+  yt_rate_bridge b;
+  CHECK(yt_rate_bridge_init(&b, 44100, 48000, 4096));
+  // Callback sizes iOS uses: 256 frames, odd sizes after a route change,
+  // 4096 while the screen is locked.
+  const ma_uint32 sizes[] = {256, 256, 256, 255, 257, 512, 4096, 256, 470, 256, 128};
+  const int nsizes = (int)(sizeof(sizes) / sizeof(sizes[0]));
+  float* out = malloc(sizeof(float) * 4096 * 2);
+  float* mic = malloc(sizeof(float) * 4096);
+  float* cap = malloc(sizeof(float) * 4096);
+  long long device_frames = 0, captured = 0, crossings = 0, clicks = 0;
+  long long impulse_at = -1, impulse_seen = -1;
+  int64_t next_song = 0;
+  int tags_ok = 1;
+  float last = 0.0f;
+  for (int k = 0; device_frames < 48000 * 3; k++) {
+    ma_uint32 n = sizes[k % nsizes];
+    for (ma_uint32 i = 0; i < n; i++) mic[i] = 0.0f;
+    if (impulse_at < 0 && device_frames > 48000) {
+      impulse_at = device_frames;
+      mic[0] = 1.0f;
+    }
+    yt_rate_bridge_render(&b, e, out, mic, n);
+    for (ma_uint32 i = 0; i < n; i++) {
+      float v = out[2 * i];
+      if (out[2 * i] != out[2 * i + 1]) clicks++;
+      if ((last < 0) != (v < 0)) crossings++;
+      // A 1 kHz sine at 0.5 moves at most ~0.066 per 48 kHz sample.
+      if (fabsf(v - last) > 0.09f) clicks++;
+      last = v;
+    }
+    device_frames += n;
+    int64_t song, clock;
+    int32_t flags;
+    int got;
+    while ((got = yt_engine_read_capture(e, cap, 4096, &song, &clock, &flags)) > 0) {
+      if (song != next_song) tags_ok = 0;
+      for (int i = 0; i < got; i++) {
+        if (impulse_seen < 0 && fabsf(cap[i]) > 0.05f) impulse_seen = captured + i;
+      }
+      next_song = song + got;
+      captured += got;
+    }
+  }
+  double seconds = device_frames / 48000.0;
+  double freq = crossings / 2.0 / seconds;
+  printf("rate bridge: %.2f s, %lld engine frames, tone %.1f Hz, under/overflows %u/%u, mic delay %.2f ms\n",
+         seconds, captured, freq, b.underflows, b.overflows,
+         (impulse_seen - impulse_at * 44100.0 / 48000.0) / 44.1);
+  CHECK(fabs(freq - 1000.0) < 2.0);
+  CHECK(clicks == 0);
+  CHECK(tags_ok);
+  CHECK(llabs(captured - (long long)llround(device_frames * 44100.0 / 48000.0)) < 32);
+  CHECK(b.underflows == 0 && b.overflows == 0);
+  CHECK(impulse_seen >= 0);
+  // The impulse arrives where it was sung, give or take the prefill.
+  double delay_ms = (impulse_seen - impulse_at * 44100.0 / 48000.0) / 44.1;
+  CHECK(delay_ms > -0.1 && delay_ms < 0.6);
+  CHECK(yt_engine_position(e) == captured);
+
+  yt_rate_bridge_uninit(&b);
+  // A callback bigger than the bridge was made for stays silent.
+  CHECK(yt_rate_bridge_init(&b, 44100, 48000, 256));
+  for (int i = 0; i < 1024; i++) out[i] = 1.0f;
+  yt_rate_bridge_render(&b, e, out, mic, 512);
+  int silent = 1;
+  for (int i = 0; i < 1024; i++) silent &= out[i] == 0.0f;
+  CHECK(silent);
+  yt_rate_bridge_uninit(&b);
+  // A slower device (32 kHz, some USB headsets) and silence in.
+  CHECK(yt_rate_bridge_init(&b, 44100, 32000, 1024));
+  for (int k = 0; k < 400; k++) yt_rate_bridge_render(&b, e, out, k % 2 ? mic : NULL, 256);
+  CHECK(b.underflows == 0 && b.overflows == 0);
+  yt_rate_bridge_uninit(&b);
+  CHECK(!yt_rate_bridge_init(&b, 44100, 0, 256));
+  free(out);
+  free(mic);
+  free(cap);
+  free(track);
+  yt_engine_destroy(e);
+}
+
 static void test_audio_log(void) {
   char buf[4096];
   CHECK(yt_audio_log(buf, sizeof buf) == 0);
@@ -431,6 +533,7 @@ int main(int argc, char** argv) {
   test_null_device();
   test_audio_interruption();
   test_monitoring();
+  test_rate_bridge();
   test_audio_log();
   test_track_offset();
   for (int i = 1; i + 1 < argc; i += 2) test_decode(argv[i], atoi(argv[i + 1]));

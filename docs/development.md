@@ -21,6 +21,8 @@ packages/yintrace_audio/   原生音频核心（C + miniaudio，dart:ffi）
   src/yt_audio.c            解码、全双工练习引擎、采集环形缓冲（带歌曲帧号）
   src/yt_platform_apple.inc AVAudioSession（线路变化按原因区分）、麦克风权限、ExtAudioFile 解码、
                             AAC 编码、系统分享面板
+  src/yt_device_ios.inc     iPhone 上练习用的低延迟全双工设备（一个 RemoteIO 单元，同一周期取麦克风）
+  src/yt_rate_bridge.h      在硬件采样率（多为 48 kHz）的回调里运行 44.1 kHz 的引擎（纯 C，有原生测试）
 tools/
   build_pitch_model.py      从 swift-f0 官方 wheel 生成随 App 附带的 assets/models/swift_f0.onnx，并核对和原模型一致
   build_karaoke_graph.py    生成 assets/models 里的网络结构和拷贝配方，并与 PyTorch 对照验证

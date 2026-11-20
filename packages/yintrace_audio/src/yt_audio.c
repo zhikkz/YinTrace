@@ -142,6 +142,10 @@ static void yt_platform_unwatch_routes(yt_engine* e);
 static int32_t yt_platform_monitor_available(void);
 #if defined(__APPLE__) && defined(__OBJC__) && TARGET_OS_IOS
 static void yt_update_monitor_route(yt_engine* e, int32_t available);
+// The platform's own duplex device (yt_device_ios.inc) hears about
+// interruptions and media services resets from the observers.
+static void yt_platform_device_interrupted(yt_engine* e, int began);
+static void yt_platform_device_media_reset(yt_engine* e);
 #endif
 
 #if defined(__APPLE__) && defined(__OBJC__)
@@ -279,6 +283,12 @@ struct yt_engine {
   ma_device device;
   int has_context;
   int has_device;
+  // A duplex device run by the platform layer instead of miniaudio (iOS:
+  // one RemoteIO unit, see yt_device_ios.inc); NULL otherwise.
+  void* platform_device;
+  // Set from start until stop is asked for, so the platform device can tell
+  // a stop by the system from its own.
+  volatile ma_uint32 running_requested;
   int32_t mode;
   int32_t sample_rate;
   volatile ma_uint32 audio_events;
@@ -317,6 +327,29 @@ struct yt_engine {
 static void yt_update_monitor_route(yt_engine* e, int32_t available) {
   ma_atomic_store_32(&e->monitor_route_allowed, available ? 1 : 0);
   if (!available) ma_atomic_store_f32(&e->monitor_gain, 0.0f);
+}
+#endif
+
+#if YT_HAS_APPLE_PLATFORM && TARGET_OS_IOS
+#include "yt_device_ios.inc"
+#else
+// Elsewhere miniaudio runs every device.
+static int yt_platform_device_init(yt_engine* e) {
+  (void)e;
+  return 0;
+}
+static int32_t yt_platform_device_start(yt_engine* e) {
+  (void)e;
+  return -2;
+}
+static int32_t yt_platform_device_stop(yt_engine* e) {
+  (void)e;
+  return -2;
+}
+static void yt_platform_device_uninit(yt_engine* e) { (void)e; }
+static int32_t yt_platform_device_period_frames(yt_engine* e) {
+  (void)e;
+  return 0;
 }
 #endif
 
@@ -566,6 +599,14 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
   }
   if (mode == YT_MODE_OFFLINE) return e;
 
+  // Where the platform has a lower-latency duplex device, it runs practice
+  // (the live monitor hears the microphone in the same cycle); miniaudio is
+  // the fallback when it cannot be set up.
+  if (mode == YT_MODE_DUPLEX && !use_null_backend && yt_platform_device_init(e)) {
+    yt_platform_watch_routes(e);
+    return e;
+  }
+
   ma_context_config ctx_cfg = ma_context_config_init();
   // The audio session is configured by yt_configure_session().
   ctx_cfg.coreaudio.sessionCategory = ma_ios_session_category_none;
@@ -594,7 +635,10 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
   cfg.capture.format = ma_format_f32;
   cfg.capture.channels = 1;
   cfg.performanceProfile = ma_performance_profile_low_latency;
-  cfg.periodSizeInMilliseconds = 10;
+  // Recording (practice, the free tuner) asks for short periods: the live
+  // monitor goes through one capture and one playback period. The same
+  // values as yt_configure_session() keep the two from undoing each other.
+  cfg.periodSizeInMilliseconds = mode == YT_MODE_PLAYBACK ? 10 : 5;
   cfg.dataCallback = yt_data_callback;
   cfg.notificationCallback = yt_device_notification;
   cfg.pUserData = e;
@@ -616,6 +660,11 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
 int32_t yt_engine_start(yt_engine* e) {
   if (e == NULL) return -1;
   ma_atomic_store_32(&e->capture_suspended, 0);
+  if (e->platform_device != NULL) {
+    if (yt_platform_device_start(e) == 0) return 0;
+    ma_atomic_store_32(&e->capture_suspended, 1);
+    return -2;
+  }
   if (!e->has_device) return 0;
   if (ma_device_start(&e->device) == MA_SUCCESS) return 0;
   ma_atomic_store_32(&e->capture_suspended, 1);
@@ -627,6 +676,7 @@ int32_t yt_engine_stop(yt_engine* e) {
   ma_atomic_store_f32(&e->monitor_gain, 0.0f);
   ma_atomic_store_32(&e->playing, 0);
   ma_atomic_store_32(&e->capture_suspended, 1);
+  if (e->platform_device != NULL) return yt_platform_device_stop(e);
   if (!e->has_device) return 0;
   ma_atomic_store_32(&e->stopping, 1);
   ma_result r = ma_device_stop(&e->device);
@@ -638,6 +688,7 @@ void yt_engine_destroy(yt_engine* e) {
   if (e == NULL) return;
   // Unconditional: a no-op for engines that never watched routes.
   yt_platform_unwatch_routes(e);
+  yt_platform_device_uninit(e);
   if (e->has_device) ma_device_uninit(&e->device);
   if (e->has_context) ma_context_uninit(&e->context);
   for (int i = 0; i < YT_MAX_TRACKS; i++) free(e->tracks[i].data);
@@ -648,7 +699,9 @@ void yt_engine_destroy(yt_engine* e) {
 int32_t yt_engine_sample_rate(yt_engine* e) { return e ? e->sample_rate : 0; }
 
 int32_t yt_engine_period_frames(yt_engine* e) {
-  if (e == NULL || !e->has_device) return 0;
+  if (e == NULL) return 0;
+  if (e->platform_device != NULL) return yt_platform_device_period_frames(e);
+  if (!e->has_device) return 0;
   ma_uint32 p = e->device.playback.internalPeriodSizeInFrames;
   if (e->mode == YT_MODE_CAPTURE || p == 0) p = e->device.capture.internalPeriodSizeInFrames;
   // Report in engine frames (the device may run at a different rate).
