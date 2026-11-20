@@ -244,6 +244,19 @@ void main() {
       return out;
     }
 
+    test('a confirmed onset excludes known hum at the same pitch', () {
+      final audio = tone(4, 220, amp: 0.012);
+      const onset = 3.5;
+      // Let the hum get 11 dB louder, then start a loud note at its pitch.
+      for (var i = 3 * sr; i < audio.length; i++) {
+        audio[i] *= i < onset * sr ? 3.6 : 13.0;
+      }
+      final pitches = track(audio);
+      // Before the analysis window can see the louder note, only hum is present.
+      expect(voicedShare(pitches, onset - 0.15, onset - 0.025), 0);
+      expect(voicedShare(pitches, 3.55, 3.9), greaterThan(0.95));
+    });
+
     test('come out in order with their own times', () {
       final tracker = LivePitchTracker(sampleRate: sr, options: const LivePitchOptions(latencySeconds: 0.1));
       final audio = tone(2, 220, startAt: 1);
