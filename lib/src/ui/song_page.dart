@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../analysis/pitch_track.dart';
@@ -38,7 +40,9 @@ class _SongPageState extends State<SongPage> {
   List<PracticeRecord> _history = const [];
   List<Recording> _recordings = const [];
   String? _error;
-  bool _loaded = false;
+  AppServices? _services;
+  int _referenceRevision = 0;
+  bool _correcting = false;
   bool _realigning = false;
   bool _cancelAlignment = false;
   bool _savingAlignment = false;
@@ -47,24 +51,74 @@ class _SongPageState extends State<SongPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_loaded) {
-      _loaded = true;
-      _load();
+    final services = AppScope.of(context);
+    if (!identical(_services, services)) {
+      _services?.pitchCorrections.removeListener(_correctionsChanged);
+      _services = services;
+      _referenceRevision = services.pitchCorrections.savedRevisionFor(widget.songId);
+      _correcting = services.pitchCorrections.busyFor(widget.songId);
+      services.pitchCorrections.addListener(_correctionsChanged);
+      unawaited(_load());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showCorrectionFailure();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _services?.pitchCorrections.removeListener(_correctionsChanged);
+    super.dispose();
+  }
+
+  void _correctionsChanged() {
+    final corrections = _services!.pitchCorrections;
+    final busy = corrections.busyFor(widget.songId);
+    if (_correcting != busy) setState(() => _correcting = busy);
+    final revision = corrections.savedRevisionFor(widget.songId);
+    if (revision != _referenceRevision) {
+      _referenceRevision = revision;
+      unawaited(_refreshReference(revision));
+    }
+    _showCorrectionFailure();
+  }
+
+  void _showCorrectionFailure() {
+    final message = _services!.pitchCorrections.takeBackgroundFailure(widget.songId);
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  Future<void> _refreshReference(int revision) async {
+    final services = _services!;
+    try {
+      final ref = await services.songs.loadReference(widget.songId);
+      if (mounted && identical(_services, services) && revision == _referenceRevision) {
+        setState(() => _ref = ref);
+      }
+    } catch (e) {
+      if (mounted && identical(_services, services) && revision == _referenceRevision) {
+        setState(() => _error = '$e');
+      }
     }
   }
 
   Future<void> _load() async {
-    final repo = AppScope.of(context).songs;
+    if (!mounted) return;
+    final services = _services!;
+    final repo = services.songs;
+    final revision = _referenceRevision;
     try {
       final ref = await repo.loadReference(widget.songId);
       final track = await repo.loadPitchTrack(widget.songId);
       final history = await repo.loadHistory(widget.songId);
       final recordings = await repo.loadRecordings(widget.songId);
       final meta = await repo.load(widget.songId);
-      if (!mounted) return;
+      if (!mounted || !identical(_services, services)) return;
       setState(() {
         _meta = meta;
-        _ref = ref;
+        if (revision == _referenceRevision || _ref == null) _ref = ref;
         _track = track;
         _history = history;
         _recordings = recordings;
@@ -76,11 +130,12 @@ class _SongPageState extends State<SongPage> {
 
   Future<void> _practice({int? line}) async {
     Future<void>? saved;
+    final meta = _meta!, ref = _ref!, contour = _track;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => PracticePage(
-        meta: _meta!,
-        reference: _ref!,
-        contour: _track,
+        meta: meta,
+        reference: ref,
+        contour: contour,
         loopLine: line,
         onLeave: (f) => saved = f,
       ),
@@ -97,12 +152,9 @@ class _SongPageState extends State<SongPage> {
     await _load();
   }
 
-  Future<void> _correct(int line) async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => PitchEditorPage(songId: widget.songId, line: line),
-    ));
-    await _load();
-  }
+  Future<void> _correct(int line) => Navigator.of(context).push(MaterialPageRoute<void>(
+    builder: (_) => PitchEditorPage(songId: widget.songId, line: line),
+  ));
 
   Future<void> _rename() async {
     final current = _meta!.title;
@@ -146,6 +198,8 @@ class _SongPageState extends State<SongPage> {
   }
 
   Future<void> _editLyrics() async {
+    final services = _services!;
+    if (services.pitchCorrections.busyFor(widget.songId)) return;
     var lyrics = _meta!.lyrics;
     final edited = await showModalBottomSheet<String>(
       context: context,
@@ -178,8 +232,8 @@ class _SongPageState extends State<SongPage> {
       ),
     );
     if (edited == null || !mounted) return;
-    final services = AppScope.of(context);
     if (!await ensureModels(context, requiredModels: [hubertFaModel]) || !mounted) return;
+    if (services.pitchCorrections.busyFor(widget.songId)) return;
     setState(() {
       _realigning = true;
       _cancelAlignment = false;
@@ -213,6 +267,8 @@ class _SongPageState extends State<SongPage> {
   }
 
   Future<void> _delete() async {
+    final services = _services!;
+    if (services.pitchCorrections.busyFor(widget.songId)) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -227,8 +283,8 @@ class _SongPageState extends State<SongPage> {
         ],
       ),
     );
-    if (ok != true || !mounted) return;
-    await AppScope.of(context).songs.delete(widget.songId);
+    if (ok != true || !mounted || services.pitchCorrections.busyFor(widget.songId)) return;
+    await services.songs.delete(widget.songId);
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -303,12 +359,12 @@ class _SongPageState extends State<SongPage> {
                   'share' => showSongShare(context, meta),
                   _ => _delete(),
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'rename', child: Text('修改歌名')),
-                  PopupMenuItem(value: 'pitch', child: Text('校正位置和音高')),
-                  PopupMenuItem(value: 'edit', child: Text('修改歌词')),
-                  PopupMenuItem(value: 'share', child: Text('发给别人')),
-                  PopupMenuItem(value: 'delete', child: Text('删除这首歌')),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'rename', child: Text('修改歌名')),
+                  const PopupMenuItem(value: 'pitch', child: Text('校正位置和音高')),
+                  PopupMenuItem(value: 'edit', enabled: !_correcting, child: const Text('修改歌词')),
+                  const PopupMenuItem(value: 'share', child: Text('发给别人')),
+                  PopupMenuItem(value: 'delete', enabled: !_correcting, child: const Text('删除这首歌')),
                 ],
               ),
               const SizedBox(width: 8),
