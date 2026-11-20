@@ -55,6 +55,7 @@ typedef struct {
   volatile ma_uint32 restart;       // the system stopped the I/O (an interruption)
   volatile ma_uint32 rebuild;       // media services were reset: the unit is dead
   volatile ma_uint32 rate_changed;  // the hardware runs at another rate now
+  volatile ma_uint32 seen_rate;     // ...this one (Hz), as the unit reported it
   // Watchdog, control thread only.
   ma_uint32 seen_heartbeat;
   double seen_at;      // systemUptime when the heartbeat last moved (or the unit started)
@@ -158,25 +159,46 @@ static void yt_rio_running_changed(void* ref, AudioUnit unit, AudioUnitPropertyI
   }
 }
 
+// The rate (Hz) of the output hardware as the unit sees it (the output
+// element's output scope), 0 when unknown.
+static ma_uint32 yt_rio_unit_hardware_rate(AudioUnit unit) {
+  AudioStreamBasicDescription f;
+  UInt32 size = sizeof(f);
+  if (AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, YT_RIO_OUTPUT_BUS, &f,
+                           &size) != noErr) {
+    return 0;
+  }
+  return f.mSampleRate >= 8000.0 && f.mSampleRate <= 384000.0 ? (ma_uint32)lround(f.mSampleRate) : 0;
+}
+
 // Called by Core Audio (any thread) when a stream format changes: on the
-// hardware side (output element's output scope, input element's input
-// scope) that is a new hardware rate after a route change. The control
-// thread then builds the unit again for it.
+// output hardware side that is a new hardware rate after a route change.
+// The control thread then builds the unit again at that very rate.
 static void yt_rio_format_changed(void* ref, AudioUnit unit, AudioUnitPropertyID id, AudioUnitScope scope,
                                   AudioUnitElement element) {
   yt_rio* r = (yt_rio*)ref;
   (void)id;
   if (!ma_atomic_load_32(&r->engine->running_requested)) return;
-  const int hardware_side = (scope == kAudioUnitScope_Output && element == YT_RIO_OUTPUT_BUS) ||
-                            (scope == kAudioUnitScope_Input && element == YT_RIO_INPUT_BUS);
-  if (!hardware_side) return;
-  AudioStreamBasicDescription f;
-  UInt32 size = sizeof(f);
-  if (AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat, scope, element, &f, &size) != noErr) return;
-  if (f.mSampleRate >= 8000.0 && fabs(f.mSampleRate - (double)r->device_rate) > 0.5) {
+  if (scope != kAudioUnitScope_Output || element != YT_RIO_OUTPUT_BUS) return;
+  const ma_uint32 rate = yt_rio_unit_hardware_rate(unit);
+  if (rate != 0 && rate != r->device_rate) {
+    ma_atomic_store_32(&r->seen_rate, rate);
     ma_atomic_store_32(&r->rate_changed, 1);
   }
 }
+
+// After a start: whether the hardware already runs at another rate than the
+// unit was built for (a notification may have come while nobody listened).
+static void yt_rio_check_rate(yt_rio* r) {
+  const ma_uint32 rate = yt_rio_unit_hardware_rate(r->unit);
+  if (rate != 0 && rate != r->device_rate) {
+    ma_atomic_store_32(&r->seen_rate, rate);
+    ma_atomic_store_32(&r->rate_changed, 1);
+  }
+}
+
+// The rate to build for: what the unit reported last, else the session's.
+static ma_uint32 yt_rio_target_rate(yt_rio* r);
 
 // The hardware's current rate in Hz (0 when unknown).
 static ma_uint32 yt_rio_hardware_rate(void) {
@@ -285,14 +307,21 @@ static void yt_rio_log_route(yt_rio* r, const char* what) {
   yt_audio_log_add(line);
 }
 
+static ma_uint32 yt_rio_target_rate(yt_rio* r) {
+  const ma_uint32 seen = ma_atomic_load_32(&r->rate_changed) ? ma_atomic_load_32(&r->seen_rate) : 0;
+  return seen != 0 ? seen : yt_rio_hardware_rate();
+}
+
 // Builds the unit (and the rate bridge) for the hardware's current rate.
 static const char* yt_rio_setup(yt_rio* r) {
   const ma_uint32 engine_rate = (ma_uint32)r->engine->sample_rate;
-  ma_uint32 rate = yt_rio_hardware_rate();
+  ma_uint32 rate = yt_rio_target_rate(r);
   if (rate == 0) rate = engine_rate;
   r->device_rate = rate;
   ma_atomic_store_32(&r->rate_changed, 0);
+  ma_atomic_store_32(&r->seen_rate, 0);
   ma_atomic_store_32(&r->failing, 0);
+  ma_atomic_store_32(&r->frames, 0);
   const char* failed = yt_rio_create_unit(r, rate);
   if (failed != NULL) return failed;
   if (rate != engine_rate) {
@@ -345,9 +374,10 @@ static int32_t yt_platform_device_start(yt_engine* e) {
     // After a media services reset the old unit no longer works; after a
     // route change to another hardware rate a new unit avoids RemoteIO's
     // own conversion.
-    ma_uint32 rate = yt_rio_hardware_rate();
+    const ma_uint32 rate = yt_rio_target_rate(r);
     int reset = ma_atomic_exchange_32(&r->rebuild, 0) != 0;
-    int moved = ma_atomic_load_32(&r->rate_changed) != 0 || (rate != 0 && rate != r->device_rate);
+    int moved = rate != 0 && rate != r->device_rate;
+    if (!moved) ma_atomic_store_32(&r->rate_changed, 0);
     if (reset || r->unit == NULL || moved) {
       ma_atomic_store_32(&e->running_requested, 0);
       yt_rio_teardown(r);
@@ -369,6 +399,9 @@ static int32_t yt_platform_device_start(yt_engine* e) {
     ma_atomic_store_32(&e->running_requested, 0);
     AudioOutputUnitStop(r->unit);
   }
+  // Counters of an earlier run must not trip the watchdog now.
+  ma_atomic_store_32(&r->failing, 0);
+  ma_atomic_store_32(&r->frames, 0);
   ma_atomic_store_32(&e->running_requested, 1);
   OSStatus st = AudioOutputUnitStart(r->unit);
   if (st != noErr) {
@@ -378,6 +411,7 @@ static int32_t yt_platform_device_start(yt_engine* e) {
     yt_audio_log_add(line);
     return -2;
   }
+  yt_rio_check_rate(r);
   // The watchdog counts from here.
   r->seen_heartbeat = ma_atomic_load_32(&r->heartbeat);
   r->seen_at = [NSProcessInfo processInfo].systemUptime;
@@ -404,10 +438,16 @@ static void yt_platform_device_maintain(yt_engine* e) {
   const double failing_s =
       r->device_rate > 0 ? (double)ma_atomic_load_32(&r->failing) * (double)frames / (double)r->device_rate : 0.0;
   if (ma_atomic_load_32(&r->rate_changed)) {
-    why = "new rate";
-  } else if (now - r->seen_at > 1.0) {
+    const ma_uint32 rate = yt_rio_target_rate(r);
+    if (rate == 0 || rate == r->device_rate) {
+      ma_atomic_store_32(&r->rate_changed, 0);  // nothing to build for
+    } else {
+      why = "new rate";
+    }
+  }
+  if (why == NULL && now - r->seen_at > 1.0) {
     why = "no callbacks";
-  } else if (failing_s > 0.5) {
+  } else if (why == NULL && failing_s > 0.5) {
     why = "no microphone";
   }
   if (why == NULL) return;
@@ -441,6 +481,7 @@ static void yt_platform_device_maintain(yt_engine* e) {
     return;
   }
   ma_atomic_store_32(&e->running_requested, 1);
+  yt_rio_check_rate(r);
   r->seen_heartbeat = ma_atomic_load_32(&r->heartbeat);
   r->seen_at = now;
   // The latency compensation and the monitor route are read again.

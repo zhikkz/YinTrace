@@ -37,6 +37,66 @@ import 'support/noisy_room.dart';
   return (plain: _sum(plain), tuned: _sum(tuned));
 }
 
+/// One sung note: harmonics (1/k) with breath noise, vibrato after 0.3 s.
+Float32List note({
+  required double seconds,
+  required double start,
+  required double length,
+  required double midi,
+  double db = -20,
+  double breath = 0,
+  double wobbleCents = 0,
+  double vibratoCents = 0,
+  int seed = 1,
+  double roomDb = -70,
+}) {
+  final rng = math.Random(seed);
+  double gauss() {
+    double u, v, r;
+    do {
+      u = rng.nextDouble() * 2 - 1;
+      v = rng.nextDouble() * 2 - 1;
+      r = u * u + v * v;
+    } while (r >= 1 || r == 0);
+    return u * math.sqrt(-2 * math.log(r) / r);
+  }
+
+  final n = (seconds * roomRate).round();
+  final out = Float32List(n);
+  final room = math.pow(10, roomDb / 20).toDouble();
+  final amp = math.pow(10, db / 20).toDouble() * math.sqrt(2) / 1.3;
+  final a = (start * roomRate).round(), b = math.min(n, ((start + length) * roomRate).round());
+  var phase = 0.0, wobble = 0.0;
+  for (var i = 0; i < n; i++) {
+    var v = room * gauss();
+    if (i >= a && i < b) {
+      final t = (i - a) / roomRate;
+      wobble += (gauss() * wobbleCents - wobble) * 0.002;
+      final m = midi + wobble / 100 + (t > 0.3 ? vibratoCents / 100 * math.sin(2 * math.pi * 5.5 * t) : 0);
+      phase += midiToHz(m) / roomRate;
+      final env = math.min(1.0, math.min(t / 0.03, (b - i) / roomRate / 0.04));
+      var x = 0.0;
+      for (var k = 1; k <= 8; k++) {
+        x += math.sin(2 * math.pi * k * phase) / k;
+      }
+      v += env * amp * (x + breath * gauss());
+    }
+    out[i] = v;
+  }
+  return out;
+}
+
+/// Share of frames in [a, b) seconds reported voiced.
+double voicedShare(List<LivePitch> p, double a, double b) {
+  final f = p.where((x) => x.songTime >= a && x.songTime < b).toList();
+  return f.where((x) => x.voiced).length / math.max(1, f.length);
+}
+
+List<LivePitch> track(Float32List audio, {bool plain = false}) => trackScene(
+  LivePitchTracker(sampleRate: roomRate, options: plain ? const LivePitchOptions.plain() : const LivePitchOptions()),
+  audio,
+);
+
 SceneScore _sum(List<SceneScore> s) => SceneScore(
   absentFrames: s.fold(0, (a, x) => a + x.absentFrames),
   falseVoiced: s.fold(0, (a, x) => a + x.falseVoiced),
@@ -56,6 +116,7 @@ void main() {
       ('soft', -36.0, const [0.0], false),
       ('phrases 16 dB apart', -20.0, const [0.0, -16.0, -8.0], false),
       ('phrases 16 dB apart, AGC', -20.0, const [0.0, -16.0, -8.0], true),
+      ('a soft phrase 20 dB under a loud one', -20.0, const [0.0, -20.0], false),
     ]) {
       test(name, () {
         final r = compare(null, 0, voiceDb: voiceDb, phraseDb: phraseDb, agc: agc);
@@ -70,8 +131,69 @@ void main() {
     }
   });
 
+  group('singing that used to be lost', () {
+    test('a breathy voice in a quiet room', () {
+      for (final midi in [45.0, 57.0, 69.0]) {
+        final audio = note(seconds: 2, start: 0.3, length: 1.5, midi: midi, db: -22, breath: 0.5, vibratoCents: 30);
+        expect(voicedShare(track(audio, plain: true), 0.45, 1.7), greaterThan(0.95), reason: 'plain YIN hears it');
+        expect(voicedShare(track(audio), 0.45, 1.7), greaterThan(0.95), reason: 'midi $midi');
+      }
+    });
+
+    test('a note held very straight does not block its pitch afterwards', () {
+      final first = note(seconds: 6, start: 0.5, length: 4, midi: 57, wobbleCents: 1);
+      final again = note(seconds: 3, start: 0.5, length: 2, midi: 57, wobbleCents: 6, seed: 2);
+      final audio = Float32List(first.length + again.length)
+        ..setAll(0, first)
+        ..setAll(first.length, again);
+      final p = track(audio);
+      expect(voicedShare(p, 0.7, 4.3), greaterThan(0.97), reason: 'the held note');
+      expect(voicedShare(p, 6.7, 8.3), greaterThan(0.97), reason: 'the same pitch again');
+    });
+
+    test('a voice 10 dB over a fan or pink noise', () {
+      for (final noise in [RoomNoise.fan, RoomNoise.pink]) {
+        final r = compare(noise, -30, seeds: 3);
+        expect(r.tuned.recall, greaterThan(r.plain.recall - 0.02), reason: '$noise');
+        expect(r.tuned.pitchAccuracy, greaterThan(r.plain.pitchAccuracy), reason: '$noise');
+        expect(r.tuned.falseVoicedRate, lessThan(0.005), reason: '$noise');
+      }
+    });
+  });
+
   group('room noise is not taken for singing', () {
-    test('appliance hum', () {
+    test('appliance hum with nobody singing', () {
+      for (final db in [-48.0, -40.0]) {
+        for (final seed in [1, 2]) {
+          final hum = roomNoise(RoomNoise.hum, 12, db, seed: seed);
+          final audio = Float32List.fromList(hum);
+          expect(voicedShare(track(audio, plain: true), 3, 12), greaterThan(0.9), reason: 'plain YIN takes it');
+          // A machine shows within 2 s; from then on it is the room.
+          expect(voicedShare(track(audio), 3, 12), lessThan(0.01), reason: '$db dB, seed $seed');
+        }
+      }
+    });
+
+    test('appliance hum before the singer starts, and louder hum', () {
+      final take = singTake(seed: 2, low: 50, high: 67);
+      const intro = 8.0;
+      final voice = mixScene(take, null);
+      final audio = Float32List(voice.length + (intro * roomRate).round());
+      audio.setAll((intro * roomRate).round(), voice);
+      final hum = roomNoise(RoomNoise.hum, audio.length / roomRate, -48, seed: 3);
+      for (var i = 0; i < audio.length; i++) {
+        audio[i] += hum[i];
+      }
+      final p = track(audio);
+      expect(voicedShare(p, 3, intro), lessThan(0.02), reason: 'the intro');
+      for (final db in [-40.0, -35.0]) {
+        final r = compare(RoomNoise.hum, db);
+        expect(r.tuned.falseVoicedRate, lessThan(0.5 * r.plain.falseVoicedRate), reason: '$db dB');
+        expect(r.tuned.recall, greaterThan(r.plain.recall - 0.03), reason: '$db dB');
+      }
+    });
+
+    test('appliance hum while singing', () {
       for (final agc in [false, true]) {
         final r = compare(RoomNoise.hum, -48, agc: agc);
         expect(r.plain.falseVoicedRate, greaterThan(0.7), reason: 'the scene must be a hard one');
@@ -93,10 +215,10 @@ void main() {
     });
 
     test('a TV or other talkers well below the singer', () {
-      for (final (noise, db) in [(RoomNoise.tv, -50.0), (RoomNoise.babble, -42.0)]) {
+      for (final (noise, db, share) in [(RoomNoise.tv, -50.0, 0.7), (RoomNoise.babble, -42.0, 0.9)]) {
         final r = compare(noise, db);
-        expect(r.tuned.falseVoicedRate, lessThan(0.6 * r.plain.falseVoicedRate), reason: '$noise');
-        expect(r.tuned.spuriousOnsets, lessThan(r.plain.spuriousOnsets), reason: '$noise');
+        expect(r.tuned.falseVoicedRate, lessThan(share * r.plain.falseVoicedRate), reason: '$noise');
+        expect(r.tuned.spuriousOnsets, lessThanOrEqualTo(r.plain.spuriousOnsets), reason: '$noise');
         expect(r.tuned.recall, greaterThan(0.98));
       }
     });
@@ -105,7 +227,8 @@ void main() {
       for (final (noise, db) in [(RoomNoise.pink, -35.0), (RoomNoise.fan, -35.0), (RoomNoise.rumble, -30.0)]) {
         final r = compare(noise, db);
         expect(r.tuned.falseVoicedRate, lessThan(0.005), reason: '$noise');
-        expect(r.tuned.recall, greaterThan(r.plain.recall - 0.06), reason: '$noise');
+        expect(r.tuned.recall, greaterThan(r.plain.recall - 0.01), reason: '$noise');
+        expect(r.tuned.spuriousOnsets, lessThanOrEqualTo(r.plain.spuriousOnsets), reason: '$noise');
         expect(r.tuned.pitchAccuracy, greaterThan(r.plain.pitchAccuracy - 0.005), reason: '$noise');
       }
     });
@@ -146,20 +269,38 @@ void main() {
       expect(out.where((p) => p.songTime > 6.0).every((p) => p.voiced), isTrue);
     });
 
-    test('a blip shorter than a start is dropped, and reset forgets what was held', () {
-      final tracker = LivePitchTracker(sampleRate: sr);
-      // 1 s of silence, then 10 ms of tone: some frames see it, too few to start.
-      final blip = tone(1.01, 440, startAt: 1.0);
+    test('a blip shorter than a start is dropped', () {
+      // 1 s of silence, then 25 ms of tone: a frame or two see it, too few to start.
+      final blip = tone(1.025, 440, startAt: 1.0);
       final quiet = Float32List(sr ~/ 2);
-      final out = [...tracker.addBlock(blip, 0, 0, true), ...tracker.addBlock(quiet, blip.length, blip.length, true)];
-      expect(out.where((p) => p.voiced), isEmpty);
-      // A start in progress is dropped by reset: nothing from before it comes out later.
-      final start = tone(1.02, 330, startAt: 1.0);
-      tracker.addBlock(start, 0, 0, true);
+      List<LivePitch> feed(LivePitchTracker t) => [
+        ...t.addBlock(blip, 0, 0, true),
+        ...t.addBlock(quiet, blip.length, blip.length, true),
+      ];
+      expect(
+        feed(LivePitchTracker(sampleRate: sr, options: const LivePitchOptions.plain())).where((p) => p.voiced),
+        isNotEmpty,
+        reason: 'plain YIN takes it',
+      );
+      expect(feed(LivePitchTracker(sampleRate: sr)).where((p) => p.voiced), isEmpty);
+    });
+
+    test('reset forgets a start being confirmed', () {
+      final tracker = LivePitchTracker(sampleRate: sr);
+      final audio = tone(1.2, 330, startAt: 1.0);
+      // Feed until frames are being held back (fewer results than frames).
+      var pushed = 0, results = 0;
+      var holding = false;
+      for (; pushed + 64 <= audio.length && !holding; pushed += 64) {
+        results += tracker.addBlock(Float32List.sublistView(audio, pushed, pushed + 64), pushed, pushed, true).length;
+        final frames = pushed + 64 < 2048 ? 0 : (pushed + 64 - 2048) ~/ 441 + 1;
+        holding = results < frames;
+      }
+      expect(holding, isTrue, reason: 'a start must be pending');
       tracker.reset();
       final after = tracker.addBlock(tone(0.5, 330), 10 * sr, 10 * sr, true);
       expect(after, isNotEmpty);
-      expect(after.every((p) => p.songTime >= 10), isTrue);
+      expect(after.every((p) => p.songTime >= 10), isTrue, reason: 'nothing held from before the reset');
     });
   });
 }

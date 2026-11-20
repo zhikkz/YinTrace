@@ -312,6 +312,7 @@ struct yt_engine {
   volatile ma_uint32 monitor_while_capturing;
   volatile ma_uint32 monitor_route_allowed;
   yt_monitor monitor_chain;  // what the mic goes through to be heard (audio thread)
+  yt_bus_limiter bus_limiter;  // keeps tracks + monitor under full scale (audio thread)
   ma_int64 clock;  // audio thread only
 
   // Capture ring (single producer: audio thread, single consumer: Dart).
@@ -509,8 +510,10 @@ void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames)
   if (have_tracks) yt_track_unlock(e);
 
   if (out != NULL) {
-    // Safety clip for loud tracks plus the monitor: exactly transparent up
-    // to YT_SOFT_CLIP_KNEE, smooth saturation below full scale above it.
+    // Loud tracks plus the monitor: limited to YT_BUS_CEILING (untouched
+    // below it), then the soft clip as a last resort, exactly transparent up
+    // to YT_SOFT_CLIP_KNEE.
+    yt_bus_limiter_process(&e->bus_limiter, out, frame_count);
     for (ma_uint32 i = 0; i < frame_count * 2; i++) out[i] = yt_soft_clip(out[i]);
   }
 
@@ -598,6 +601,7 @@ yt_engine* yt_engine_create(int32_t sample_rate, int32_t mode, int32_t use_null_
   e->loop_end = 0;
   for (int i = 0; i < YT_MAX_TRACKS; i++) e->gains[i] = 1.0f;
   yt_monitor_init(&e->monitor_chain, (float)sample_rate);
+  yt_bus_limiter_init(&e->bus_limiter, (float)sample_rate);
   e->cap_samples = (float*)calloc(YT_CAP_RING_FRAMES, sizeof(float));
   if (e->cap_samples == NULL) {
     free(e);

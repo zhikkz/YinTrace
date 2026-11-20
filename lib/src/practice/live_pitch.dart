@@ -48,14 +48,15 @@ class LivePitchOptions {
     this.gateDb = -50,
     this.latencySeconds = 0,
     this.highPassHz = 55,
-    this.onsetAperiodicity = 0.15,
+    this.onsetAperiodicity = 0.25,
     this.onsetSeconds = 0.03,
     this.floorSeconds = 0.8,
     this.onsetAboveFloorDb = 12,
     this.holdAboveFloorDb = 6,
     this.transientDropDb = 9,
-    this.singerRangeDb = 22,
+    this.singerRangeDb = 25,
     this.steadySeconds = 1,
+    this.clearAboveFloorDb = 24,
   });
 
   /// Plain YIN with a fixed level gate: every frame on its own.
@@ -75,7 +76,8 @@ class LivePitchOptions {
        holdAboveFloorDb = 0,
        transientDropDb = double.infinity,
        singerRangeDb = double.infinity,
-       steadySeconds = double.infinity;
+       steadySeconds = double.infinity,
+       clearAboveFloorDb = 0;
 
   final int frameSize;
 
@@ -98,10 +100,11 @@ class LivePitchOptions {
   /// and mains hum.
   final double highPassHz;
 
-  /// A voiced stretch only starts on frames at most this aperiodic. Below
-  /// YIN's own threshold (0.15) the frame has a clear period; above it YIN
-  /// just took the least bad lag, which coloured noise often provides.
-  /// Once started, [maxAperiodicity] holds it.
+  /// A voiced stretch only starts on frames at most this aperiodic (more
+  /// near [clearAboveFloorDb] over the background). Beyond it YIN mostly
+  /// took the least bad lag of coloured noise; a voice over a fan or a
+  /// breathy one can come close to it, so it is not YIN's own 0.15. Once
+  /// started, [maxAperiodicity] holds it.
   final double onsetAperiodicity;
 
   /// How long a new voiced stretch must last before it is reported: shorter
@@ -124,11 +127,11 @@ class LivePitchOptions {
   /// voice.
   final double transientDropDb;
 
-  /// Starts more than this far below the loudest recent singing (which
-  /// decays by 2 dB a second) are another voice in the room, a TV. In the
-  /// noisy-room evaluation 22 dB keeps a phrase 16 dB softer than the one
-  /// before (20 dB already lost some of it), and a TV 30 dB under the
-  /// singer is taken for singing a twelfth of the time instead of a quarter.
+  /// Starts more than this far below the loudest recent singing (its
+  /// phrase level, decaying by 2 dB a second) are another voice in the
+  /// room, a TV. In the noisy-room evaluation 25 dB keeps a phrase 22 dB
+  /// softer than the one before (22 dB lost a tenth of it) and still rejects
+  /// a TV 30 dB under the singer about half the time.
   final double singerRangeDb;
 
   /// A clearly periodic sound that keeps its pitch within 5 cents for this
@@ -136,6 +139,10 @@ class LivePitchOptions {
   /// with no singer around) is a machine (hum, a fan): from then on its
   /// pitch only starts a voiced stretch when clearly louder than it was.
   final double steadySeconds;
+
+  /// From this far above the background a start may be as aperiodic as
+  /// [maxAperiodicity]: a breathy or airy voice there is no room noise.
+  final double clearAboveFloorDb;
 
   LivePitchOptions copyWith({
     double? gateDb,
@@ -149,6 +156,7 @@ class LivePitchOptions {
     double? transientDropDb,
     double? singerRangeDb,
     double? steadySeconds,
+    double? clearAboveFloorDb,
   }) => LivePitchOptions(
     frameSize: frameSize,
     hop: hop,
@@ -166,6 +174,7 @@ class LivePitchOptions {
     transientDropDb: transientDropDb ?? this.transientDropDb,
     singerRangeDb: singerRangeDb ?? this.singerRangeDb,
     steadySeconds: steadySeconds ?? this.steadySeconds,
+    clearAboveFloorDb: clearAboveFloorDb ?? this.clearAboveFloorDb,
   );
 }
 
@@ -226,14 +235,21 @@ class LivePitchTracker {
   /// The background outlives [reset]: it belongs to the room.
   final NoiseFloor _floor;
 
-  /// Steady tones found in the background (MIDI, level dB): hum, a fan.
-  final _tones = <(double, double)>[];
+  /// Steady tones found in the background (MIDI, level dB, clock time last
+  /// heard): hum, a fan. A tone not heard for [_toneMemorySeconds] is
+  /// forgotten, so a sung note mistaken for one does not stay blocked.
+  final _tones = <(double, double, double)>[];
+  static const _toneMemorySeconds = 10.0;
 
   /// The singer's usual level: voiced frames averaged over about 2 s.
   double _singerDb = double.negativeInfinity;
 
-  /// The loudest recent singing, decaying slowly: quieter voices in the room
-  /// (a TV) neither lower it nor start a stretch far below it.
+  /// The level of the singing over the last ~150 ms (voiced frames only),
+  /// and its loudest recent value, decaying slowly: quieter voices in the
+  /// room (a TV) neither lower it nor start a stretch far below it. A
+  /// phrase level rather than the loudest single frame, so that the range
+  /// is the singer's dynamics, not the peaks of their vowels.
+  double _phraseDb = double.negativeInfinity;
   double _peakDb = double.negativeInfinity, _peakClock = 0;
   double _peakAt(double clock) => _peakDb - _peakDecayDbPerSecond * math.max(0, clock - _peakClock);
   static const _peakDecayDbPerSecond = 2.0;
@@ -251,8 +267,15 @@ class LivePitchTracker {
   double _lastVoicedClock = double.negativeInfinity;
   double _lastVoicedMidi = 0;
 
-  /// Start and pitch of the current steady stretch.
+  /// Start and pitch of the current steady stretch, and the latest raw
+  /// pitches (their median: a machine's frame-to-frame jitter in noise is
+  /// not a voice's drift).
   double _steadySince = 0, _steadyMidi = 0;
+  final _steadyRing = <double>[];
+
+  /// Voiced stretches started since the last [reset]: from the second on,
+  /// someone has sung besides what sounds now.
+  int _stretches = 0;
 
   /// Pitch of the latest voiced sound well below the singer, and how long
   /// it has held that pitch in all (it outlives [reset], like the room).
@@ -270,6 +293,10 @@ class LivePitchTracker {
     _newestCount = 0;
     _lastVoicedClock = double.negativeInfinity;
     _lastVoicedMidi = 0;
+    // The engine clock stands still while stopped: a peak from before a
+    // pause would never decay. The singer is heard again soon enough.
+    _phraseDb = _peakDb = double.negativeInfinity;
+    _stretches = 0;
   }
 
   HighPass? _filter() {
@@ -381,28 +408,42 @@ class LivePitchTracker {
     final o = options;
     final pitched = f.midi > 0 && f.aperiodicity <= o.maxAperiodicity;
     final clear = pitched && f.aperiodicity <= math.min(o.onsetAperiodicity, o.maxAperiodicity);
-    final (onsetGate, holdGate) = _gates(f);
+    final (onsetGate, holdGate, roomGate) = _gates(f);
     // Without a clear period a frame only carries a voice on near its
     // pitch: what YIN finds in it further away is mostly an octave error in
     // noise.
     final canHold =
         pitched && f.levelDb >= holdGate && (clear || _voicing != _Voicing.on || (f.midi - _lastVoicedMidi).abs() <= 3);
+    if (options.steadySeconds.isFinite) _learnTone(f);
+    var tone = _isTone(f);
     // A clear period right where the voice just was continues it whatever
     // the background did.
-    final follows =
+    var follows =
         clear &&
+        !tone &&
         f.levelDb >= o.gateDb &&
         f.clockTime - _lastVoicedClock <= 0.05 &&
         (f.midi - _lastVoicedMidi).abs() <= 1;
-    if (options.steadySeconds.isFinite) _learnTone(f);
     if (_voicing == _Voicing.on) {
-      if ((canHold || follows) && !_isTone(f) && !_tooSteady(f)) {
-        _emitVoiced(f, out);
-        return;
+      if (canHold || follows) {
+        if (!tone && !_tooSteady(f)) {
+          _emitVoiced(f, out);
+          return;
+        }
+        tone = true; // just learned as a machine, or already known
+        follows = false;
       }
       _voicing = _Voicing.off;
     }
-    final canStart = canHold && clear && f.levelDb >= onsetGate && drop < o.transientDropDb && !_isTone(f);
+    // A start needs a period as clear as the background allows: near it,
+    // YIN's own threshold; well above it, up to [maxAperiodicity] (a
+    // breathy voice, or a voice over a fan: the breath and the noise in it
+    // make it less periodic, not YIN's guess).
+    final startable = pitched && f.aperiodicity <= _startClarity(f);
+    final canStart = canHold && startable && f.levelDb >= onsetGate && drop < o.transientDropDb && !_isTone(f);
+    // A voice the singer gate alone turned away (it could be the singer,
+    // softly) is not the room: it must not raise the background.
+    if (canHold && startable && f.levelDb >= roomGate && f.levelDb < onsetGate) f.notBackground = true;
     if (_voicing == _Voicing.pending) {
       // Frames without a clear period may come in between, as long as the
       // pitch goes on: noise blurs some frames of a soft start.
@@ -430,8 +471,10 @@ class LivePitchTracker {
       _held.clear();
       _voicing = _Voicing.off;
     }
-    // A short dropout inside a note: carry on without a new start.
-    if (follows || (canHold && f.clockTime - _lastVoicedClock <= 0.05 && (f.midi - _lastVoicedMidi).abs() <= 1)) {
+    // A short dropout inside a note: carry on without a new start (but not
+    // for a tone that was just turned away).
+    if (follows ||
+        (canHold && !tone && f.clockTime - _lastVoicedClock <= 0.05 && (f.midi - _lastVoicedMidi).abs() <= 1)) {
       _flushLead(out, 0);
       _voicing = _Voicing.on;
       _emitVoiced(f, out);
@@ -453,8 +496,9 @@ class LivePitchTracker {
     _background(f, out);
   }
 
-  /// The levels a frame needs to start and to continue a voiced stretch.
-  (double, double) _gates(_Frame f) {
+  /// The levels a frame needs to start and to continue a voiced stretch,
+  /// and the start level without the singer gate (the room alone).
+  (double, double, double) _gates(_Frame f) {
     final o = options;
     var onset = o.gateDb, hold = o.gateDb;
     final floor = o.floorSeconds > 0 ? _floor.db : null;
@@ -470,7 +514,22 @@ class LivePitchTracker {
       onset = math.max(onset, math.min(floor + math.min(o.onsetAboveFloorDb, explained), cap));
       hold = math.max(hold, math.min(floor + math.min(o.holdAboveFloorDb, explained), cap - 6));
     }
-    return (math.max(onset, _peakAt(f.clockTime) - o.singerRangeDb), hold);
+    return (math.max(onset, _peakAt(f.clockTime) - o.singerRangeDb), hold, onset);
+  }
+
+  /// The aperiodicity a frame may have to start a voiced stretch:
+  /// [LivePitchOptions.onsetAperiodicity], relaxed to
+  /// [LivePitchOptions.maxAperiodicity] for frames from
+  /// [LivePitchOptions.clearAboveFloorDb] over the background on (over 6 dB),
+  /// or in a room too quiet to measure.
+  double _startClarity(_Frame f) {
+    final o = options;
+    final strict = math.min(o.onsetAperiodicity, o.maxAperiodicity);
+    if (!strict.isFinite || strict >= o.maxAperiodicity) return o.maxAperiodicity;
+    final floor = o.floorSeconds > 0 ? _floor.db : null;
+    final above = floor == null ? double.infinity : f.levelDb - floor;
+    final u = ((above - o.clearAboveFloorDb) / 6).clamp(0.0, 1.0);
+    return strict + (o.maxAperiodicity - strict) * u;
   }
 
   int get _onsetFrames => math.max(1, (options.onsetSeconds * sampleRate / options.hop).round());
@@ -491,21 +550,28 @@ class LivePitchTracker {
 
   void _background(_Frame f, List<LivePitch> out) {
     _emitUnvoiced(f, out);
-    if (f.clockTime - _lastVoicedClock > 0.15) {
+    if (f.notBackground) {
+      // Possibly the singer, softly: neither room nor a known tone.
+    } else if (f.clockTime - _lastVoicedClock > 0.15) {
       _floor.add(f.levelDb);
     } else {
       // Between sung notes: no background time, but the room is at most
       // this loud (it is quieter while the AGC turns the singer down).
       _floor.lower(f.levelDb);
     }
+    // The tone heard again, at about its level (a voice turned away at its
+    // pitch but louder is not the tone, and must not make it louder).
     for (var i = 0; i < _tones.length; i++) {
-      final (midi, db) = _tones[i];
-      if ((f.midi - midi).abs() <= 0.15) _tones[i] = (midi, math.max(db - 0.02, f.levelDb));
+      final (midi, db, _) = _tones[i];
+      if (f.midi > 0 && (f.midi - midi).abs() <= 0.15 && (f.levelDb - db).abs() <= 6) {
+        _tones[i] = (midi, db + 0.05 * (f.levelDb - db), f.clockTime);
+      }
     }
   }
 
   void _confirm(List<LivePitch> out) {
     _voicing = _Voicing.on;
+    _stretches++;
     // The lead frames at the start's pitch are its attack.
     final first = _held.first;
     var k = _lead.length;
@@ -524,6 +590,7 @@ class LivePitchTracker {
     }
     _steadySince = (k < _lead.length ? _lead[k] : first).clockTime;
     _steadyMidi = first.midi;
+    _steadyRing.clear();
     _lead.clear();
     _held.clear();
   }
@@ -531,7 +598,8 @@ class LivePitchTracker {
   /// Whether [f] is at the pitch of a known background tone and not louder
   /// than it by a start's margin.
   bool _isTone(_Frame f) {
-    for (final (midi, db) in _tones) {
+    _tones.removeWhere((t) => f.clockTime - t.$3 > _toneMemorySeconds || f.clockTime < t.$3 - 1);
+    for (final (midi, db, _) in _tones) {
       if ((f.midi - midi).abs() <= 0.15 && f.levelDb < db + options.onsetAboveFloorDb) return true;
     }
     return false;
@@ -544,8 +612,10 @@ class LivePitchTracker {
   /// however often the singer interrupts it) is one.
   void _learnTone(_Frame f) {
     final o = options;
-    if (f.midi <= 0 || f.aperiodicity > math.min(o.onsetAperiodicity, o.maxAperiodicity)) return;
+    if (f.midi <= 0 || f.aperiodicity > math.min(0.15, o.maxAperiodicity)) return;
     if (f.levelDb > _singerDb - 10) return;
+    // Between phrases only: the end of a sung note is not the room.
+    if (f.clockTime - _lastVoicedClock <= 0.3) return;
     final dt = o.hop / sampleRate;
     if ((f.midi - _quietMidi).abs() <= 0.05) {
       _quietSeconds += dt;
@@ -560,15 +630,25 @@ class LivePitchTracker {
   }
 
   /// Whether a voiced stretch has kept its pitch within 5 cents for twice
-  /// [LivePitchOptions.steadySeconds] in one go: with nobody louder around
-  /// (no singer yet) that is how a machine shows.
+  /// [LivePitchOptions.steadySeconds] in one go while no singer has been
+  /// heard since the last [reset] (or well below them): that is how a
+  /// machine shows. Only quiet sounds count (below [_machineDb]): a phone
+  /// hears a singer next to it at about -30..-10 dBFS, a hum across the room
+  /// lower, and a loud steady tone is more likely someone holding a note
+  /// very straight (or an instrument in the tuner).
+  static const _machineDb = -30.0;
   bool _tooSteady(_Frame f) {
-    if ((f.midi - _steadyMidi).abs() > 0.05) {
+    _steadyRing.add(f.midi);
+    if (_steadyRing.length > 5) _steadyRing.removeAt(0);
+    final m = median(_steadyRing);
+    if (_steadyRing.length < 5 || (m - _steadyMidi).abs() > 0.05) {
       _steadySince = f.clockTime;
-      _steadyMidi = f.midi;
+      _steadyMidi = m;
       return false;
     }
     if (f.clockTime - _steadySince < 2 * options.steadySeconds) return false;
+    if (f.levelDb > _machineDb) return false;
+    if (_stretches > 1 && f.levelDb > _peakAt(f.clockTime) - 10) return false;
     _addTone(f);
     return true;
   }
@@ -577,20 +657,22 @@ class LivePitchTracker {
     _floor.raiseTo(f.levelDb);
     for (var i = 0; i < _tones.length; i++) {
       if ((_tones[i].$1 - f.midi).abs() <= 0.15) {
-        _tones[i] = (_tones[i].$1, math.max(_tones[i].$2, f.levelDb));
+        _tones[i] = (_tones[i].$1, math.max(_tones[i].$2, f.levelDb), f.clockTime);
         return;
       }
     }
     if (_tones.length >= 4) _tones.removeAt(0);
-    _tones.add((f.midi, f.levelDb));
+    _tones.add((f.midi, f.levelDb, f.clockTime));
   }
 
   void _emitVoiced(_Frame f, List<LivePitch> out) {
     _lastVoicedClock = f.clockTime;
     _lastVoicedMidi = f.midi;
-    _singerDb = _singerDb.isFinite ? _singerDb + (f.levelDb - _singerDb) * options.hop / sampleRate / 2 : f.levelDb;
-    if (f.levelDb >= _peakAt(f.clockTime)) {
-      _peakDb = f.levelDb;
+    final hopSeconds = options.hop / sampleRate;
+    _singerDb = _singerDb.isFinite ? _singerDb + (f.levelDb - _singerDb) * hopSeconds / 2 : f.levelDb;
+    _phraseDb = _phraseDb.isFinite ? _phraseDb + (f.levelDb - _phraseDb) * math.min(1.0, hopSeconds / 0.15) : f.levelDb;
+    if (_phraseDb >= _peakAt(f.clockTime)) {
+      _peakDb = _phraseDb;
       _peakClock = f.clockTime;
     }
     out.add(
@@ -633,6 +715,9 @@ class _Frame {
   _Frame(this.songTime, this.clockTime, this.midi, this.levelDb, this.playing, this.aperiodicity);
   final double songTime;
   final double clockTime;
+
+  /// Turned away by the singer gate alone: not evidence of the room.
+  bool notBackground = false;
 
   /// Raw YIN pitch (0 without a candidate).
   final double midi;

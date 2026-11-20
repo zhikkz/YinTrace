@@ -90,14 +90,20 @@ void main() {
       e.setTrackGain(slot, 0);
     }
     var out = Float32List(0);
+    var peak = 0.0;
     for (var i = 0; i < 8; i++) {
       out = e.render(mic.length, input: mic);
+      for (final v in out) {
+        peak = math.max(peak, v.abs());
+      }
     }
     var sum = 0.0;
     for (var i = 0; i < out.length; i += 2) {
       expect(out[i + 1], out[i]);
       sum += out[i] * out[i];
     }
+    // Silent means silent from the very first callback, not a late mute.
+    if (sum == 0) expect(peak, 0, reason: 'the monitor must be muted at once');
     return math.sqrt(sum / mic.length);
   }
 

@@ -225,7 +225,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
                         : null,
                     onChangeEnd: (_) => settings.save(),
                   ),
-                  Text('建议从 50% 左右开始。轻声会被自动托起，大声会被压住，不会爆音。', style: context.type.bodySmall),
+                  Text('建议从 50% 左右开始：轻声会被自动托起，大声会被压住。听到啸叫时把耳机戴好或调低耳返音量。', style: context.type.bodySmall),
                 ],
               ),
             ),

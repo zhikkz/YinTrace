@@ -312,9 +312,13 @@ class PracticeSession extends ChangeNotifier {
     _scrub.cancel(e, resume: false);
     _log('play at ${position.toStringAsFixed(1)} s');
     try {
-      NativeAudio.configureSession(record: true, measurement: _measurement);
+      final measurement = _measurement;
+      NativeAudio.configureSession(record: true, measurement: measurement);
       final events = e.takeAudioEvents();
       if (events & AudioEvents.deviceLost != 0) _monitorEnabled = false;
+      // The headphones went before the monitor could be turned off: not in
+      // measurement mode on the speaker.
+      if (_measurement != measurement) NativeAudio.configureSession(record: true, measurement: _measurement);
       e.flushCapture();
       _tracker?.reset();
       e.start();
