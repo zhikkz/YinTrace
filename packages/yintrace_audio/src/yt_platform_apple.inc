@@ -74,10 +74,15 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
       if (![session setCategory:category mode:mode options:options error:&error]) return -2;
     }
     if (session.preferredSampleRate != 44100.0) [session setPreferredSampleRate:44100.0 error:nil];
-    // The engine's device asks for 10 ms periods (see yt_engine_create); the
-    // same value here keeps the two from undoing each other.
-    if (fabs(session.preferredIOBufferDuration - 0.01) > 0.0005) {
-      [session setPreferredIOBufferDuration:0.01 error:nil];
+    // Recording asks for 5 ms buffers (iOS rounds to 256 frames, 5.3-5.8 ms):
+    // the live monitor goes through one input and one output buffer, so this
+    // halves what the singer hears of the round trip. Playback alone keeps
+    // 10 ms.
+    // The engine's device asks for the same periods (see yt_engine_create)
+    // so the two do not undo each other.
+    const NSTimeInterval io_buffer = record ? 0.005 : 0.01;
+    if (fabs(session.preferredIOBufferDuration - io_buffer) > 0.0005) {
+      [session setPreferredIOBufferDuration:io_buffer error:nil];
     }
     if (![session setActive:YES error:&error]) return -3;
     return 0;
@@ -191,7 +196,7 @@ static void yt_platform_watch_routes(yt_engine* e) {
   // One observer for the life of the process, so that it can never be
   // released while a notification is being delivered on another thread.
   static dispatch_once_t once;
-  static id observer, interruptions;
+  static id observer, interruptions, resets;
   dispatch_once(&once, ^{
     observer = [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionRouteChangeNotification
                                                                  object:nil
@@ -199,7 +204,8 @@ static void yt_platform_watch_routes(yt_engine* e) {
                                                              usingBlock:^(NSNotification* note) {
                                                                yt_route_changed(note);
                                                              }];
-    // Logged only (miniaudio handles interruptions).
+    // miniaudio handles the interruptions of the devices it runs; the
+    // RemoteIO device of yt_device_ios.inc is told here.
     interruptions = [[NSNotificationCenter defaultCenter]
         addObserverForName:AVAudioSessionInterruptionNotification
                     object:nil
@@ -207,10 +213,29 @@ static void yt_platform_watch_routes(yt_engine* e) {
                 usingBlock:^(NSNotification* note) {
                   NSInteger type = [note.userInfo[AVAudioSessionInterruptionTypeKey] integerValue];
                   BOOL suspended = [note.userInfo[AVAudioSessionInterruptionWasSuspendedKey] boolValue];
-                  yt_log_with_time([NSString stringWithFormat:@"interruption %s%s",
-                                                              type == AVAudioSessionInterruptionTypeBegan ? "began"
-                                                                                                          : "ended",
+                  BOOL began = type == AVAudioSessionInterruptionTypeBegan;
+                  yt_log_with_time([NSString stringWithFormat:@"interruption %s%s", began ? "began" : "ended",
                                                               suspended ? " (app was suspended)" : ""]);
+                  os_unfair_lock_lock(&yt_route_lock);
+                  for (int i = 0; i < YT_ROUTE_WATCH_SLOTS; i++) {
+                    if (yt_route_engines[i] != NULL) yt_platform_device_interrupted(yt_route_engines[i], began);
+                  }
+                  os_unfair_lock_unlock(&yt_route_lock);
+                }];
+    // The media server restarted: every audio unit is gone and has to be
+    // created again before the next start.
+    resets = [[NSNotificationCenter defaultCenter]
+        addObserverForName:AVAudioSessionMediaServicesWereResetNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(NSNotification* note) {
+                  (void)note;
+                  yt_log_with_time(@"media services were reset");
+                  os_unfair_lock_lock(&yt_route_lock);
+                  for (int i = 0; i < YT_ROUTE_WATCH_SLOTS; i++) {
+                    if (yt_route_engines[i] != NULL) yt_platform_device_media_reset(yt_route_engines[i]);
+                  }
+                  os_unfair_lock_unlock(&yt_route_lock);
                 }];
   });
   yt_log_with_time(@"engine watching routes");
