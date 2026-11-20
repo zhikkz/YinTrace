@@ -604,22 +604,26 @@ class _StageState extends State<_Stage> {
       builder: (context, constraints) {
         final plotWidth = constraints.maxWidth - gutter;
         if (plotWidth <= 0) return graph;
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          dragStartBehavior: DragStartBehavior.down,
-          onHorizontalDragStart: (_) {
-            if (session.beginScrub()) _dragSeconds = session.engine!.positionSeconds;
-          },
-          onHorizontalDragUpdate: (details) {
-            final previous = _dragSeconds;
-            if (previous == null) return;
-            final seconds = previous - details.delta.dx * span / plotWidth;
-            _dragSeconds = seconds.clamp(0.0, session.duration).toDouble();
-            session.updateScrub(_dragSeconds!);
-          },
-          onHorizontalDragEnd: (_) => _finishDrag(canceled: false),
-          onHorizontalDragCancel: () => _finishDrag(canceled: true),
-          child: graph,
+        return Listener(
+          // Flutter reports a canceled pointer as a drag end once accepted.
+          onPointerCancel: (_) => _finishDrag(canceled: true),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            dragStartBehavior: DragStartBehavior.down,
+            onHorizontalDragStart: (_) {
+              if (session.beginScrub()) _dragSeconds = session.engine!.positionSeconds;
+            },
+            onHorizontalDragUpdate: (details) {
+              final previous = _dragSeconds;
+              if (previous == null) return;
+              final seconds = previous - details.delta.dx * span / plotWidth;
+              final target = seconds.clamp(0.0, session.duration).toDouble();
+              _dragSeconds = target;
+              session.updateScrub(target);
+            },
+            onHorizontalDragEnd: (_) => _finishDrag(canceled: false),
+            child: graph,
+          ),
         );
       },
     );
@@ -946,24 +950,26 @@ class _TimelineState extends State<_Timeline> {
     return LayoutBuilder(
       builder: (context, c) {
         double secondsAt(double dx) => (dx / c.maxWidth).clamp(0.0, 1.0) * widget.duration;
-        return GestureDetector(
+        return Listener(
           key: const ValueKey('practice-timeline'),
-          behavior: HitTestBehavior.opaque,
-          onTapUp: (d) => widget.session.seek(secondsAt(d.localPosition.dx)),
-          onHorizontalDragStart: (d) {
-            _dragging = widget.session.beginScrub();
-            if (_dragging) widget.session.updateScrub(secondsAt(d.localPosition.dx));
-          },
-          onHorizontalDragUpdate: (d) {
-            if (_dragging) widget.session.updateScrub(secondsAt(d.localPosition.dx));
-          },
-          onHorizontalDragEnd: (_) => _finishDrag(canceled: false),
-          onHorizontalDragCancel: () => _finishDrag(canceled: true),
-          child: SizedBox(
-            height: 26,
-            child: CustomPaint(
-              size: Size.infinite,
-              painter: _TimelinePainter(widget.position, widget.duration, widget.lineStarts, widget.loop, p),
+          onPointerCancel: (_) => _finishDrag(canceled: true),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapUp: (d) => widget.session.seek(secondsAt(d.localPosition.dx)),
+            onHorizontalDragStart: (d) {
+              _dragging = widget.session.beginScrub();
+              if (_dragging) widget.session.updateScrub(secondsAt(d.localPosition.dx));
+            },
+            onHorizontalDragUpdate: (d) {
+              if (_dragging) widget.session.updateScrub(secondsAt(d.localPosition.dx));
+            },
+            onHorizontalDragEnd: (_) => _finishDrag(canceled: false),
+            child: SizedBox(
+              height: 26,
+              child: CustomPaint(
+                size: Size.infinite,
+                painter: _TimelinePainter(widget.position, widget.duration, widget.lineStarts, widget.loop, p),
+              ),
             ),
           ),
         );
