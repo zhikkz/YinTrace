@@ -96,7 +96,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     final e = _engine;
     final available = e?.monitorAvailable ?? false;
     final on = available && (enabled ?? _monitor.value.enabled);
-    e?.setMonitorGain(on && !_paused ? _settings.monitorVolume : 0);
+    e?.setMonitorGain(on && !_paused ? _settings.monitorGain : 0);
     _monitor.value = (available: available, enabled: on);
   }
 
@@ -200,17 +200,18 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
                     value: enabled,
                     onChanged: available ? (value) => _applyMonitor(enabled: value) : null,
                   ),
-                  Text('耳返音量 ${(settings.monitorVolume * 100).round()}%'),
+                  Text('耳返音量 ${(settings.monitorLevel * 100).round()}%'),
                   Slider(
-                    value: settings.monitorVolume,
+                    value: settings.monitorLevel,
                     onChanged: enabled
                         ? (value) {
-                            settings.change((s) => s.monitorVolume = value);
+                            settings.change((s) => s.monitorLevel = value);
                             _applyMonitor();
                           }
                         : null,
                     onChangeEnd: (_) => settings.save(),
                   ),
+                  Text('建议从 50% 左右开始。轻声会被自动托起，大声会被压住，不会爆音。', style: context.type.bodySmall),
                 ],
               ),
             ),
