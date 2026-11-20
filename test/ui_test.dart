@@ -278,219 +278,122 @@ void main() {
     expect(stored?.lyrics, song.lyrics);
   });
 
+  AppServices newEditorServices() {
+    final library = SongRepository(tmp.createTempSync('correction_'));
+    final folder = library.dirFor(song.id)..createSync();
+    for (final file in services.songs.dirFor(song.id).listSync().whereType<File>()) {
+      file.copySync('${folder.path}/${file.uri.pathSegments.last}');
+    }
+    return AppServices(settings: AppSettings(null), songs: library, models: services.models);
+  }
+
+  Future<void> waitForEditor(WidgetTester tester, bool Function() ready, String detail) async {
+    for (var round = 0; round < 200 && !ready(); round++) {
+      await settleIo(tester, rounds: 1);
+    }
+    expect(ready(), isTrue, reason: detail);
+  }
+
+  Future<void> editorIdle(WidgetTester tester, AppServices editorServices) async {
+    await tester.pump();
+    await waitForEditor(tester, () => !editorServices.pitchCorrections.busyFor(song.id), 'all correction work has finished');
+  }
+
   testWidgets('pitch editor moves a character, leaves it out of the score and restores it', (tester) async {
     phone(tester);
+    final editorServices = newEditorServices();
     late SegmentPlayer player;
-    await tester.pumpWidget(
-      host(
-        services,
-        PitchEditorPage(
-          songId: song.id,
-          line: 1,
-          decodeInBackground: false,
-          playerFactory: () => player = SegmentPlayer(
-            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
-            configureSession: false,
+    try {
+      await tester.pumpWidget(
+        host(
+          editorServices,
+          PitchEditorPage(
+            songId: song.id,
+            line: 1,
+            decodeInBackground: false,
+            playerFactory: () => player = SegmentPlayer(
+              engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+              configureSession: false,
+            ),
           ),
         ),
-      ),
-    );
-    await settleIo(tester, rounds: 20);
-    expect(find.text('第 2 句，共 2 句'), findsOneWidget);
-    await tester.tap(find.text('记'));
-    await tester.pump();
-    expect(find.text('「记」'), findsOneWidget);
-    Future<RefToken> stored() async =>
-        (await tester.runAsync(() => services.songs.loadReference(song.id)))!.lines[1].tokens[3];
-    final detected = (await stored()).notes.first.midi;
-    await screenshot(tester, '2b_pitch_editor');
-    await tester.tap(find.text('修改拼音'));
-    await tester.pumpAndSettle();
-    expect(find.text('修改「记」的拼音'), findsOneWidget);
-    expect(find.text('自动读音：ji'), findsOneWidget);
-    await tester.tap(find.text('取消'));
-    await tester.pumpAndSettle();
-
-    // Listen to the original: exactly the vocal around the character.
-    await tester.tap(find.text('听原唱'));
-    await settleIo(tester, rounds: 3);
-    final engine = player.engine!;
-    expect(engine.isPlaying, isTrue);
-    final ref = await tester.runAsync(() => services.songs.loadReference(song.id));
-    final from = ref!.lines[1].tokens[3].start - 0.12;
-    final vocal = readWavFile(services.songs.pathFor(song.id, song.vocalsFile)).samples;
-    final heard = engine.render(2048);
-    final a = (from * sr).round();
-    var err = 0.0;
-    for (var i = 0; i < 2048; i++) {
-      err = math.max(err, (heard[2 * i] - vocal[a + i]).abs());
-    }
-    expect(err, lessThan(1e-3));
-    engine.render(sr); // to its end
-    expect(engine.isPlaying, isFalse);
-
-    await tester.tap(find.text('升八度'));
-    await settleIo(tester, rounds: 5);
-    // Saved in the background: a busy machine takes longer (as below).
-    for (var i = 0; i < 40 && (await stored()).shift != 12; i++) {
-      await settleIo(tester, rounds: 2);
-    }
-    expect((await stored()).notes.first.midi, closeTo(detected + 12, 1e-6));
-    expect(find.textContaining('调高了 1 个八度'), findsOneWidget);
-    await tester.tap(find.text('降半音'));
-    await settleIo(tester, rounds: 5);
-    expect((await stored()).shift, 11);
-    // Quick taps: every one is saved, in order.
-    for (var i = 0; i < 3; i++) {
-      await tester.tap(find.text('升半音'));
+      );
+      await editorIdle(tester, editorServices);
+      expect(find.text('第 2 句，共 2 句'), findsOneWidget);
+      await tester.tap(find.text('记'));
       await tester.pump();
-    }
-    // The writes are queued one after another: wait for the last one
-    // (a busy machine takes longer than the 10 rounds that used to be here).
-    await settleIo(tester, rounds: 10);
-    for (var i = 0; i < 40 && (await stored()).shift != 14; i++) {
-      await settleIo(tester, rounds: 2);
-    }
-    expect((await stored()).shift, 14);
-    expect(find.textContaining('调高了 14 个半音'), findsOneWidget);
+      expect(find.text('「记」'), findsOneWidget);
+      Future<RefToken> stored() async =>
+          (await tester.runAsync(() => editorServices.songs.loadReference(song.id)))!.lines[1].tokens[3];
+      final detected = (await stored()).notes.first.midi;
+      await screenshot(tester, '2b_pitch_editor');
+      await tester.tap(find.text('修改拼音'));
+      await tester.pumpAndSettle();
+      expect(find.text('修改「记」的拼音'), findsOneWidget);
+      expect(find.text('自动读音：ji'), findsOneWidget);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
 
-    await tester.scrollUntilVisible(find.text('这个字不计分'), 200, scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('这个字不计分'));
-    await settleIo(tester, rounds: 10);
-    expect((await stored()).skip, isTrue);
-    expect(find.text('不计分'), findsOneWidget);
+      // Listen to the original: exactly the vocal around the character.
+      await tester.tap(find.text('听原唱'));
+      await waitForEditor(tester, () => player.engine?.isPlaying == true, 'the original vocal starts playing');
+      final engine = player.engine!;
+      expect(engine.isPlaying, isTrue);
+      final ref = await tester.runAsync(() => editorServices.songs.loadReference(song.id));
+      final from = ref!.lines[1].tokens[3].start - 0.12;
+      final vocal = readWavFile(editorServices.songs.pathFor(song.id, song.vocalsFile)).samples;
+      final heard = engine.render(2048);
+      final a = (from * sr).round();
+      var err = 0.0;
+      for (var i = 0; i < 2048; i++) {
+        err = math.max(err, (heard[2 * i] - vocal[a + i]).abs());
+      }
+      expect(err, lessThan(1e-3));
+      engine.render(sr); // to its end
+      expect(engine.isPlaying, isFalse);
 
-    await tester.scrollUntilVisible(find.text('恢复自动识别'), 200, scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('恢复自动识别'));
-    await settleIo(tester, rounds: 5);
-    final restored = await stored();
-    expect(restored.notes.first.midi, closeTo(detected, 1e-6));
-    expect(restored.corrected, isFalse);
-    await tester.pumpWidget(const SizedBox());
+      await tester.tap(find.text('升八度'));
+      await editorIdle(tester, editorServices);
+      expect((await stored()).notes.first.midi, closeTo(detected + 12, 1e-6));
+      expect(find.textContaining('调高了 1 个八度'), findsOneWidget);
+      await tester.tap(find.text('降半音'));
+      await editorIdle(tester, editorServices);
+      expect((await stored()).shift, 11);
+      // Quick taps: every one is saved, in order.
+      for (var i = 0; i < 3; i++) {
+        await tester.tap(find.text('升半音'));
+        await tester.pump();
+      }
+      await editorIdle(tester, editorServices);
+      expect((await stored()).shift, 14);
+      expect(find.textContaining('调高了 14 个半音'), findsOneWidget);
+
+      await tester.scrollUntilVisible(find.text('这个字不计分'), 200, scrollable: find.byType(Scrollable).first);
+      await tester.tap(find.text('这个字不计分'));
+      await editorIdle(tester, editorServices);
+      expect((await stored()).skip, isTrue);
+      expect(find.text('不计分'), findsOneWidget);
+
+      await tester.scrollUntilVisible(find.text('恢复自动识别'), 200, scrollable: find.byType(Scrollable).first);
+      await tester.tap(find.text('恢复自动识别'));
+      await editorIdle(tester, editorServices);
+      final restored = await stored();
+      expect(restored.notes.first.midi, closeTo(detected, 1e-6));
+      expect(restored.corrected, isFalse);
+    } finally {
+      await tester.pumpWidget(const SizedBox());
+      await editorIdle(tester, editorServices);
+    }
   }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
 
   testWidgets('pitch editor sets where a character starts, and the rest of the line follows', (tester) async {
     phone(tester);
+    final editorServices = newEditorServices();
     var alignments = 0;
-    await tester.pumpWidget(
-      host(
-        services,
-        PitchEditorPage(
-          songId: song.id,
-          line: 1,
-          decodeInBackground: false,
-          playerFactory: () => SegmentPlayer(
-            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
-            configureSession: false,
-          ),
-          retimer: (track, lines, ref, line, pins) async {
-            alignments++;
-            return retimeLine(track, lines, ref, line, pins);
-          },
-        ),
-      ),
-    );
-    await settleIo(tester, rounds: 20);
-    Future<SongReference> stored() async => (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
-    final before = await stored();
-    final token = before.lines[1].tokens[4];
-    final start = token.start;
-    final firstLine = [for (final t in before.lines[0].tokens) (t.start, t.end, t.notes.length)];
-    await tester.tap(find.text('得'));
-    await tester.pump();
-    final shown = find.textContaining(RegExp(r'^从 \d+:\d\d\.\d\d 开始$'));
-    expect(shown, findsOneWidget);
-
-    // Each tap updates the displayed start and restarts the save window.
-    await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: find.byType(Scrollable).first);
-    final displayedStart = tester.widget<Text>(shown).data;
-    final graph = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
-    PitchGraphPainter painter() => tester.widget<CustomPaint>(graph).painter! as PitchGraphPainter;
-    final initialPainter = painter();
-    final size = tester.getSize(graph);
-    final note = token.notes.first;
-    void expectPreview(double shift) {
-      final current = painter();
-      expect(current.contour, same(initialPainter.contour));
-      expect((current.t0, current.t1), (initialPainter.t0, initialPainter.t1));
-      expect(current.highlight!.$1, closeTo(token.slotStart + shift, 1e-6));
-      expect(current.highlight!.$2, closeTo(token.end + shift, 1e-6));
-
-      double x(double time) => current.gutter + (time - current.t0) / (current.t1 - current.t0) * (size.width - current.gutter);
-      final y = size.height - (note.midi - current.midiLo) / (current.midiHi - current.midiLo) * size.height;
-      expect(graph, paints..something((method, args) {
-        if (method != #drawLine) return false;
-        final stroke = args[2] as Paint;
-        if (stroke.strokeCap != StrokeCap.round) return false;
-        final left = x(note.start + shift) + stroke.strokeWidth / 2;
-        final right = math.max(x(note.end + shift) - stroke.strokeWidth / 2, left + 0.5);
-        return ((args[0] as Offset) - Offset(left, y)).distance < 1e-6 &&
-            ((args[1] as Offset) - Offset(right, y)).distance < 1e-6;
-      }));
-    }
-
-    expectPreview(0);
-    await tester.tap(find.byTooltip('推后 0.05 秒'));
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(tester.widget<Text>(shown).data, isNot(displayedStart));
-    expectPreview(0.05);
-    await tester.tap(find.byTooltip('推后 0.05 秒'));
-    await tester.pump(const Duration(milliseconds: 200));
-    expectPreview(0.1);
-    expect(alignments, 0);
-    expect((await stored()).lines[1].tokens[4].pinned, isNull);
-    await settleIo(tester, rounds: 20);
-    expect(alignments, 1);
-    final moved = (await stored()).lines[1];
-    expect(moved.tokens[4].pinned, closeTo(start + 0.1, 1e-3));
-    // Its voice starts there (to the pitch frame, 5.8 ms), and the
-    // character before now ends there.
-    expect(moved.tokens[4].start, greaterThanOrEqualTo(moved.tokens[4].pinned! - 0.003));
-    expect(moved.tokens[3].end, lessThanOrEqualTo(moved.tokens[4].pinned! + 0.003));
-    expect(find.text('你调过'), findsOneWidget);
-    await screenshot(tester, '2c_pitch_editor_timing');
-    // The other line did not move.
-    expect([for (final t in (await stored()).lines[0].tokens) (t.start, t.end, t.notes.length)], firstLine);
-
-    // A long press on the graph puts the start of the selected character
-    // there.
-    await tester.scrollUntilVisible(find.text('带'), -200, scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('带'));
-    await tester.pump();
-    await tester.longPress(graph);
-    await settleIo(tester, rounds: 20);
-    expect((await stored()).lines[1].tokens[5].pinned, isNotNull);
-
-    // Restoring the line puts every character back where the aligner has it.
-    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('这一句全部恢复自动识别'));
-    await settleIo(tester, rounds: 20);
-    final restored = (await stored()).lines[1];
-    expect(restored.tokens.every((t) => t.pinned == null), isTrue);
-    expect(restored.tokens[4].start, closeTo(start, 1e-6));
-    expect(restored.tokens.any((t) => t.corrected), isFalse);
-    await tester.pumpWidget(const SizedBox());
-  }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
-
-  for (final useModel in [false, true]) {
-    final aligner = useModel ? 'HuBERTFA' : 'pitch alignment';
-    testWidgets('pitch editor keeps taps while $aligner is running', (tester) async {
-      phone(tester);
-      if (useModel) {
-        final repo = services.songs;
-        final original = (await tester.runAsync(() => repo.load(song.id)))!;
-        addTearDown(() => repo.saveAlignmentMetadata(song.id, original.lyrics, original.modelInfo));
-        await tester.runAsync(
-          () => repo.saveAlignmentMetadata(song.id, original.lyrics, {...original.modelInfo, 'alignment': 'HuBERTFA'}),
-        );
-      }
-      // Each re-alignment waits until the test lets it finish, as on the
-      // phone, where it runs in the background.
-      final gates = <Completer<void>>[];
+    try {
       await tester.pumpWidget(
         host(
-          services,
+          editorServices,
           PitchEditorPage(
             songId: song.id,
             line: 1,
@@ -500,56 +403,184 @@ void main() {
               configureSession: false,
             ),
             retimer: (track, lines, ref, line, pins) async {
-              final gate = Completer<void>();
-              gates.add(gate);
-              await gate.future;
+              alignments++;
               return retimeLine(track, lines, ref, line, pins);
             },
           ),
         ),
       );
-      await settleIo(tester, rounds: 20);
-      Future<SongReference> stored() async => (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
-      final original = await stored();
-      final before = original.lines[1];
-      addTearDown(() => services.songs.saveReference(song.id, original));
-      final scrollable = find.byType(Scrollable).first;
-      Future<void> nudge(String char) async {
-        await tester.scrollUntilVisible(find.text(char), -200, scrollable: scrollable);
-        await tester.tap(find.text(char));
-        await tester.pump();
-        await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: scrollable);
-        await tester.tap(find.byTooltip('推后 0.05 秒'));
-        await tester.pump();
+      await editorIdle(tester, editorServices);
+      Future<SongReference> stored() async => (await tester.runAsync(() => editorServices.songs.loadReference(song.id)))!;
+      final before = await stored();
+      final token = before.lines[1].tokens[4];
+      final start = token.start;
+      final firstLine = [for (final t in before.lines[0].tokens) (t.start, t.end, t.notes.length)];
+      await tester.tap(find.text('得'));
+      await tester.pump();
+      final shown = find.textContaining(RegExp(r'^从 \d+:\d\d\.\d\d 开始$'));
+      expect(shown, findsOneWidget);
+
+      // Each tap updates the displayed start and restarts the save window.
+      await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: find.byType(Scrollable).first);
+      final displayedStart = tester.widget<Text>(shown).data;
+      final graph = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
+      PitchGraphPainter painter() => tester.widget<CustomPaint>(graph).painter! as PitchGraphPainter;
+      final initialPainter = painter();
+      final size = tester.getSize(graph);
+      final note = token.notes.first;
+      void expectPreview(double shift) {
+        final current = painter();
+        expect(current.contour, same(initialPainter.contour));
+        expect((current.t0, current.t1), (initialPainter.t0, initialPainter.t1));
+        expect(current.highlight!.$1, closeTo(token.slotStart + shift, 1e-6));
+        expect(current.highlight!.$2, closeTo(token.end + shift, 1e-6));
+
+        double x(double time) => current.gutter + (time - current.t0) / (current.t1 - current.t0) * (size.width - current.gutter);
+        final y = size.height - (note.midi - current.midiLo) / (current.midiHi - current.midiLo) * size.height;
+        expect(graph, paints..something((method, args) {
+          if (method != #drawLine) return false;
+          final stroke = args[2] as Paint;
+          if (stroke.strokeCap != StrokeCap.round) return false;
+          final left = x(note.start + shift) + stroke.strokeWidth / 2;
+          final right = math.max(x(note.end + shift) - stroke.strokeWidth / 2, left + 0.5);
+          return ((args[0] as Offset) - Offset(left, y)).distance < 1e-6 &&
+              ((args[1] as Offset) - Offset(right, y)).distance < 1e-6;
+        }));
       }
 
-      // Twice on one character, then once on another of the same line, all
-      // before the first result is in.
-      await nudge('得');
-      await tester.pump(const Duration(milliseconds: 250));
-      expect(gates, hasLength(1));
+      expectPreview(0);
       await tester.tap(find.byTooltip('推后 0.05 秒'));
-      await tester.pump();
-      expect(find.text('你调过'), findsOneWidget);
-      await nudge('带');
-      expect(gates, hasLength(1));
-      final graph = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
-      final preview = tester.widget<CustomPaint>(graph).painter! as PitchGraphPainter;
-      final tokens = preview.reference!.lines.single.tokens;
-      expect(preview.tokenTimeOffsets[tokens[4]], closeTo(0.1, 1e-6));
-      expect(preview.tokenTimeOffsets[tokens[5]], closeTo(0.05, 1e-6));
-      gates.first.complete();
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(tester.widget<Text>(shown).data, isNot(displayedStart));
+      expectPreview(0.05);
+      await tester.tap(find.byTooltip('推后 0.05 秒'));
+      await tester.pump(const Duration(milliseconds: 200));
+      expectPreview(0.1);
+      expect(alignments, 0);
       expect((await stored()).lines[1].tokens[4].pinned, isNull);
-      await tester.pump(const Duration(milliseconds: 250));
-      expect(gates, hasLength(2));
-      gates.last.complete();
-      await settleIo(tester);
-      final after = (await stored()).lines[1];
-      expect(after.tokens[4].pinned, closeTo(before.tokens[4].start + 0.1, 1e-3));
-      expect(after.tokens[5].pinned, closeTo(before.tokens[5].start + 0.05, 1e-3));
+      await editorIdle(tester, editorServices);
+      expect(alignments, 1);
+      final moved = (await stored()).lines[1];
+      expect(moved.tokens[4].pinned, closeTo(start + 0.1, 1e-3));
+      // Its voice starts there (to the pitch frame, 5.8 ms), and the
+      // character before now ends there.
+      expect(moved.tokens[4].start, greaterThanOrEqualTo(moved.tokens[4].pinned! - 0.003));
+      expect(moved.tokens[3].end, lessThanOrEqualTo(moved.tokens[4].pinned! + 0.003));
+      expect(find.text('你调过'), findsOneWidget);
+      await screenshot(tester, '2c_pitch_editor_timing');
+      // The other line did not move.
+      expect([for (final t in (await stored()).lines[0].tokens) (t.start, t.end, t.notes.length)], firstLine);
 
+      // A long press on the graph puts the start of the selected character
+      // there.
+      await tester.scrollUntilVisible(find.text('带'), -200, scrollable: find.byType(Scrollable).first);
+      await tester.tap(find.text('带'));
+      await tester.pump();
+      await tester.longPress(graph);
+      await editorIdle(tester, editorServices);
+      expect((await stored()).lines[1].tokens[5].pinned, isNotNull);
+
+      // Restoring the line puts every character back where the aligner has it.
+      await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('这一句全部恢复自动识别'));
+      await editorIdle(tester, editorServices);
+      final restored = (await stored()).lines[1];
+      expect(restored.tokens.every((t) => t.pinned == null), isTrue);
+      expect(restored.tokens[4].start, closeTo(start, 1e-6));
+      expect(restored.tokens.any((t) => t.corrected), isFalse);
+    } finally {
       await tester.pumpWidget(const SizedBox());
+      await editorIdle(tester, editorServices);
+    }
+  }, skip: Platform.environment['YINTRACE_AUDIO_LIB'] == null);
+
+  for (final useModel in [false, true]) {
+    final aligner = useModel ? 'HuBERTFA' : 'pitch alignment';
+    testWidgets('pitch editor keeps taps while $aligner is running', (tester) async {
+      phone(tester);
+      final editorServices = newEditorServices();
+      if (useModel) {
+        final repo = editorServices.songs;
+        final original = (await tester.runAsync(() => repo.load(song.id)))!;
+        await tester.runAsync(
+          () => repo.saveAlignmentMetadata(song.id, original.lyrics, {...original.modelInfo, 'alignment': 'HuBERTFA'}),
+        );
+      }
+      // Each re-alignment waits until the test lets it finish, as on the
+      // phone, where it runs in the background.
+      final gates = <Completer<void>>[];
+      var holdAlignment = true;
+      try {
+        await tester.pumpWidget(
+          host(
+            editorServices,
+            PitchEditorPage(
+              songId: song.id,
+              line: 1,
+              decodeInBackground: false,
+              playerFactory: () => SegmentPlayer(
+                engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+                configureSession: false,
+              ),
+              retimer: (track, lines, ref, line, pins) async {
+                if (holdAlignment) {
+                  final gate = Completer<void>();
+                  gates.add(gate);
+                  await gate.future;
+                }
+                return retimeLine(track, lines, ref, line, pins);
+              },
+            ),
+          ),
+        );
+        await editorIdle(tester, editorServices);
+        Future<SongReference> stored() async => (await tester.runAsync(() => editorServices.songs.loadReference(song.id)))!;
+        final original = await stored();
+        final before = original.lines[1];
+        final scrollable = find.byType(Scrollable).first;
+        Future<void> nudge(String char) async {
+          await tester.scrollUntilVisible(find.text(char), -200, scrollable: scrollable);
+          await tester.tap(find.text(char));
+          await tester.pump();
+          await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: scrollable);
+          await tester.tap(find.byTooltip('推后 0.05 秒'));
+          await tester.pump();
+        }
+
+        // Twice on one character, then once on another of the same line, all
+        // before the first result is in.
+        await nudge('得');
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(gates, hasLength(1));
+        await tester.tap(find.byTooltip('推后 0.05 秒'));
+        await tester.pump();
+        expect(find.text('你调过'), findsOneWidget);
+        await nudge('带');
+        expect(gates, hasLength(1));
+        final graph = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
+        final preview = tester.widget<CustomPaint>(graph).painter! as PitchGraphPainter;
+        final tokens = preview.reference!.lines.single.tokens;
+        expect(preview.tokenTimeOffsets[tokens[4]], closeTo(0.1, 1e-6));
+        expect(preview.tokenTimeOffsets[tokens[5]], closeTo(0.05, 1e-6));
+        gates.first.complete();
+        await tester.pump();
+        expect((await stored()).lines[1].tokens[4].pinned, isNull);
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(gates, hasLength(2));
+        gates.last.complete();
+        await editorIdle(tester, editorServices);
+        final after = (await stored()).lines[1];
+        expect(after.tokens[4].pinned, closeTo(before.tokens[4].start + 0.1, 1e-3));
+        expect(after.tokens[5].pinned, closeTo(before.tokens[5].start + 0.05, 1e-3));
+      } finally {
+        holdAlignment = false;
+        for (final gate in gates) {
+          if (!gate.isCompleted) gate.complete();
+        }
+        await tester.pumpWidget(const SizedBox());
+        await editorIdle(tester, editorServices);
+      }
     });
   }
 
@@ -557,88 +588,100 @@ void main() {
     final work = running ? 'the latest in-flight edit' : 'a debounced edit';
     testWidgets('pitch editor returns immediately and saves $work in the background', (tester) async {
       phone(tester);
-      Future<SongReference> stored() async => (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+      final editorServices = newEditorServices();
+      Future<SongReference> stored() async => (await tester.runAsync(() => editorServices.songs.loadReference(song.id)))!;
       final before = await stored();
       final gates = <Completer<void>>[];
-      addTearDown(() => services.songs.saveReference(song.id, before));
-      await tester.pumpWidget(
-        host(
-          services,
-          Builder(
-            builder: (context) => Scaffold(
-              body: TextButton(
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (_) => PitchEditorPage(
-                    songId: song.id,
-                    line: 1,
-                    decodeInBackground: false,
-                    retimer: (track, lines, ref, line, pins) async {
-                      final gate = Completer<void>();
-                      gates.add(gate);
-                      await gate.future;
-                      return retimeLine(track, lines, ref, line, pins);
-                    },
-                  ),
-                )),
-                child: const Text('打开校正'),
+      var holdAlignment = true;
+      try {
+        await tester.pumpWidget(
+          host(
+            editorServices,
+            Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => PitchEditorPage(
+                      songId: song.id,
+                      line: 1,
+                      decodeInBackground: false,
+                      retimer: (track, lines, ref, line, pins) async {
+                        if (holdAlignment) {
+                          final gate = Completer<void>();
+                          gates.add(gate);
+                          await gate.future;
+                        }
+                        return retimeLine(track, lines, ref, line, pins);
+                      },
+                    ),
+                  )),
+                  child: const Text('打开校正'),
+                ),
               ),
             ),
           ),
-        ),
-      );
-      await tester.tap(find.text('打开校正'));
-      await settleIo(tester, rounds: 25);
-      await tester.tap(find.text('得'));
-      await tester.pump();
-      await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: find.byType(Scrollable).first);
-      final nudge = find.byTooltip('推后 0.05 秒');
-      await tester.tap(nudge);
-      if (running) {
-        await tester.pump(const Duration(milliseconds: 250));
-        expect(gates, hasLength(1));
-        await tester.tap(nudge);
-      }
-      await tester.pump();
-      expect(gates, hasLength(running ? 1 : 0));
-
-      if (running) {
-        await tester.binding.handlePopRoute();
-      } else {
-        await tester.tap(find.byType(BackButton));
-      }
-      await tester.pump();
-      expect(gates, hasLength(running ? 1 : 0));
-      await tester.pumpAndSettle();
-      expect(ModalRoute.of(tester.element(find.text('打开校正')))?.isCurrent, isTrue);
-      expect(find.text('校正'), findsNothing);
-      expect(gates, hasLength(1));
-      expect((await stored()).lines[1].tokens[4].pinned, isNull);
-
-      if (running) {
-        // Reopening before the previous result arrives keeps the same draft.
+        );
         await tester.tap(find.text('打开校正'));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
-        final graph = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
-        final preview = tester.widget<CustomPaint>(graph).painter! as PitchGraphPainter;
-        expect(preview.tokenTimeOffsets[preview.reference!.lines.single.tokens[4]], closeTo(0.1, 1e-6));
+        await editorIdle(tester, editorServices);
+        await tester.pumpAndSettle();
         await tester.tap(find.text('得'));
         await tester.pump();
-        await tester.scrollUntilVisible(nudge, 200, scrollable: find.byType(Scrollable).first);
+        await tester.scrollUntilVisible(find.byTooltip('推后 0.05 秒'), 200, scrollable: find.byType(Scrollable).first);
+        final nudge = find.byTooltip('推后 0.05 秒');
         await tester.tap(nudge);
-        await tester.tap(find.byType(BackButton));
-        await tester.pumpAndSettle();
-        expect(find.text('校正'), findsNothing);
-        gates.first.complete();
+        if (running) {
+          await tester.pump(const Duration(milliseconds: 250));
+          expect(gates, hasLength(1));
+          await tester.tap(nudge);
+        }
         await tester.pump();
-        expect(gates, hasLength(2));
+        expect(gates, hasLength(running ? 1 : 0));
+
+        if (running) {
+          await tester.binding.handlePopRoute();
+        } else {
+          await tester.tap(find.byType(BackButton));
+        }
+        await tester.pump();
+        expect(gates, hasLength(running ? 1 : 0));
+        await tester.pumpAndSettle();
+        expect(ModalRoute.of(tester.element(find.text('打开校正')))?.isCurrent, isTrue);
+        expect(find.text('校正'), findsNothing);
+        expect(gates, hasLength(1));
         expect((await stored()).lines[1].tokens[4].pinned, isNull);
+
+        if (running) {
+          // Reopening before the previous result arrives keeps the same draft.
+          await tester.tap(find.text('打开校正'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          final graph = find.byWidgetPredicate((w) => w is CustomPaint && w.painter is PitchGraphPainter);
+          final preview = tester.widget<CustomPaint>(graph).painter! as PitchGraphPainter;
+          expect(preview.tokenTimeOffsets[preview.reference!.lines.single.tokens[4]], closeTo(0.1, 1e-6));
+          await tester.tap(find.text('得'));
+          await tester.pump();
+          await tester.scrollUntilVisible(nudge, 200, scrollable: find.byType(Scrollable).first);
+          await tester.tap(nudge);
+          await tester.tap(find.byType(BackButton));
+          await tester.pumpAndSettle();
+          expect(find.text('校正'), findsNothing);
+          gates.first.complete();
+          await tester.pump();
+          expect(gates, hasLength(2));
+          expect((await stored()).lines[1].tokens[4].pinned, isNull);
+        }
+        gates.last.complete();
+        await editorIdle(tester, editorServices);
+        final shift = running ? 0.15 : 0.05;
+        expect((await stored()).lines[1].tokens[4].pinned, closeTo(before.lines[1].tokens[4].slotStart + shift, 1e-3));
+      } finally {
+        holdAlignment = false;
+        for (final gate in gates) {
+          if (!gate.isCompleted) gate.complete();
+        }
+        await tester.pumpWidget(const SizedBox());
+        await editorIdle(tester, editorServices);
       }
-      gates.last.complete();
-      await settleIo(tester, rounds: 25);
-      final shift = running ? 0.15 : 0.05;
-      expect((await stored()).lines[1].tokens[4].pinned, closeTo(before.lines[1].tokens[4].slotStart + shift, 1e-3));
-      await tester.pumpWidget(const SizedBox());
     });
   }
 
