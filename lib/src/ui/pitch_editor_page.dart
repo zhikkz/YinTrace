@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -7,16 +6,13 @@ import 'package:flutter/material.dart';
 
 import '../analysis/corrections.dart';
 import '../analysis/hubertfa_lexicon.dart';
-import '../analysis/lrc.dart';
 import '../analysis/lyrics_language.dart';
-import '../analysis/manual_timing.dart';
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
+import '../app/pitch_correction_session.dart';
 import '../app/services.dart';
 import '../audio/audio_backend.dart';
 import '../dsp/guide_tone.dart';
-import '../import/hubertfa_job.dart';
-import '../library/song.dart';
 import '../models/model_catalog.dart';
 import '../practice/segment_player.dart';
 import 'lyrics_style.dart';
@@ -25,20 +21,13 @@ import 'pitch_graph.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
+export '../app/pitch_correction_session.dart' show retimeLineInBackground;
+
 Float32List _decodeMono(String path) => const NativeAudioBackend().decode(path, sampleRate: 44100, channels: 1).samples;
 
 /// Decodes a song's vocal track in a background isolate. Top level, so the
 /// isolate's closure captures nothing but the path.
 Future<Float32List> decodeMonoInBackground(String path) => Isolate.run(() => _decodeMono(path));
-
-/// [retimeLine] in a background isolate (top level for the same reason).
-Future<SongReference> retimeLineInBackground(
-  PitchTrack track,
-  List<LyricLine> lines,
-  SongReference current,
-  int line,
-  Map<int, double> pins,
-) => Isolate.run(() => retimeLine(track, lines, current, line, pins));
 
 /// Fix single characters (or words) of a song: listen to the original
 /// singer and to the target note; set where a character starts when the
@@ -68,38 +57,32 @@ class PitchEditorPage extends StatefulWidget {
   final bool decodeInBackground;
 
   /// Replaces the timing aligner in tests.
-  final Future<SongReference> Function(PitchTrack, List<LyricLine>, SongReference, int, Map<int, double>)? retimer;
+  final TimingRetimer? retimer;
 
   @override
   State<PitchEditorPage> createState() => _PitchEditorPageState();
 }
 
 class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingObserver {
-  SongMeta? _meta;
-  SongReference? _ref;
-  PitchTrack? _track;
-  String? _error;
+  late final AppServices _services;
+  late final PitchCorrectionSession _session;
   late int _line = widget.line;
   int? _token;
-  int _revision = 0;
-  List<LyricLine>? _lyricLines;
-
-  /// Lines waiting to be aligned again, with the pins asked for last.
-  final Map<int, Map<int, double>> _wanted = {};
-  final Set<int> _pendingTimingLines = {};
-  Timer? _nudgeTimer;
-  Future<void>? _retimeQueue;
-  int _retimesQueued = 0;
-  bool _editingLine = false;
-  bool _leaving = false;
+  bool _loaded = false;
+  bool _attached = false;
+  bool _selectedFirstToken = false;
+  bool _obtainingModel = false;
+  int _seenNotice = 0;
   late final SegmentPlayer _player = widget.playerFactory?.call() ?? SegmentPlayer();
   Future<Float32List?>? _vocal;
-  bool _loaded = false;
 
   static const _sr = 44100;
-  static const _nudgeWindow = Duration(milliseconds: 250);
 
-  bool get _timingBusy => _pendingTimingLines.isNotEmpty || _retimesQueued > 0;
+  SongReference? get _ref => _session.reference;
+  PitchTrack? get _track => _session.track;
+  bool get _editingLine => _session.editingLine;
+  bool get _timingBusy => _session.timingBusy;
+  bool get _usesHubertFa => _session.usesHubertFa;
 
   @override
   void initState() {
@@ -109,7 +92,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
   }
 
   void _onPlayer() {
-    if (mounted) setState(() {});
+    if (_attached) setState(() {});
   }
 
   @override
@@ -117,46 +100,55 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     super.didChangeDependencies();
     if (_loaded) return;
     _loaded = true;
-    _load();
+    _services = AppScope.of(context);
+    _session = _services.pitchCorrections.attach(widget.songId, () => PitchCorrectionSession(
+      songId: widget.songId,
+      songs: _services.songs,
+      alignInBackground: widget.decodeInBackground,
+      retimer: widget.retimer,
+    ));
+    _attached = true;
+    _seenNotice = _session.noticeRevision;
+    _session.addListener(_onCorrection);
+    _onCorrection();
+  }
+
+  void _onCorrection() {
+    setState(() {
+      final ref = _ref;
+      if (ref != null && !_selectedFirstToken) {
+        _selectedFirstToken = true;
+        _line = ref.lines.isEmpty ? 0 : _line.clamp(0, ref.lines.length - 1);
+        _token = ref.lines.isEmpty ? null : _firstToken(ref.lines[_line]);
+      }
+    });
+    if (_seenNotice != _session.noticeRevision) {
+      _seenNotice = _session.noticeRevision;
+      if (ModalRoute.isCurrentOf(context) == true) _snack(_session.notice!);
+    }
+  }
+
+  void _detachCorrection() {
+    if (!_attached) return;
+    _attached = false;
+    if (_player.playing) _player.stop();
+    _session.removeListener(_onCorrection);
+    _services.pitchCorrections.detach(_session);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) _player.suspend();
-    if (state == AppLifecycleState.hidden) _flushNudges();
+    if (state == AppLifecycleState.hidden && _attached) _session.flushNudges();
   }
 
   @override
   void dispose() {
-    _nudgeTimer?.cancel();
+    _detachCorrection();
     WidgetsBinding.instance.removeObserver(this);
     _player.removeListener(_onPlayer);
     _player.dispose();
     super.dispose();
-  }
-
-  Future<void> _load() async {
-    final repo = AppScope.of(context).songs;
-    try {
-      final meta = await repo.load(widget.songId);
-      final ref = await repo.loadReference(widget.songId);
-      PitchTrack? track;
-      try {
-        track = await repo.loadPitchTrack(widget.songId);
-      } catch (_) {
-        // Drawn without the original singer's contour.
-      }
-      if (!mounted) return;
-      setState(() {
-        _meta = meta;
-        _ref = ref;
-        _track = track;
-        _line = ref.lines.isEmpty ? 0 : _line.clamp(0, ref.lines.length - 1);
-        _token = ref.lines.isEmpty ? null : _firstToken(ref.lines[_line]);
-      });
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
-    }
   }
 
   /// The first token worth looking at: a corrected one, else one without
@@ -178,7 +170,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
 
   /// The original vocal (mono, 44.1 kHz), decoded on first use.
   Future<Float32List?> _vocalAudio() => _vocal ??= () async {
-    final path = AppScope.of(context).songs.pathFor(widget.songId, _meta!.vocalsFile);
+    final path = _session.vocalPath;
     try {
       return widget.decodeInBackground ? await decodeMonoInBackground(path) : _decodeMono(path);
     } catch (_) {
@@ -200,7 +192,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     Float32List? vocal;
     if (original) {
       final all = await _vocalAudio();
-      if (!mounted) return;
+      if (!_attached) return;
       if (all == null) {
         _snack('读不到原唱人声');
         return;
@@ -219,75 +211,49 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
   }
 
   Future<void> _change(void Function(RefToken token) edit) async {
-    final tok = _selected;
-    if (tok == null || !_canEditPitch) return;
-    setState(() {
-      edit(tok);
-      _revision++;
-    });
-    await _save();
+    final token = _token;
+    if (_attached && token != null && _selected != null) await _session.changePitch(_line, token, edit);
   }
 
-  Future<void>? _saving;
-
-  /// Saves the reference. Quick taps queue up: writes of the same file must
-  /// not overlap (each writes the newest state).
-  Future<void> _save() {
-    final songs = AppScope.of(context).songs;
-    final ref = _ref!;
-    Future<void> write() async {
-      try {
-        await songs.saveReference(widget.songId, ref);
-      } catch (e) {
-        _snack('没能保存：$e');
-      }
+  Future<String?> _requireHubertModel() async {
+    if (_obtainingModel) return null;
+    _obtainingModel = true;
+    try {
+      if (!await ensureModels(context, requiredModels: [hubertFaModel]) || !mounted || !_attached) return null;
+      return _services.models.pathFor(hubertFaModel);
+    } finally {
+      _obtainingModel = false;
     }
-
-    return _saving = (_saving ?? Future<void>.value()).then((_) => write());
   }
 
   Future<void> _restoreLine() async {
     final ref = _ref;
     if (ref == null) return;
     final line = _line;
-    if (_usesHubertFa && ref.lines[line].tokens.any((t) => t.pinned != null || t.pinyinOverride != null)) {
-      await _updateModelLine(line, pins: {}, readings: {}, restore: ref.lines[line].tokens.asMap().keys.toSet());
-      return;
-    }
-    final moved = ref.lines[line].tokens.any((t) => t.pinned != null) || (_wanted[line]?.isNotEmpty ?? false);
-    setState(() {
-      for (final t in ref.lines[line].tokens) {
-        t.restore();
-      }
-      _revision++;
-    });
-    final saved = _save();
-    if (moved) await _retime(line, const {});
-    await saved;
+    final needsModel = _usesHubertFa && ref.lines[line].tokens.any((t) => t.pinned != null || t.pinyinOverride != null);
+    final path = needsModel ? await _requireHubertModel() : null;
+    if (!mounted || !_attached || (needsModel && path == null)) return;
+    if (needsModel) _player.stop();
+    await _session.restoreLine(line, modelPath: path);
   }
 
-  /// Back to what was detected for the selected token; one that was placed
-  /// by hand goes back to where the aligner puts it.
   Future<void> _restoreToken() async {
     final line = _line, k = _token;
-    if (k != null && _usesHubertFa && (_selected!.pinned != null || _selected!.pinyinOverride != null)) {
-      await _updateModelLine(line, pins: _pinsOfLine(line)..remove(k), readings: _readings(line)..remove(k), restore: {k});
-      return;
-    }
-    final moved = _selected?.pinned != null || (_wanted[line]?.containsKey(k) ?? false);
-    final saved = _change((t) => t.restore());
-    if (moved) await _retime(line, {...(_wanted[line] ?? _pinsOfLine(line))}..remove(k));
-    await saved;
+    final token = _selected;
+    if (k == null || token == null) return;
+    final needsModel = _usesHubertFa && (token.pinned != null || token.pinyinOverride != null);
+    final path = needsModel ? await _requireHubertModel() : null;
+    if (!mounted || !_attached || (needsModel && path == null)) return;
+    if (needsModel) _player.stop();
+    await _session.restoreToken(line, k, modelPath: path);
   }
 
-  Map<int, double> _pinsOfLine(int line) => {for (final (i, t) in _ref!.lines[line].tokens.indexed) i: ?t.pinned};
-
   Future<void> _editPinyin(int tokenIndex) async {
-    final ref = _ref!, meta = _meta!;
+    final ref = _ref!;
     final lineIndex = _line;
     final tokens = ref.lines[lineIndex].tokens;
     final token = tokens[tokenIndex];
-    final line = (_lyricLines ??= linesOfReference(ref, meta.lyrics))[lineIndex];
+    final line = _session.lyricLine(lineIndex);
     final automatic = mandarinPinyin(line.tokens)[tokenIndex];
     var input = token.pinyinOverride ?? automatic ?? '';
     final answer = await showDialog<String>(
@@ -318,165 +284,25 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     final pinyin = normalizePinyin(answer);
     final override = pinyin.isEmpty ? null : pinyin;
     if (override == token.pinyinOverride) return;
-    final readings = _readings(lineIndex);
-    if (override == null) {
-      readings.remove(tokenIndex);
-    } else {
-      readings[tokenIndex] = override;
-    }
-    await _updateModelLine(lineIndex, pins: _pinsOfLine(lineIndex), readings: readings);
-  }
-
-  bool get _usesHubertFa => _meta?.modelInfo['alignment'] == 'HuBERTFA' ||
-      _ref!.lines.any((line) => line.hubertFa || line.tokens.any((t) => t.pinyinOverride != null));
-
-  // HuBERTFA carries pitch edits into the alignment it starts with.
-  bool get _canEditPitch => _retimesQueued == 0 || !_usesHubertFa;
-
-  Map<int, String> _readings(int line) => {for (final (i, t) in _ref!.lines[line].tokens.indexed) i: ?t.pinyinOverride};
-
-  Future<void> _updateModelLine(int lineIndex, {
-    required Map<int, double> pins,
-    required Map<int, String> readings,
-    Set<int> restore = const {},
-    bool timing = false,
-  }) async {
-    final services = AppScope.of(context);
-    final ref = _ref!, meta = _meta!, track = _track;
-    if (track == null) {
-      _snack('读不到原唱的音高曲线，不能重新对齐');
-      return;
-    }
+    final path = await _requireHubertModel();
+    if (path == null || !mounted || !_attached) return;
     _player.stop();
-    if (!timing) setState(() => _editingLine = true);
-    bool isCurrent() => mounted && (!timing || identical(_wanted[lineIndex], pins));
-    try {
-      final retimer = timing ? widget.retimer : null;
-      if (retimer == null && !await ensureModels(context, requiredModels: [hubertFaModel])) return;
-      await _saving;
-      if (!isCurrent()) return;
-      final lines = _lyricLines ??= linesOfReference(ref, meta.lyrics);
-      final fresh = await (retimer?.call(track, lines, ref, lineIndex, pins) ??
-          alignStoredLine(
-            services.models.pathFor(hubertFaModel)!,
-            services.songs.pathFor(widget.songId, meta.vocalsFile),
-            track, lines[lineIndex], ref, lineIndex,
-            pins: pins,
-            readings: readings,
-            restore: restore,
-            next: lineIndex + 1 < lines.length ? lines[lineIndex + 1] : null,
-          ));
-      if (!isCurrent()) return;
-      await services.songs.saveReference(widget.songId, fresh);
-      if (mounted) {
-        setState(() {
-          _ref = fresh;
-          _revision++;
-        });
-      }
-    } catch (e) {
-      if (isCurrent()) _snack('没能重新对齐：$e');
-    } finally {
-      if (mounted && !timing) setState(() => _editingLine = false);
-    }
+    await _session.editReading(lineIndex, tokenIndex, override, path);
   }
 
-  /// Where token [k] of the current line starts, counting a change that is
-  /// still being aligned (so that quick taps add up).
-  double _startOf(int k) => _wanted[_line]?[k] ?? _ref!.lines[_line].tokens[k].slotStart;
+  /// Includes requested starts that have not yet been aligned.
+  double _startOf(int k) => _session.startOf(_line, k);
 
-  /// Sets where the selected token starts (within what its neighbours
-  /// allow) and aligns the rest of its line again around it.
-  void _setStart(double seconds, {bool nudge = false}) {
-    final ref = _ref, k = _token;
-    if (_editingLine || _leaving || ref == null || k == null || _track == null || _selected == null) return;
-    final (lo, hi) = pinRange(ref, _line, k, lineOnly: _usesHubertFa, pendingPins: _wanted);
-    final pin = seconds.clamp(lo, hi).toDouble();
-    if ((pin - _startOf(k)).abs() < 0.002) {
-      _snack(seconds < pin ? '再往前就碰到前面的$_unit了' : '再往后就碰到后面的$_unit了');
-      return;
+  Future<void> _setStart(double seconds, {bool nudge = false}) async {
+    final line = _line, token = _token;
+    if (!_attached || _editingLine || token == null || _track == null || _selected == null) return;
+    String? modelPath;
+    if (_usesHubertFa && widget.retimer == null) {
+      modelPath = _services.models.pathFor(hubertFaModel) ?? await _requireHubertModel();
+      if (modelPath == null || !mounted || !_attached) return;
+      if (_player.playing) _player.stop();
     }
-    setState(() {
-      _wanted[_line] = {...(_wanted[_line] ?? _pinsOfLine(_line)), k: pin};
-      _pendingTimingLines.add(_line);
-    });
-    if (!nudge) {
-      _flushNudges();
-      return;
-    }
-    _nudgeTimer?.cancel();
-    _nudgeTimer = Timer(_nudgeWindow, _flushNudges);
-  }
-
-  String get _unit => _ref?.language.unit ?? '字';
-
-  void _flushNudges() {
-    _nudgeTimer?.cancel();
-    _nudgeTimer = null;
-    for (final line in _pendingTimingLines) {
-      _retime(line, _wanted[line]!);
-    }
-    _pendingTimingLines.clear();
-  }
-
-  Future<void> _leaveAfterTiming() async {
-    if (_leaving) return;
-    setState(() => _leaving = true);
-    _flushNudges();
-    await _retimeQueue;
-    await _saving;
-    if (mounted) Navigator.of(context).pop();
-  }
-
-  /// Runs ready timing edits one at a time on the latest saved alignment.
-  /// A new tap replaces the pins of any older edit to the same line.
-  Future<void> _retime(int line, Map<int, double> pins) {
-    setState(() {
-      _wanted[line] = pins;
-      _retimesQueued++;
-    });
-    return _retimeQueue = (_retimeQueue ?? Future<void>.value()).then((_) async {
-      try {
-        if (!mounted || !identical(_wanted[line], pins)) return;
-        if (_usesHubertFa) {
-          await _updateModelLine(line, pins: pins, readings: _readings(line), timing: true);
-        } else {
-          await _retimeNow(line, pins);
-        }
-      } catch (e) {
-        if (identical(_wanted[line], pins)) _snack('没能重新对齐：$e');
-      } finally {
-        if (mounted) {
-          setState(() {
-            if (identical(_wanted[line], pins)) _wanted.remove(line);
-            _retimesQueued--;
-          });
-        }
-      }
-    });
-  }
-
-  Future<void> _retimeNow(int line, Map<int, double> pins) async {
-    final ref = _ref, track = _track, meta = _meta;
-    if (ref == null || track == null || meta == null) return;
-
-    final lines = _lyricLines ??= linesOfReference(ref, meta.lyrics);
-    final fresh = await (widget.retimer?.call(track, lines, ref, line, pins) ??
-        (widget.decodeInBackground
-            ? retimeLineInBackground(track, lines, ref, line, pins)
-            : Future.value(retimeLine(track, lines, ref, line, pins))));
-    if (!mounted || !identical(_wanted[line], pins)) return;
-    if (pins.keys.any((i) => fresh.lines[line].tokens[i].pinned == null)) {
-      // No room for a pin there: nothing changes.
-      _snack('这里放不下，没有改');
-      return;
-    }
-    fresh.applyCorrectionsFrom(_ref!);
-    setState(() {
-      _ref = fresh;
-      _revision++;
-    });
-    await _save();
+    _session.setStart(line, token, seconds, nudge: nudge, modelPath: modelPath);
   }
 
   void _goToLine(int line) {
@@ -490,22 +316,19 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
   }
 
   @override
-  Widget build(BuildContext context) {
-    final waitForTiming = _timingBusy || _leaving;
-    return PopScope<void>(
-      canPop: !waitForTiming,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && waitForTiming) _leaveAfterTiming();
-      },
-      child: _buildEditor(context),
-    );
-  }
+  Widget build(BuildContext context) => PopScope<void>(
+    onPopInvokedWithResult: (didPop, _) {
+      if (didPop) _detachCorrection();
+    },
+    child: _buildEditor(context),
+  );
 
   Widget _buildEditor(BuildContext context) {
-    if (_error != null) {
+    final error = _session.loadError;
+    if (error != null) {
       return Scaffold(
         appBar: AppBar(),
-        body: Padding(padding: const EdgeInsets.all(24), child: Text('这首歌的数据读取失败：$_error')),
+        body: Padding(padding: const EdgeInsets.all(24), child: Text('这首歌的数据读取失败：$error')),
       );
     }
     final ref = _ref;
@@ -534,7 +357,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_horiz_rounded),
-            enabled: lineCorrected && !_editingLine && !_timingBusy && !_leaving,
+            enabled: lineCorrected && !_editingLine && !_timingBusy,
             onSelected: (_) => _restoreLine(),
             itemBuilder: (_) => const [PopupMenuItem(value: 'restore', child: Text('这一句全部恢复自动识别'))],
           ),
@@ -542,7 +365,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
         ],
       ),
       body: AbsorbPointer(
-        absorbing: _editingLine || _leaving,
+        absorbing: _editingLine,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
           children: [
@@ -604,29 +427,46 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
       hi = r.$2;
     }
     final (a, b) = paddedRange(lo, hi, minSpan: 12, pad: 3);
-    final t0 = line.start - 0.3, t1 = math.max(line.end, line.start + 1) + 0.3;
+    var t0 = line.start - 0.3, t1 = math.max(line.end, line.start + 1) + 0.3;
+    final pins = _session.pendingPins(_line);
+    final offsets = <RefToken, double>{};
+    for (final (k, token) in line.tokens.indexed) {
+      final pin = pins[k];
+      if (pin == null || pin == token.slotStart) continue;
+      final offset = pin - token.slotStart;
+      offsets[token] = offset;
+      final previewStart = math.min(token.start, token.slotStart) + offset;
+      final previewEnd = token.end + offset;
+      if (previewStart < t0) t0 = previewStart - 0.3;
+      if (previewEnd > t1) t1 = previewEnd + 0.3;
+    }
     final tok = _selected;
+    final selectedOffset = offsets[tok] ?? 0.0;
     const gutter = 30.0;
+    double timeAt(double x, double width) => t0 + (x - gutter) / (width - gutter) * (t1 - t0);
     return LayoutBuilder(
       builder: (context, c) => GestureDetector(
         onTapUp: (d) {
-          final t = t0 + (d.localPosition.dx - gutter) / (c.maxWidth - gutter) * (t1 - t0);
+          final t = timeAt(d.localPosition.dx, c.maxWidth);
           var best = -1;
-          var dist = double.infinity;
-          for (var k = 0; k < line.tokens.length; k++) {
-            final x = line.tokens[k];
-            final dd = t < x.start ? x.start - t : (t > x.end ? t - x.end : 0.0);
-            if (dd < dist) {
-              dist = dd;
+          var distance = double.infinity;
+          var startDistance = double.infinity;
+          for (final (k, token) in line.tokens.indexed) {
+            final offset = offsets[token] ?? 0.0;
+            final start = token.start + offset, end = token.end + offset;
+            final fromSpan = t < start ? start - t : (t > end ? t - end : 0.0);
+            final fromStart = (t - start).abs();
+            // Where previews overlap, prefer the closest displayed onset.
+            if (fromSpan < distance || (offsets.isNotEmpty && fromSpan == distance && fromStart < startDistance)) {
+              distance = fromSpan;
+              startDistance = fromStart;
               best = k;
             }
           }
           if (best >= 0) setState(() => _token = best);
         },
         // Long press: the selected character starts here.
-        onLongPressStart: _track == null
-            ? null
-            : (d) => _setStart(t0 + (d.localPosition.dx - gutter) / (c.maxWidth - gutter) * (t1 - t0)),
+        onLongPressStart: _track == null ? null : (d) => _setStart(timeAt(d.localPosition.dx, c.maxWidth)),
         child: SizedBox(
           height: 230,
           child: CustomPaint(
@@ -641,8 +481,9 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
               style: PitchGraphStyle.of(context, language: ref.language),
               gutter: gutter,
               glyphSize: 15,
-              highlight: tok == null ? null : (tok.slotStart, tok.end),
-              revision: _revision,
+              highlight: tok == null ? null : (tok.slotStart + selectedOffset, tok.end + selectedOffset),
+              tokenTimeOffsets: offsets,
+              revision: _session.revision,
             ),
           ),
         ),
@@ -675,10 +516,10 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
           children: [
             Text('从 ${_seconds(start)} 开始', style: context.type.titleSmall?.copyWith(fontFeatures: tabular)),
             const SizedBox(width: 8),
-            if (tok.pinned != null || _wanted[_line]?[k] != null)
+            if (tok.pinned != null || _session.pendingPins(_line)[k] != null)
               Text('你调过', style: context.type.labelSmall?.copyWith(color: p.inkSoft)),
             const Spacer(),
-            if (_retimesQueued > 0)
+            if (_session.aligningTiming)
               const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
           ],
         ),
@@ -698,7 +539,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
         Text(
           canMove
               ? '原唱已经唱到这个$unit、这里还算在前一个$unit上时，把它提前；也可以长按上面的图，把它的开头放到那里。'
-                    '这一句其余的$unit会跟着重新对齐。'
+                    '音高图会立即预览位置，停下后重新对齐这一句。'
               : '读不到原唱的音高曲线，不能调整位置。',
           style: context.type.bodySmall,
         ),
@@ -710,7 +551,7 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     final p = context.yt;
     final unit = ref.language.unit;
     final has = tok.notes.isNotEmpty;
-    final canEditPitch = _canEditPitch;
+    final canEditPitch = _session.canEditPitch;
     final String detail;
     if (!has) {
       detail = '没测到原唱音高，不计分。可以加上一个目标音，再按原唱调准。';

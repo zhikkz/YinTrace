@@ -13,6 +13,7 @@ import '../models/model_manager.dart';
 import '../models/model_catalog.dart';
 import '../models/model_recipe.dart';
 import '../models/pitch_model.dart';
+import 'pitch_corrections.dart';
 import 'settings.dart';
 import 'test_build.dart';
 
@@ -33,6 +34,7 @@ class AppServices {
   final SongRepository songs;
   final ModelManager models;
   late final ImportQueue importQueue;
+  final pitchCorrections = PitchCorrections();
 
   /// Whether the vocal model runs with Core ML here, and how fast this
   /// device separated songs before.
