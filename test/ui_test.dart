@@ -1820,7 +1820,12 @@ void main() {
     await drag.up();
     expect(engine.positionSeconds, closeTo(target, 0.001));
     expect(engine.render(64, input: mic), anyElement(isNot(0)));
+
+    final dismissed = await tester.startGesture(start);
+    await dismissed.moveBy(Offset(bounds.width * 0.2, 0));
     await tester.pumpWidget(const SizedBox());
+    await dismissed.cancel();
+    expect(tester.takeException(), isNull);
   }, skip: lib == null || lib.isEmpty);
 
   testWidgets('leaving the practice page keeps what was sung, and asks about the recording', (tester) async {

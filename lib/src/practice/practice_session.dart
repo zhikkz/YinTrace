@@ -471,6 +471,7 @@ class PracticeSession extends ChangeNotifier {
   }
 
   void endScrub() {
+    if (!_scrub.active) return;
     _scrub.end(_engine, seek);
     notifyListeners();
   }
@@ -796,6 +797,7 @@ class PracticeSession extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     final e = _engine;
+    _scrub.cancel(e, resume: false);
     _engine = null;
     if (e != null) {
       try {
