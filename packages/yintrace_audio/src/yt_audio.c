@@ -414,10 +414,12 @@ void yt_engine_render(yt_engine* e, float* out, const float* in, int32_t frames)
     return;
   }
 
+  // Read the playback state first so a seek queued before play is applied
+  // before the first resumed buffer is mixed.
+  ma_bool32 playing = ma_atomic_load_32(&e->playing) != 0;
   ma_int64 seek = ma_atomic_exchange_i64(&e->seek_request, -1);
   ma_int64 pos = e->position;
   if (seek >= 0) pos = seek;
-  ma_bool32 playing = ma_atomic_load_32(&e->playing) != 0;
   const ma_int64 loop_start = ma_atomic_load_i64(&e->loop_start);
   const ma_int64 loop_end = ma_atomic_load_i64(&e->loop_end);
   const ma_bool32 looping = loop_end > loop_start && loop_start >= 0;
