@@ -1372,7 +1372,7 @@ void main() {
     await tester.pump();
     expect(session.monitorEnabled, isTrue);
     expect(find.text('耳返音量'), findsOneWidget);
-    Navigator.of(tester.element(monitorSwitch)).pop();
+    await tester.tap(find.byType(CloseButton));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     session.engine!.render(512, input: Float32List(512));
@@ -1711,6 +1711,45 @@ void main() {
       ),
     ),
   );
+
+  testWidgets('practice settings can be closed after scrolling while the song plays', (tester) async {
+    phone(tester);
+    tester.view.physicalSize = const Size(390 * 3, 600 * 3);
+    tester.view.padding = const FakeViewPadding(top: 48 * 3, bottom: 34 * 3);
+    final ref = await tester.runAsync(() => services.songs.loadReference(song.id));
+    late PracticeSession session;
+    var leftPractice = false;
+    await tester.pumpWidget(
+      practiceLauncher(ref!, onSession: (s) => session = s, onLeave: (_) => leftPractice = true),
+    );
+    await tester.tap(find.text('练习'));
+    await settleIo(tester);
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    expect(session.isPlaying, isTrue);
+
+    await tester.tap(find.byTooltip('练习设置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final close = find.byType(CloseButton);
+    expect(close.hitTestable(), findsOneWidget);
+    final closePosition = tester.getTopLeft(close);
+    expect(closePosition.dy, greaterThanOrEqualTo(48));
+    final lastSetting = find.text('忽略八度');
+    expect(lastSetting.hitTestable(), findsNothing);
+    await tester.ensureVisible(lastSetting);
+    await tester.pump();
+    expect(lastSetting.hitTestable(), findsOneWidget);
+    expect(tester.getTopLeft(close), closePosition);
+
+    await tester.tap(close);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(BottomSheet), findsNothing);
+    expect(find.byIcon(Icons.pause_rounded).hitTestable(), findsOneWidget);
+    expect(session.isPlaying, isTrue);
+    expect(leftPractice, isFalse);
+  }, skip: lib == null || lib.isEmpty);
 
   /// Plays the song up to [seconds] with the singer at the microphone.
   Future<void> singUntil(WidgetTester tester, PracticeSession session, double seconds) async {
