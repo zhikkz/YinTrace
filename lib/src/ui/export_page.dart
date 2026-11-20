@@ -11,6 +11,7 @@ import 'package:yintrace_audio/yintrace_audio.dart';
 import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../audio/audio_backend.dart';
+import '../audio/playback_scrub.dart';
 import '../export/mixdown.dart';
 import '../export/recordings.dart';
 import '../library/recording.dart';
@@ -83,13 +84,15 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   double? _progress;
   String? _exported;
   bool _loaded = false;
+  final _scrub = PlaybackScrub();
+  bool _seekingWithSlider = false;
 
   /// Held while the preview plays or an export runs: nobody touches the
   /// screen while listening to four minutes of song, and a locked phone
   /// stops the preview.
   final _awake = ScreenAwake();
 
-  void _syncAwake() => _awake.held = (_engine?.isPlaying ?? false) || _progress != null;
+  void _syncAwake() => _awake.held = _scrub.isPlaying(_engine) || _progress != null;
 
   static const _acc = 0, _dry = 1, _wet = 2;
   static const _sr = 44100;
@@ -189,7 +192,9 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   void _togglePlay() {
     final e = _engine;
     if (e == null) return;
-    if (e.isPlaying) {
+    if (_scrub.active) {
+      _scrub.stayPaused();
+    } else if (e.isPlaying) {
       e.pause();
     } else {
       try {
@@ -214,10 +219,33 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
     setState(() {});
   }
 
+  void _seekPreview(double seconds) => _engine?.seek(Duration(milliseconds: (seconds * 1000).round()));
+
+  void _finishScrub(double? seconds) {
+    _seekingWithSlider = false;
+    final e = _engine;
+    if (e == null || !_scrub.active) return;
+    if (e.takeAudioEvents() & AudioEvents.silencing != 0) {
+      _pausePreview();
+    } else if (seconds == null) {
+      _scrub.cancel(e);
+    } else {
+      _scrub.update(seconds);
+      _scrub.end(e, _seekPreview);
+    }
+    _syncAwake();
+    setState(() {});
+  }
+
+  void _pausePreview() {
+    _scrub.cancel(_engine, resume: false);
+    _engine?.pause();
+  }
+
   void _stopDevice() {
     final e = _engine;
     if (e == null) return;
-    e.pause();
+    _pausePreview();
     if (_deviceOn) {
       try {
         e.stop();
@@ -235,7 +263,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   Future<void> _export() async {
     final meta = _meta, rec = _rec;
     if (meta == null || rec == null || _progress != null) return;
-    _engine?.pause();
+    _pausePreview();
     setState(() => _progress = 0);
     _syncAwake();
     try {
@@ -336,9 +364,9 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
     final p = context.yt;
     final m = rec.mix;
     final e = _engine;
-    final playing = e?.isPlaying ?? false;
+    final playing = _scrub.isPlaying(e);
     final length = math.max(meta.duration, e?.lengthSeconds ?? 0);
-    final pos = (e?.positionSeconds ?? 0).clamp(0.0, length > 0 ? length : 1.0);
+    final pos = (_scrub.position ?? e?.positionSeconds ?? 0).clamp(0.0, length > 0 ? length : 1.0);
     final hasAcc = meta.accompanimentFile != null;
     Widget slider(String title, String value, String? hint, Slider slider) => Padding(
       padding: const EdgeInsets.only(top: 10),
@@ -387,12 +415,23 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Slider(
-                    value: pos.toDouble(),
-                    max: length > 0 ? length : 1,
-                    onChanged: _ready
-                        ? (v) => setState(() => e!.seek(Duration(milliseconds: (v * 1000).round())))
-                        : null,
+                  Listener(
+                    onPointerCancel: (_) => _finishScrub(null),
+                    child: Slider(
+                      value: pos.toDouble(),
+                      max: length > 0 ? length : 1,
+                      onChangeStart: (_) => _seekingWithSlider = _scrub.begin(e),
+                      onChanged: _ready
+                          ? (v) => setState(() {
+                              if (_seekingWithSlider) {
+                                _scrub.update(v);
+                              } else {
+                                _seekPreview(v);
+                              }
+                            })
+                          : null,
+                      onChangeEnd: _finishScrub,
+                    ),
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
