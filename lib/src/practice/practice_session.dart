@@ -131,10 +131,24 @@ class PracticeSession extends ChangeNotifier {
 
   void setMonitorEnabled(bool enabled) {
     _refreshMonitorRoute();
+    final was = _monitorEnabled;
     _monitorEnabled = enabled && _monitorAvailable;
+    if (_monitorEnabled != was && started && !_suspended) {
+      try {
+        NativeAudio.configureSession(record: true, measurement: _measurement);
+      } catch (err) {
+        _log('monitor session mode: $err');
+      }
+    }
     applyMix();
     notifyListeners();
   }
+
+  /// Measurement mode, which keeps iOS's voice processing (AGC, and the
+  /// built-in microphone's processing delay) out of the input, also while
+  /// monitoring: the monitor is only on with wired headphones, where the
+  /// quieter speaker output of that mode does not matter.
+  bool get _measurement => settings.measurementMode || _monitorEnabled;
 
   /// Listening (to the take or the original singer) instead of practising.
   bool get reviewing => _review != null;
@@ -271,7 +285,7 @@ class PracticeSession extends ChangeNotifier {
     );
     e.setTrackGain(TrackSlot.take, kind == ListenKind.take ? 1 : 0);
     _refreshMonitorRoute();
-    e.setMonitorGain(_monitorEnabled && kind == null ? settings.monitorVolume : 0);
+    e.setMonitorGain(_monitorEnabled && kind == null ? settings.monitorGain : 0);
     scorer.options = _scoringOptions();
     final t = _tracker;
     if (t != null) {
@@ -298,9 +312,13 @@ class PracticeSession extends ChangeNotifier {
     _scrub.cancel(e, resume: false);
     _log('play at ${position.toStringAsFixed(1)} s');
     try {
-      NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
+      final measurement = _measurement;
+      NativeAudio.configureSession(record: true, measurement: measurement);
       final events = e.takeAudioEvents();
       if (events & AudioEvents.deviceLost != 0) _monitorEnabled = false;
+      // The headphones went before the monitor could be turned off: not in
+      // measurement mode on the speaker.
+      if (_measurement != measurement) NativeAudio.configureSession(record: true, measurement: _measurement);
       e.flushCapture();
       _tracker?.reset();
       e.start();

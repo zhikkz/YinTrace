@@ -96,9 +96,21 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
     final e = _engine;
     final available = e?.monitorAvailable ?? false;
     final on = available && (enabled ?? _monitor.value.enabled);
-    e?.setMonitorGain(on && !_paused ? _settings.monitorVolume : 0);
+    if (on != _monitor.value.enabled && e != null && !_paused) {
+      // Monitoring runs in measurement mode (see _measurement).
+      try {
+        NativeAudio.configureSession(record: true, measurement: _settings.measurementMode || on);
+      } catch (_) {}
+    }
+    e?.setMonitorGain(on && !_paused ? _settings.monitorGain : 0);
     _monitor.value = (available: available, enabled: on);
   }
+
+  /// Measurement mode keeps iOS's voice processing (AGC, the built-in
+  /// microphone's processing delay) out of the input, also while monitoring
+  /// (wired headphones only, where its quieter speaker output does not
+  /// matter).
+  bool get _measurement => _settings.measurementMode || _monitor.value.enabled;
 
   void _pause({bool deviceLost = false}) {
     _awake.release();
@@ -125,7 +137,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
       return;
     }
     try {
-      NativeAudio.configureSession(record: true, measurement: _settings.measurementMode);
+      NativeAudio.configureSession(record: true, measurement: _measurement);
       final deviceLost = e.takeAudioEvents() & AudioEvents.deviceLost != 0;
       e.flushCapture();
       _tracker?.reset();
@@ -196,21 +208,24 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('耳返（有线耳机）'),
-                    subtitle: Text(available ? '练习时实时听见自己，暂停时静音' : '请连接有线耳机、耳机转接头或 USB 耳机'),
+                    subtitle: Text(
+                      available ? '练习时实时听见自己，暂停时静音；打开时关掉系统的人声处理，延迟更低' : '请连接有线耳机、耳机转接头或 USB 耳机',
+                    ),
                     value: enabled,
                     onChanged: available ? (value) => _applyMonitor(enabled: value) : null,
                   ),
-                  Text('耳返音量 ${(settings.monitorVolume * 100).round()}%'),
+                  Text('耳返音量 ${(settings.monitorLevel * 100).round()}%'),
                   Slider(
-                    value: settings.monitorVolume,
+                    value: settings.monitorLevel,
                     onChanged: enabled
                         ? (value) {
-                            settings.change((s) => s.monitorVolume = value);
+                            settings.change((s) => s.monitorLevel = value);
                             _applyMonitor();
                           }
                         : null,
                     onChangeEnd: (_) => settings.save(),
                   ),
+                  Text('建议从 50% 左右开始：轻声会被自动托起，大声会被压住。听到啸叫时把耳机戴好或调低耳返音量。', style: context.type.bodySmall),
                 ],
               ),
             ),
