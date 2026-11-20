@@ -82,22 +82,63 @@ void main() {
     expect(looped[1].songFrame, 22050);
   }, skip: skip);
 
-  test('monitor bindings mix the dry mic to both ears only during playback', () {
+  // The monitor high-passes the mic, so it is measured with a tone: a
+  // 128-frame period, whole periods in each 256-frame callback.
+  Float32List tone(double amplitude) =>
+      Float32List.fromList([for (var i = 0; i < 256; i++) amplitude * math.sin(2 * math.pi * i / 128)]);
+
+  /// RMS of the left channel of the last of [callbacks] renders.
+  double heard(PracticeEngine e, Float32List mic, {int callbacks = 8}) {
+    var out = Float32List(0);
+    for (var i = 0; i < callbacks; i++) {
+      out = e.render(mic.length, input: mic);
+    }
+    var sum = 0.0;
+    for (var i = 0; i < out.length; i += 2) {
+      expect(out[i + 1], out[i]); // both ears
+      sum += out[i] * out[i];
+    }
+    return math.sqrt(sum / (out.length / 2));
+  }
+
+  test('monitor bindings mix the processed mic to both ears only during playback', () {
     final e = PracticeEngine.create(mode: EngineMode.offline);
     addTearDown(e.dispose);
     expect(e.monitorAvailable, isTrue);
-    e.loadTrackPcm(0, Float32List(512), 1);
-    final mic = Float32List(64)..[7] = 0.4;
-    e.setMonitorGain(0.5);
-    expect(e.render(64, input: mic)[14], 0);
+    e.loadTrackPcm(0, Float32List(44100), 1);
+    final mic = tone(0.1);
+    e.setMonitorGain(4);
+    expect(e.render(256, input: mic), everyElement(0));
     e.flushCapture();
     e.play();
-    final out = e.render(64, input: mic);
-    expect(out[14], closeTo(0.2, 1e-6));
-    expect(out[15], out[14]);
-    expect(e.readCapture().single.samples[7], closeTo(0.4, 1e-6));
+    expect(heard(e, mic), greaterThan(0.05));
+    expect(e.readCapture().last.samples, mic); // the dry mic
     e.pause();
-    expect(e.render(64, input: mic)[14], 0);
+    expect(e.render(256, input: mic), everyElement(0));
+  }, skip: skip);
+
+  test('monitor gain is linear up to maxMonitorGain, then capped', () {
+    double at(double gain) {
+      final e = PracticeEngine.create(mode: EngineMode.offline);
+      try {
+        e.loadTrackPcm(0, Float32List(44100), 1);
+        e.play();
+        e.setMonitorGain(gain);
+        return heard(e, tone(0.005)); // quiet: no compression or limiting
+      } finally {
+        e.dispose();
+      }
+    }
+
+    const max = PracticeEngine.maxMonitorGain;
+    expect(max, 16);
+    final loudest = at(max);
+    expect(loudest, closeTo(0.005 / math.sqrt2 * max, 0.002));
+    expect(at(max * 4), loudest);
+    expect(at(max * 0.95) / loudest, closeTo(0.95, 1e-3));
+    for (final bad in [double.nan, double.infinity, -1.0]) {
+      expect(at(bad), 0);
+    }
   }, skip: skip);
 
   test('an unknown device cannot enable monitoring', () {

@@ -14,6 +14,7 @@ static void sleep_ms(int ms) { usleep(ms * 1000); }
 #endif
 
 #include "../../src/yt_audio.h"
+#include "../../src/yt_monitor.h"  // YT_MONITOR_CEILING, yt_soft_clip
 // The sample-rate bridge of the iOS device (plain C, tested here).
 #define MA_NO_ENGINE
 #define MA_NO_NODE_GRAPH
@@ -117,14 +118,15 @@ static void test_mix_seek_loop(void) {
   got = yt_engine_read_capture(e, cap, 4096, &song, &clock, &flags);
   CHECK(got == 156 && flags == 0);
 
-  // Monitor gain mixes the mic in only while playing.
+  // Monitor gain mixes the mic in while playing (see test_monitoring).
   yt_engine_seek(e, 0);
   yt_engine_set_track_gain(e, 0, 0);
   yt_engine_set_track_gain(e, 1, 0);
   yt_engine_set_playing(e, 1);
-  yt_engine_set_monitor_gain(e, 0.001f);
+  yt_engine_set_monitor_gain(e, 1.0f);
+  for (int i = 0; i < 256; i++) in[i] = 0.1f * sinf(2.0f * 3.14159265f * 440.0f * i / 44100.0f);
   yt_engine_render(e, out, in, 256);
-  CHECK(fabsf(out[2 * 100] - 0.1f) < 1e-4f);
+  CHECK(fabsf(out[2 * 200]) > 1e-4f && out[2 * 200] == out[2 * 200 + 1]);
   yt_engine_flush_capture(e);
   CHECK(yt_engine_read_capture(e, cap, 4096, &song, &clock, &flags) == 0);
 
@@ -285,76 +287,308 @@ static void test_audio_interruption(void) {
   yt_engine_destroy(e);
 }
 
-static void test_monitoring(void) {
+// The monitor's high-pass removes DC, so the monitor tests drive it with a
+// tone (or noise) and compare levels, not single samples. The tone's period
+// is 128 frames, so a 256-frame callback holds whole periods.
+#define MON_FRAMES 256
+#define MON_TRACK_FRAMES (44100 * 4)
+static unsigned noise_seed = 1;
+
+// `rms`: the signal's RMS level (linear).
+static void mic_signal(float* x, int n, int start, float rms, int noise) {
+  for (int i = 0; i < n; i++) {
+    if (noise) {
+      noise_seed = noise_seed * 1664525u + 1013904223u;
+      x[i] = rms * 1.7320508f * ((float)(noise_seed >> 8) / 8388608.0f - 1.0f);
+    } else {
+      x[i] = rms * 1.4142136f * sinf(2.0f * 3.14159265f * (float)((start + i) % 128) / 128.0f);
+    }
+  }
+}
+
+typedef struct {
+  double rms;       // of the left channel minus `base`, over the last callbacks
+  float peak;       // largest |sample| of the whole output
+  int ears_equal;   // both channels identical throughout
+} heard;
+
+// Renders `blocks` callbacks with the mic at `rms` and measures the last
+// `measure` of them.
+static heard listen(yt_engine* e, float rms, int noise, int blocks, int measure, float base) {
+  static int t = 0;
+  float in[MON_FRAMES], out[2 * MON_FRAMES];
+  heard h = {0, 0, 1};
+  double acc = 0;
+  for (int b = 0; b < blocks; b++) {
+    mic_signal(in, MON_FRAMES, t, rms, noise);
+    t += MON_FRAMES;
+    yt_engine_render(e, out, in, MON_FRAMES);
+    for (int i = 0; i < MON_FRAMES; i++) {
+      if (out[2 * i] != out[2 * i + 1]) h.ears_equal = 0;
+      if (fabsf(out[2 * i]) > h.peak) h.peak = fabsf(out[2 * i]);
+      const double v = out[2 * i] - base;
+      if (b >= blocks - measure) acc += v * v;
+    }
+  }
+  h.rms = sqrt(acc / (measure * MON_FRAMES));
+  yt_engine_flush_capture(e);
+  return h;
+}
+
+// One silent callback while paused: the monitor starts clean when it resumes.
+static void pause_briefly(yt_engine* e) {
+  float out[2 * MON_FRAMES], in[MON_FRAMES] = {0};
+  yt_engine_set_playing(e, 0);
+  yt_engine_render(e, out, in, MON_FRAMES);
+  yt_engine_set_playing(e, 1);
+}
+
+// The left channel of `blocks` callbacks of a quiet tone from phase 0.
+static void record_quiet(yt_engine* e, int blocks, float* dst) {
+  float in[MON_FRAMES], out[2 * MON_FRAMES];
+  for (int b = 0; b < blocks; b++) {
+    mic_signal(in, MON_FRAMES, b * MON_FRAMES, 0.005f, 0);
+    yt_engine_render(e, out, in, MON_FRAMES);
+    for (int i = 0; i < MON_FRAMES; i++) dst[b * MON_FRAMES + i] = out[2 * i];
+  }
+  yt_engine_flush_capture(e);
+}
+
+static double db(double v) { return 20.0 * log10(v); }
+
+static yt_engine* monitor_engine(float track_gain) {
+  static float track[MON_TRACK_FRAMES];
+  for (int i = 0; i < MON_TRACK_FRAMES; i++) track[i] = 0.1f;
   char err[256];
   yt_engine* e = yt_engine_create(44100, YT_MODE_OFFLINE, 0, err, sizeof err);
   CHECK(e != NULL && yt_engine_monitor_available(e));
-  float track[256], mic[64] = {0}, out[128], capture[4096];
-  for (int i = 0; i < 256; i++) track[i] = 0.1f;
-  mic[7] = 0.4f;
-  mic[8] = -0.4f;
+  CHECK(yt_engine_load_track_pcm(e, 0, track, MON_TRACK_FRAMES, 1) == 0);
+  yt_engine_set_track_gain(e, 0, track_gain);
+  return e;
+}
+
+static void test_monitoring(void) {
+  yt_engine* e = monitor_engine(1.0f);
+  float in[MON_FRAMES], out[2 * MON_FRAMES], capture[4096];
   int64_t song, clock;
   int32_t flags;
-  CHECK(yt_engine_load_track_pcm(e, 0, track, 256, 1) == 0);
   yt_engine_set_playing(e, 1);
-  // Off by default. The impulse is not in the output.
-  yt_engine_render(e, out, mic, 64);
-  CHECK(fabsf(out[14] - 0.1f) < 1e-3f);
-  yt_engine_flush_capture(e);
-  yt_engine_set_monitor_gain(e, 0.5f);
-  yt_engine_render(e, out, mic, 64);
+  yt_engine_render(e, out, NULL, MON_FRAMES);
+  const float track = out[0];  // the track alone
+  CHECK(fabsf(track - 0.1f) < 1e-3f);
+
+  // Off by default: only the track is heard.
+  heard h = listen(e, 0.05f, 0, 2, 2, track);
+  CHECK(h.rms == 0.0 && h.ears_equal);
+
   // Both ears hear the input in this very callback, mixed with the track.
-  CHECK(fabsf(out[14] - 0.3f) < 1e-3f && out[14] == out[15]);
-  CHECK(fabsf(out[16] + 0.1f) < 1e-3f && out[16] == out[17]);
-  CHECK(yt_engine_read_capture(e, capture, 4096, &song, &clock, &flags) == 64);
-  CHECK(song == 64 && clock == 64 && flags == YT_CAPTURE_FLAG_PLAYING);
-  CHECK(capture[7] == mic[7] && capture[8] == mic[8]); // dry capture, no monitor gain
+  yt_engine_set_monitor_gain(e, 1.0f);
+  mic_signal(in, MON_FRAMES, 0, 0.05f, 0);
+  yt_engine_render(e, out, in, MON_FRAMES);
+  double acc = 0;
+  int same = 1;
+  for (int i = MON_FRAMES / 2; i < MON_FRAMES; i++) {
+    acc += fabs(out[2 * i] - track);
+    same = same && out[2 * i] == out[2 * i + 1];
+  }
+  CHECK(acc > 0.1 && same);
+  // The capture is the dry mic: no high-pass, compression or gain.
+  CHECK(yt_engine_read_capture(e, capture, 4096, &song, &clock, &flags) == MON_FRAMES);
+  CHECK(flags == YT_CAPTURE_FLAG_PLAYING && memcmp(capture, in, sizeof in) == 0);
 
+  // Below the limiter the level follows the gain exactly (the compressor
+  // reads the mic before the gain).
+  yt_engine_set_track_gain(e, 0, 0.0f);
+  yt_engine_set_monitor_gain(e, 4.0f);
+  pause_briefly(e);
+  const double g4 = listen(e, 0.007f, 0, 20, 2, 0.0f).rms;
+  yt_engine_set_monitor_gain(e, 8.0f);
+  h = listen(e, 0.007f, 0, 4, 2, 0.0f);
+  CHECK(fabs(h.rms / g4 - 2.0) < 0.01 && h.ears_equal);
+  printf("monitor: -43 dBFS tone at gain 4 -> %.1f dBFS\n", db(g4));
+
+  // Compression: 20 dB between a quiet (-40 dBFS) and a loud (-20 dBFS)
+  // phrase become about 13.
+  yt_engine_set_monitor_gain(e, 4.0f);
+  pause_briefly(e);
+  const double quiet = listen(e, 0.01f, 0, 40, 4, 0.0f).rms;
+  pause_briefly(e);
+  const double loud = listen(e, 0.1f, 0, 40, 4, 0.0f).rms;
+  printf("monitor: -40/-20 dBFS in -> %.1f/%.1f dBFS out\n", db(quiet), db(loud));
+  CHECK(fabs(db(quiet / (0.01 * 4.0))) < 0.5);  // below the threshold: plain gain
+  CHECK(db(loud / quiet) > 10.0 && db(loud / quiet) < 15.0);
+
+  // Room noise below the expander threshold stays down; a soft voice above
+  // it gets the plain gain.
+  pause_briefly(e);
+  const double noise = listen(e, 0.001f, 1, 80, 40, 0.0f).rms;
+  pause_briefly(e);
+  const double soft = listen(e, 0.0056f, 0, 40, 4, 0.0f).rms;
+  printf("monitor: -60 dBFS noise %+.1f dB, -45 dBFS tone %+.1f dB vs plain gain\n",
+         db(noise / (0.001 * 4.0)), db(soft / (0.0056 * 4.0)));
+  CHECK(db(noise / (0.001 * 4.0)) < -6.0);
+  CHECK(fabs(db(soft / (0.0056 * 4.0))) < 1.0);
+
+  // Full-scale input at the highest gain: the voice is limited to the
+  // ceiling, and with a loud track the sum still stays below full scale.
+  yt_engine_set_monitor_gain(e, YT_MONITOR_MAX_GAIN);
+  h = listen(e, 0.7071068f, 0, 40, 4, 0.0f);
+  CHECK(h.peak <= YT_MONITOR_CEILING + 1e-6f && h.rms > 0.3 && h.ears_equal);
+  h = listen(e, 0.5773503f, 1, 40, 4, 0.0f);  // uniform noise, +-1
+  CHECK(h.peak <= YT_MONITOR_CEILING + 1e-6f && h.ears_equal);
+  yt_engine_set_track_gain(e, 0, 9.0f);  // the track at 0.9
+  h = listen(e, 0.7071068f, 0, 40, 4, 0.0f);
+  CHECK(h.peak < 1.0f && h.peak > YT_SOFT_CLIP_KNEE && h.ears_equal);
+  yt_engine_set_track_gain(e, 0, 1.0f);
+
+  // Pause mutes immediately.
+  yt_engine_set_monitor_gain(e, 4.0f);
+  CHECK(listen(e, 0.05f, 0, 4, 1, track).rms > 0.01);
   yt_engine_set_playing(e, 0);
-  yt_engine_render(e, out, mic, 64);
-  CHECK(out[14] == 0 && out[16] == 0); // pause mutes immediately
+  CHECK(listen(e, 0.05f, 0, 1, 1, 0.0f).peak == 0.0f);
+  // Mute at the natural end, mid-block.
   yt_engine_set_playing(e, 1);
-  yt_engine_seek(e, 248);
-  yt_engine_render(e, out, mic, 64);
-  CHECK(fabsf(out[14] - 0.3f) < 1e-3f && out[16] == 0); // mute at natural end, mid-block
+  yt_engine_seek(e, MON_TRACK_FRAMES - 8);
+  mic_signal(in, 64, 0, 0.05f, 0);
+  yt_engine_render(e, out, in, 64);
+  int silent = 1;
+  for (int i = 2 * 8; i < 2 * 64; i++) silent = silent && out[i] == 0.0f;
+  CHECK(silent && fabsf(out[0] - track) < 1e-2f);
+  CHECK(yt_engine_is_playing(e) == 0);
+  yt_engine_flush_capture(e);
 
+  // Route changes disarm before Dart polls.
   yt_engine_seek(e, 0);
   yt_engine_set_playing(e, 1);
+  CHECK(listen(e, 0.05f, 0, 2, 1, track).rms > 0.01);
   yt_engine_signal_audio_event(e, YT_EVENT_ROUTE_CHANGED);
-  yt_engine_render(e, out, mic, 64);
-  CHECK(fabsf(out[14] - 0.1f) < 1e-3f); // route changes disarm before Dart polls
-  yt_engine_set_monitor_gain(e, 0.5f);
+  CHECK(listen(e, 0.05f, 0, 1, 1, track).rms == 0.0);
+  // A lost device silences everything; restarting does not restore the mic.
+  yt_engine_set_monitor_gain(e, 4.0f);
   yt_engine_signal_audio_event(e, YT_EVENT_DEVICE_LOST);
-  yt_engine_render(e, out, mic, 64);
-  CHECK(out[14] == 0 && out[16] == 0);
+  CHECK(listen(e, 0.05f, 0, 1, 1, 0.0f).peak == 0.0f);
   CHECK(yt_engine_start(e) == 0);
   yt_engine_set_playing(e, 1);
-  yt_engine_render(e, out, mic, 64);
-  CHECK(fabsf(out[14] - 0.1f) < 1e-3f); // restarting does not restore the live mic
+  CHECK(listen(e, 0.05f, 0, 2, 2, track).rms == 0.0);
+  yt_engine_take_audio_events(e);
 
-  // Invalid gains cannot poison the output; values above unity are capped.
-  const float gains[] = {NAN, INFINITY, -1.0f, 2.0f};
-  for (int i = 0; i < 4; i++) {
-    yt_engine_seek(e, 0);
-    yt_engine_set_monitor_gain(e, gains[i]);
-    yt_engine_render(e, out, mic, 64);
-    CHECK(fabsf(out[14] - (i == 3 ? 0.5f : 0.1f)) < 1e-3f);
+  // Invalid gains cannot poison the output: they turn the monitor off.
+  const float bad[] = {NAN, INFINITY, -1.0f};
+  for (int i = 0; i < 3; i++) {
+    yt_engine_set_monitor_gain(e, 4.0f);
+    yt_engine_set_monitor_gain(e, bad[i]);
+    h = listen(e, 0.05f, 0, 2, 2, track);
+    CHECK(h.rms == 0.0 && h.ears_equal);
   }
+
+  // Free practice: heard while capturing only when asked for.
+  yt_engine_set_playing(e, 0);
+  yt_engine_set_monitor_gain(e, 4.0f);
+  CHECK(listen(e, 0.05f, 0, 2, 1, 0.0f).peak == 0.0f);
+  yt_engine_set_monitor_while_capturing(e, 1);
+  CHECK(listen(e, 0.05f, 0, 4, 1, 0.0f).rms > 0.01);
+  yt_engine_set_monitor_while_capturing(e, 0);
+  yt_engine_destroy(e);
+
+  // Gains above the highest are capped; each run starts clean, so equal
+  // gains give identical output.
+  static float a[8 * MON_FRAMES], b[8 * MON_FRAMES];
+  const float gains[] = {YT_MONITOR_MAX_GAIN, 1000.0f, YT_MONITOR_MAX_GAIN * 0.5f};
+  double rms[3];
+  for (int g = 0; g < 3; g++) {
+    e = monitor_engine(0.0f);
+    yt_engine_set_playing(e, 1);
+    yt_engine_set_monitor_gain(e, gains[g]);
+    record_quiet(e, 8, g == 1 ? b : a);
+    const float* x = g == 1 ? b : a;
+    acc = 0;
+    for (int i = 4 * MON_FRAMES; i < 8 * MON_FRAMES; i++) acc += (double)x[i] * x[i];
+    rms[g] = sqrt(acc / (4 * MON_FRAMES));
+    if (g == 1) CHECK(memcmp(a, b, sizeof a) == 0);
+    yt_engine_destroy(e);
+  }
+  CHECK(rms[0] > 0.05 && fabs(rms[2] / rms[0] - 0.5) < 1e-3);
+
+  // No stale state: after a loud phrase and a pause, or after the gain was
+  // cleared and set again between two callbacks (a stop or route change the
+  // audio thread never saw), the monitor sounds exactly like a new engine.
+  yt_engine* fresh = monitor_engine(0.0f);
+  yt_engine_set_playing(fresh, 1);
+  yt_engine_set_monitor_gain(fresh, 4.0f);
+  record_quiet(fresh, 8, a);
+  yt_engine_destroy(fresh);
+  float first = 0, steady = 0;
+  for (int i = 0; i < 16; i++) first = fmaxf(first, fabsf(a[i]));
+  for (int i = 7 * MON_FRAMES; i < 8 * MON_FRAMES; i++) steady = fmaxf(steady, fabsf(a[i]));
+  CHECK(steady > 0.02f && first < 0.05f * steady);  // it fades in, no burst
+  e = monitor_engine(0.0f);
+  yt_engine_set_playing(e, 1);
+  yt_engine_set_monitor_gain(e, 4.0f);
+  listen(e, 0.3f, 0, 20, 1, 0.0f);
+  pause_briefly(e);
+  record_quiet(e, 8, b);
+  CHECK(memcmp(a, b, sizeof a) == 0);
+  listen(e, 0.3f, 0, 20, 1, 0.0f);
+  yt_engine_signal_audio_event(e, YT_EVENT_ROUTE_CHANGED);
+  yt_engine_set_monitor_gain(e, 4.0f);
+  record_quiet(e, 8, b);
+  CHECK(memcmp(a, b, sizeof a) == 0);
   yt_engine_destroy(e);
 
   // A null/unknown output never opens live monitoring.
+  char err[256];
   e = yt_engine_create(44100, YT_MODE_DUPLEX, 1, err, sizeof err);
   CHECK(e != NULL && !yt_engine_monitor_available(e));
-  CHECK(yt_engine_load_track_pcm(e, 0, track, 256, 1) == 0);
+  static float short_track[256];
+  for (int i = 0; i < 256; i++) short_track[i] = 0.1f;
+  CHECK(yt_engine_load_track_pcm(e, 0, short_track, 256, 1) == 0);
   yt_engine_set_monitor_gain(e, 1.0f);
   yt_engine_set_playing(e, 1);
-  yt_engine_render(e, out, mic, 64);
-  CHECK(fabsf(out[14] - 0.1f) < 1e-3f);
+  mic_signal(in, 64, 0, 0.3f, 0);
+  yt_engine_render(e, out, in, 64);
+  CHECK(fabsf(out[14] - 0.1f) < 1e-3f && fabsf(out[100] - 0.1f) < 1e-3f);
   yt_engine_set_playing(e, 0);
   yt_engine_set_monitor_while_capturing(e, 1);
   yt_engine_set_monitor_gain(e, 1.0f);
-  yt_engine_render(e, out, mic, 64);
-  CHECK(out[14] == 0 && out[15] == 0);
+  yt_engine_render(e, out, in, 64);
+  silent = 1;
+  for (int i = 0; i < 128; i++) silent = silent && out[i] == 0.0f;
+  CHECK(silent);
+  yt_engine_destroy(e);
+}
+
+static void test_soft_clip(void) {
+  char err[256];
+  yt_engine* e = yt_engine_create(44100, YT_MODE_OFFLINE, 0, err, sizeof err);
+  CHECK(e != NULL);
+  float track[2 * 1024], out[2 * 16];
+  for (int i = 0; i < 1024; i++) {
+    track[2 * i] = 0.45f;    // stored as int16 14745
+    track[2 * i + 1] = -0.45f;
+  }
+  CHECK(yt_engine_load_track_pcm(e, 0, track, 1024, 2) == 0);
+  yt_engine_set_playing(e, 1);
+  // Exactly transparent up to the knee: what the mix adds up to.
+  const float gains[] = {1.0f, 2.0f};  // 0.45, 0.89996
+  for (int g = 0; g < 2; g++) {
+    yt_engine_set_track_gain(e, 0, gains[g]);
+    yt_engine_render(e, out, NULL, 16);
+    const float expect = 14745.0f * (gains[g] / 32768.0f);
+    CHECK(expect <= YT_SOFT_CLIP_KNEE && out[0] == expect && out[1] == -expect);
+  }
+  // Above it: smooth, monotonic, symmetric, never full scale.
+  float last = YT_SOFT_CLIP_KNEE;
+  const float loud[] = {2.2f, 3.0f, 10.0f, 1e6f, INFINITY};
+  for (int g = 0; g < 5; g++) {
+    yt_engine_set_track_gain(e, 0, loud[g]);
+    yt_engine_render(e, out, NULL, 16);
+    CHECK(out[0] >= last && out[0] <= 1.0f && out[1] == -out[0]);
+    if (g < 3) CHECK(out[0] > last && out[0] < 1.0f && out[0] < 14745.0f * (loud[g] / 32768.0f));
+    last = out[0];
+  }
+  // Just above the knee the slope is still 1: no audible corner.
+  CHECK(fabsf(yt_soft_clip(0.9001f) - 0.9001f) < 1e-6f);
+  CHECK(yt_soft_clip(NAN) == 0.0f);
   yt_engine_destroy(e);
 }
 
@@ -533,6 +767,7 @@ int main(int argc, char** argv) {
   test_null_device();
   test_audio_interruption();
   test_monitoring();
+  test_soft_clip();
   test_rate_bridge();
   test_audio_log();
   test_track_offset();

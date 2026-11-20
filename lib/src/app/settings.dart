@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:yintrace_audio/yintrace_audio.dart' show PracticeEngine;
 
 import 'atomic_file.dart';
 
@@ -32,9 +33,22 @@ class AppSettings extends ChangeNotifier {
   double accompanimentVolume = 0.9;
   double guideVocalVolume = 0.35;
 
-  /// Live microphone monitoring level. Enabling it belongs to each practice
-  /// session, so a new session never opens the live microphone to output.
-  double monitorVolume = 0.5;
+  /// Live microphone monitoring level: the slider position, 0..1, heard as
+  /// [monitorGain]. Enabling it belongs to each practice session, so a new
+  /// session never opens the live microphone to output.
+  double monitorLevel = 0.5;
+
+  /// The engine's monitor gain for [monitorLevel]: a square taper up to
+  /// [PracticeEngine.maxMonitorGain], exactly 0 at 0. The engine compresses
+  /// the voice before this gain (a typical -24 dBFS phone-mic voice comes out
+  /// at about -28.5 dBFS), so 50% (+12 dB) puts it at about -16.5 dBFS, about
+  /// level with an accompaniment at about -14 dBFS. 25% is unity (the old
+  /// maximum), 75% +19 dB and 100% +24 dB, for quiet singers and loud songs;
+  /// the engine limits the peaks. The square keeps the low end fine-grained.
+  double get monitorGain {
+    final v = monitorLevel.isFinite ? monitorLevel.clamp(0.0, 1.0) : 0.0;
+    return PracticeEngine.maxMonitorGain * v * v;
+  }
 
   /// The original singer plays quietly along while practising (导唱), at
   /// [guideVocalVolume]. Off: the accompaniment alone, the volume kept for
@@ -74,8 +88,10 @@ class AppSettings extends ChangeNotifier {
     micGateDb = (j['micGateDb'] as num?)?.toDouble() ?? micGateDb;
     accompanimentVolume = (j['accompanimentVolume'] as num?)?.toDouble() ?? accompanimentVolume;
     guideVocalVolume = (j['guideVocalVolume'] as num?)?.toDouble() ?? guideVocalVolume;
-    final monitor = (j['monitorVolume'] as num?)?.toDouble();
-    if (monitor != null && monitor.isFinite) monitorVolume = monitor.clamp(0.0, 1.0);
+    // The old 'monitorVolume' (a plain 0..1 gain) is ignored: a slider pushed
+    // to the top to hear that quiet monitor would now mean +24 dB.
+    final monitor = (j['monitorLevel'] as num?)?.toDouble();
+    if (monitor != null && monitor.isFinite) monitorLevel = monitor.clamp(0.0, 1.0);
     guideVocalOn = j['guideVocalOn'] as bool? ?? guideVocalOn;
     headphoneTipSeen = j['headphoneTipSeen'] as bool? ?? headphoneTipSeen;
     measurementMode = j['measurementMode'] as bool? ?? measurementMode;
@@ -90,7 +106,7 @@ class AppSettings extends ChangeNotifier {
     'micGateDb': micGateDb,
     'accompanimentVolume': accompanimentVolume,
     'guideVocalVolume': guideVocalVolume,
-    'monitorVolume': monitorVolume,
+    'monitorLevel': monitorLevel,
     'guideVocalOn': guideVocalOn,
     'headphoneTipSeen': headphoneTipSeen,
     'measurementMode': measurementMode,

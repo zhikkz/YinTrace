@@ -129,9 +129,17 @@ YT_EXPORT void yt_engine_set_track_gain(yt_engine* engine, int32_t slot,
 // Whether this engine can monitor to a wired output (iOS headphones/USB).
 // False on unsupported platforms and null devices; true offline for tests.
 YT_EXPORT int32_t yt_engine_monitor_available(yt_engine* engine);
-// Mixes the microphone straight into stereo output (0 = off, 1 = unity).
-// Unavailable routes reject the gain. Route changes and stops clear it;
-// the control thread must check the route before reapplying it.
+// Highest monitor gain, +24 dB. A phone mic hears singing at about
+// -35..-15 dBFS RMS, 10-20 dB under a mastered accompaniment; the monitor
+// chain compresses the voice and limits its peaks, so this much is safe.
+#define YT_MONITOR_MAX_GAIN 16.0f
+// Mixes the microphone into both output channels through the monitor chain
+// (80 Hz high-pass, compressor, noise expander, peak limiter; see
+// yt_monitor.h). `gain` is the linear gain after compression: 0 = off up to
+// YT_MONITOR_MAX_GAIN; NaN, infinite or negative values mean off, larger
+// ones are capped. Unavailable routes reject the gain. Route changes and
+// stops clear it; the control thread must check the route before
+// reapplying it. Captured audio stays the dry microphone.
 YT_EXPORT void yt_engine_set_monitor_gain(yt_engine* engine, float gain);
 // Allows monitoring during capture even when no track is playing. By
 // default the gain is heard only during track playback.
