@@ -314,6 +314,7 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
             onPressed: () => showModalBottomSheet<void>(
               context: context,
               isScrollControlled: true,
+              useSafeArea: true,
               builder: (_) => _MixSheet(session: _session),
             ),
           ),
@@ -1095,13 +1096,12 @@ class _MixSheetState extends State<_MixSheet> {
       ),
     );
 
-    return SafeArea(
+    final scrollableOptions = Flexible(
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('练习设置', style: context.type.headlineSmall),
             slider(
               '伴奏',
               '${(s.accompanimentVolume * 100).round()}%',
@@ -1194,6 +1194,23 @@ class _MixSheetState extends State<_MixSheet> {
             ],
           ],
         ),
+      ),
+    );
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                Expanded(child: Text('练习设置', style: context.type.headlineSmall)),
+                const CloseButton(),
+              ],
+            ),
+          ),
+          scrollableOptions,
+        ],
       ),
     );
   }
