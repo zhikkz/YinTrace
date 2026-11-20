@@ -1144,7 +1144,7 @@ class _MixSheetState extends State<_MixSheet> {
                 onChangeEnd: dragEnd,
               ),
             ),
-            Text('建议从 50% 左右开始。轻声会被自动托起，大声会被压住，不会爆音。', style: context.type.bodySmall),
+            Text('建议从 50% 左右开始：轻声会被自动托起，大声会被压住。听到啸叫时把耳机戴好或调低耳返音量。', style: context.type.bodySmall),
             slider(
               '音准容差',
               '±${s.toleranceCents} 音分',
@@ -1170,7 +1170,8 @@ class _MixSheetState extends State<_MixSheet> {
               ),
             ),
             Text(
-              '系统测得的延迟 ${(widget.session.latency * 1000).round()} ms。你的音高线总比原唱靠右时，把补偿调大。',
+              '系统测得的延迟 ${(widget.session.latency * 1000 - s.latencyOffsetMs).round()} ms，加上补偿共 ${(widget.session.latency * 1000).round()} ms。'
+              '你的音高线总比原唱靠右时，把补偿调大。',
               style: context.type.bodySmall,
             ),
             const SizedBox(height: 6),

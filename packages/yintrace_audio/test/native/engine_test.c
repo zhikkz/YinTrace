@@ -438,8 +438,11 @@ static void test_monitoring(void) {
   CHECK(h.peak <= YT_MONITOR_CEILING + 1e-6f && h.ears_equal);
   yt_engine_set_track_gain(e, 0, 9.0f);  // the track at 0.9
   h = listen(e, 0.7071068f, 0, 40, 4, 0.0f);
-  CHECK(h.peak < 1.0f && h.peak > YT_SOFT_CLIP_KNEE && h.ears_equal);
+  CHECK(h.peak <= YT_BUS_CEILING + 1e-6f && h.peak > 0.85f && h.ears_equal);  // the mix limiter
   yt_engine_set_track_gain(e, 0, 1.0f);
+  // The mix limiter recovers to exactly unity within about 0.7 s.
+  yt_engine_set_monitor_gain(e, 0.0f);
+  listen(e, 0.0f, 0, 200, 1, track);
 
   // Pause mutes immediately.
   yt_engine_set_monitor_gain(e, 4.0f);
@@ -558,37 +561,69 @@ static void test_monitoring(void) {
 }
 
 static void test_soft_clip(void) {
+  // The last resort after the mix limiter: transparent up to the knee,
+  // then smooth, monotonic, symmetric and never full scale.
+  CHECK(yt_soft_clip(0.45f) == 0.45f && yt_soft_clip(-0.9f) == -0.9f);
+  CHECK(fabsf(yt_soft_clip(0.9001f) - 0.9001f) < 1e-6f);  // slope 1 at the knee
+  float last = YT_SOFT_CLIP_KNEE;
+  const float loud[] = {0.95f, 1.2f, 3.0f, 10.0f, 1000.0f};
+  for (int g = 0; g < 5; g++) {
+    const float y = yt_soft_clip(loud[g]);
+    CHECK(y > last && y < 1.0f && y < loud[g] && yt_soft_clip(-loud[g]) == -y);
+    last = y;
+  }
+  CHECK(yt_soft_clip(INFINITY) == 1.0f && yt_soft_clip(-INFINITY) == -1.0f);
+  CHECK(yt_soft_clip(NAN) == 0.0f);
+}
+
+// Tracks plus the monitor go through a limiter at YT_BUS_CEILING: bit for
+// bit below it, at most the ceiling above it (both channels by the same
+// gain), and back to exactly unity once the mix is quiet again.
+static void test_bus_limiter(void) {
   char err[256];
   yt_engine* e = yt_engine_create(44100, YT_MODE_OFFLINE, 0, err, sizeof err);
   CHECK(e != NULL);
-  float track[2 * 1024], out[2 * 16];
-  for (int i = 0; i < 1024; i++) {
-    track[2 * i] = 0.45f;    // stored as int16 14745
-    track[2 * i + 1] = -0.45f;
+  enum { N = 3 * 44100 };  // longer than the test plays
+  static float track[2 * N], out[2 * 512];
+  for (int i = 0; i < N; i++) {
+    const float v = 0.5f * sinf(2.0f * 3.14159265f * 110.0f * i / 44100.0f);
+    track[2 * i] = v;
+    track[2 * i + 1] = -0.5f * v;
   }
-  CHECK(yt_engine_load_track_pcm(e, 0, track, 1024, 2) == 0);
+  CHECK(yt_engine_load_track_pcm(e, 0, track, N, 2) == 0);
   yt_engine_set_playing(e, 1);
-  // Exactly transparent up to the knee: what the mix adds up to.
-  const float gains[] = {1.0f, 2.0f};  // 0.45, 0.89996
-  for (int g = 0; g < 2; g++) {
-    yt_engine_set_track_gain(e, 0, gains[g]);
-    yt_engine_render(e, out, NULL, 16);
-    const float expect = 14745.0f * (gains[g] / 32768.0f);
-    CHECK(expect <= YT_SOFT_CLIP_KNEE && out[0] == expect && out[1] == -expect);
+  // Quiet: untouched (as stored, int16).
+  yt_engine_render(e, out, NULL, 512);
+  int exact = 1;
+  for (int i = 0; i < 512; i++) {
+    const float l = (float)(int16_t)lrintf(track[2 * i] * 32767.0f) / 32768.0f;
+    exact &= fabsf(out[2 * i] - l) <= 1.0f / 32768.0f;  // one LSB of the int16 track
   }
-  // Above it: smooth, monotonic, symmetric, never full scale.
-  float last = YT_SOFT_CLIP_KNEE;
-  const float loud[] = {2.2f, 3.0f, 10.0f, 1e6f, INFINITY};
-  for (int g = 0; g < 5; g++) {
-    yt_engine_set_track_gain(e, 0, loud[g]);
-    yt_engine_render(e, out, NULL, 16);
-    CHECK(out[0] >= last && out[0] <= 1.0f && out[1] == -out[0]);
-    if (g < 3) CHECK(out[0] > last && out[0] < 1.0f && out[0] < 14745.0f * (loud[g] / 32768.0f));
-    last = out[0];
+  CHECK(exact);
+  // Three times too loud: limited, the channels keep their balance.
+  yt_engine_set_track_gain(e, 0, 5.0f);
+  float peak = 0.0f;
+  int balanced = 1;
+  for (int b = 0; b < 20; b++) {
+    yt_engine_render(e, out, NULL, 512);
+    for (int i = 0; i < 512; i++) {
+      peak = fmaxf(peak, fmaxf(fabsf(out[2 * i]), fabsf(out[2 * i + 1])));
+      if (fabsf(out[2 * i]) > 0.05f) balanced &= fabsf(out[2 * i + 1] / out[2 * i] + 0.5f) < 1e-3f;
+    }
   }
-  // Just above the knee the slope is still 1: no audible corner.
-  CHECK(fabsf(yt_soft_clip(0.9001f) - 0.9001f) < 1e-6f);
-  CHECK(yt_soft_clip(NAN) == 0.0f);
+  CHECK(peak <= YT_BUS_CEILING + 1e-6f && peak > 0.85f);
+  CHECK(balanced);
+  // Quiet again: within a second the gain is exactly 1 again.
+  yt_engine_set_track_gain(e, 0, 1.0f);
+  for (int b = 0; b < 80; b++) yt_engine_render(e, out, NULL, 512);
+  const int64_t pos = yt_engine_position(e);
+  yt_engine_render(e, out, NULL, 512);
+  exact = 1;
+  for (int i = 0; i < 512; i++) {
+    const float l = (float)(int16_t)lrintf(track[2 * ((pos + i) % N)] * 32767.0f) / 32768.0f;
+    exact &= fabsf(out[2 * i] - l) <= 1.0f / 32768.0f;  // one LSB of the int16 track
+  }
+  CHECK(exact);
   yt_engine_destroy(e);
 }
 
@@ -768,6 +803,7 @@ int main(int argc, char** argv) {
   test_audio_interruption();
   test_monitoring();
   test_soft_clip();
+  test_bus_limiter();
   test_rate_bridge();
   test_audio_log();
   test_track_offset();
