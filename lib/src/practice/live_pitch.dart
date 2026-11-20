@@ -487,7 +487,8 @@ class LivePitchTracker {
       if (_clearHeld >= _onsetFrames) _confirm(out);
       return;
     }
-    if (canHold) {
+    // Keep known background tones out of the frames that may become an attack.
+    if (canHold && !tone) {
       _lead.add(f);
       _flushLead(out, _leadFrames);
       return;
