@@ -353,6 +353,7 @@ static int32_t yt_platform_device_period_frames(yt_engine* e) {
   (void)e;
   return 0;
 }
+static void yt_platform_device_maintain(yt_engine* e) { (void)e; }
 #endif
 
 static void yt_track_lock(yt_engine* e) {
@@ -544,7 +545,11 @@ void yt_engine_signal_audio_event(yt_engine* e, int32_t events) {
 }
 
 int32_t yt_engine_take_audio_events(yt_engine* e) {
-  return e ? (int32_t)ma_atomic_exchange_32(&e->audio_events, 0) : 0;
+  if (e == NULL) return 0;
+  // The control thread polls this every UI frame: the platform device
+  // rebuilds itself here when it has to (yt_device_ios.inc).
+  if (e->platform_device != NULL) yt_platform_device_maintain(e);
+  return (int32_t)ma_atomic_exchange_32(&e->audio_events, 0);
 }
 
 static void yt_device_notification(const ma_device_notification* notification) {

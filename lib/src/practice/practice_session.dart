@@ -131,10 +131,24 @@ class PracticeSession extends ChangeNotifier {
 
   void setMonitorEnabled(bool enabled) {
     _refreshMonitorRoute();
+    final was = _monitorEnabled;
     _monitorEnabled = enabled && _monitorAvailable;
+    if (_monitorEnabled != was && started && !_suspended) {
+      try {
+        NativeAudio.configureSession(record: true, measurement: _measurement);
+      } catch (err) {
+        _log('monitor session mode: $err');
+      }
+    }
     applyMix();
     notifyListeners();
   }
+
+  /// Measurement mode, which keeps iOS's voice processing (AGC, and the
+  /// built-in microphone's processing delay) out of the input, also while
+  /// monitoring: the monitor is only on with wired headphones, where the
+  /// quieter speaker output of that mode does not matter.
+  bool get _measurement => settings.measurementMode || _monitorEnabled;
 
   /// Listening (to the take or the original singer) instead of practising.
   bool get reviewing => _review != null;
@@ -298,7 +312,7 @@ class PracticeSession extends ChangeNotifier {
     _scrub.cancel(e, resume: false);
     _log('play at ${position.toStringAsFixed(1)} s');
     try {
-      NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
+      NativeAudio.configureSession(record: true, measurement: _measurement);
       final events = e.takeAudioEvents();
       if (events & AudioEvents.deviceLost != 0) _monitorEnabled = false;
       e.flushCapture();

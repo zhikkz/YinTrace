@@ -1129,7 +1129,7 @@ class _MixSheetState extends State<_MixSheet> {
               title: const Text('耳返（有线耳机）'),
               subtitle: Text(
                 widget.session.monitorAvailable
-                    ? '练习播放时实时听见自己；暂停、听原唱或回听时静音'
+                    ? '练习播放时实时听见自己，暂停、听原唱或回听时静音；打开时关掉系统的人声处理，延迟更低'
                     : '请连接有线耳机、耳机转接头或 USB 耳机；蓝牙和外放不可用',
               ),
               value: widget.session.monitorEnabled,

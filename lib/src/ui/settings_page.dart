@@ -150,7 +150,8 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               _Footnote(
                 '你的音高线总比原唱靠右，就把延迟补偿调大；蓝牙耳机通常要 +150 到 +250 ms。'
-                '环境吵、音高线乱跳时，把麦克风门限调高。',
+                '练习时会自动跟着房间里的噪音调整，电器的嗡嗡声、敲击和打字声、比你小声很多的电视和说话声不会当成你在唱；'
+                '仍然乱跳时再把麦克风门限调高。',
               ),
               // Test builds only (isTestBuild): not compiled into releases.
               if (isTestBuild) ...[

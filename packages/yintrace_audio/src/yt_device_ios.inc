@@ -14,14 +14,22 @@
 // The unit runs at the hardware's sample rate (most iPhones keep 48 kHz
 // whatever an app prefers, and RemoteIO is not reliable converting on the
 // input side); yt_rate_bridge.h converts to and from the engine's 44.1 kHz
-// in the callback. When the hardware rate changes (another route), the next
-// start builds the unit again at the new rate; until then RemoteIO converts.
+// in the callback. When the hardware rate changes (another route), the unit
+// is built again at the new rate; until then RemoteIO converts.
+//
+// The control thread also rebuilds a unit that stopped calling back for a
+// second or has not had the microphone for half a second (iOS 14+ Sound Recognition and
+// route reconfigurations have been seen to leave RemoteIO "running" but
+// silent); see yt_platform_device_maintain(), run from
+// yt_engine_take_audio_events() on every UI frame.
 //
 // Threads: the render callback runs on the real-time I/O thread and only
 // touches engine atomics and preallocated buffers. Start, stop, rebuild and
 // teardown run on the control thread (the Dart isolate). Notification
 // observers (interruptions, media services reset) only set flags and signal
 // engine events.
+
+#include <unistd.h>
 
 #include "yt_rate_bridge.h"
 
@@ -41,9 +49,17 @@ typedef struct {
   float* output;  // interleaved stereo scratch, YT_RIO_MAX_FRAMES
   volatile ma_uint32 input_errors;  // cycles without the microphone (audio thread)
   volatile ma_int32 last_input_error;
+  volatile ma_uint32 failing;       // consecutive cycles without it (audio thread)
   volatile ma_uint32 frames;        // size of the last cycle
+  volatile ma_uint32 heartbeat;     // callbacks so far (audio thread)
   volatile ma_uint32 restart;       // the system stopped the I/O (an interruption)
   volatile ma_uint32 rebuild;       // media services were reset: the unit is dead
+  volatile ma_uint32 rate_changed;  // the hardware runs at another rate now
+  // Watchdog, control thread only.
+  ma_uint32 seen_heartbeat;
+  double seen_at;      // systemUptime when the heartbeat last moved (or the unit started)
+  double rebuilt_at;   // last rebuild by the watchdog
+  int rebuilds;        // by the watchdog since the last start
 } yt_rio;
 
 // Renders `frames` device frames of engine output (with this cycle's
@@ -82,9 +98,13 @@ static OSStatus yt_rio_render(void* ref, AudioUnitRenderActionFlags* flags, cons
     // silence keeps the capture stream and its song tags continuous.
     memset(r->input, 0, (size_t)frames * sizeof(float));
     ma_atomic_fetch_add_32(&r->input_errors, 1);
+    ma_atomic_fetch_add_32(&r->failing, 1);
     ma_atomic_store_i32(&r->last_input_error, (ma_int32)st);
+  } else {
+    ma_atomic_store_32(&r->failing, 0);
   }
   ma_atomic_store_32(&r->frames, frames);
+  ma_atomic_fetch_add_32(&r->heartbeat, 1);
 
   // The client format is interleaved stereo float: one buffer, two channels.
   if (io->mNumberBuffers == 1 && io->mBuffers[0].mNumberChannels == 2 && io->mBuffers[0].mData != NULL &&
@@ -118,19 +138,43 @@ static void yt_rio_running_changed(void* ref, AudioUnit unit, AudioUnitPropertyI
   (void)id;
   (void)scope;
   (void)element;
-  UInt32 running = 0;
+  // `running_requested` stays set until the control thread asks to stop, so
+  // a stop we asked for is never mistaken for the system's, however late
+  // Core Audio reports it. During our own stop and teardown no audio unit
+  // call is made here (querying a unit being disposed can deadlock).
+  if (!ma_atomic_load_32(&r->engine->running_requested)) return;
+  UInt32 running = 1;
   UInt32 size = sizeof(running);
   if (AudioUnitGetProperty(unit, kAudioOutputUnitProperty_IsRunning, kAudioUnitScope_Global, 0, &running,
                            &size) != noErr) {
     return;
   }
-  // `running_requested` stays set until the control thread asks to stop, so
-  // a stop we asked for is never mistaken for the system's, however late
-  // Core Audio reports it.
-  if (!running && ma_atomic_load_32(&r->engine->running_requested)) {
+  if (!running) {
     yt_audio_log_add("device: stopped by the system");
     ma_atomic_store_32(&r->restart, 1);
+    // Until the next start: the watchdog leaves a stopped unit alone.
+    ma_atomic_store_32(&r->engine->running_requested, 0);
     yt_engine_signal_audio_event(r->engine, YT_EVENT_STOPPED);
+  }
+}
+
+// Called by Core Audio (any thread) when a stream format changes: on the
+// hardware side (output element's output scope, input element's input
+// scope) that is a new hardware rate after a route change. The control
+// thread then builds the unit again for it.
+static void yt_rio_format_changed(void* ref, AudioUnit unit, AudioUnitPropertyID id, AudioUnitScope scope,
+                                  AudioUnitElement element) {
+  yt_rio* r = (yt_rio*)ref;
+  (void)id;
+  if (!ma_atomic_load_32(&r->engine->running_requested)) return;
+  const int hardware_side = (scope == kAudioUnitScope_Output && element == YT_RIO_OUTPUT_BUS) ||
+                            (scope == kAudioUnitScope_Input && element == YT_RIO_INPUT_BUS);
+  if (!hardware_side) return;
+  AudioStreamBasicDescription f;
+  UInt32 size = sizeof(f);
+  if (AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat, scope, element, &f, &size) != noErr) return;
+  if (f.mSampleRate >= 8000.0 && fabs(f.mSampleRate - (double)r->device_rate) > 0.5) {
+    ma_atomic_store_32(&r->rate_changed, 1);
   }
 }
 
@@ -145,6 +189,7 @@ static void yt_rio_teardown(yt_rio* r) {
     AudioOutputUnitStop(r->unit);
     AudioUnitRemovePropertyListenerWithUserData(r->unit, kAudioOutputUnitProperty_IsRunning, yt_rio_running_changed,
                                                 r);
+    AudioUnitRemovePropertyListenerWithUserData(r->unit, kAudioUnitProperty_StreamFormat, yt_rio_format_changed, r);
     AudioUnitUninitialize(r->unit);
     AudioComponentInstanceDispose(r->unit);
     r->unit = NULL;
@@ -210,9 +255,20 @@ static const char* yt_rio_create_unit(yt_rio* r, ma_uint32 rate) {
                      noErr) {
     failed = "cannot watch the running state";
   }
-  if (!failed && AudioUnitInitialize(unit) != noErr) failed = "cannot initialize RemoteIO";
+  // Optional: without it a new hardware rate is caught at the next start.
+  if (!failed) AudioUnitAddPropertyListener(unit, kAudioUnitProperty_StreamFormat, yt_rio_format_changed, r);
+  if (!failed) {
+    // Back-to-back initialisations can fail for a moment (seen as -66635).
+    OSStatus st = AudioUnitInitialize(unit);
+    for (int attempt = 0; st != noErr && attempt < 3; attempt++) {
+      usleep(50000);
+      st = AudioUnitInitialize(unit);
+    }
+    if (st != noErr) failed = "cannot initialize RemoteIO";
+  }
   if (failed) {
     AudioUnitRemovePropertyListenerWithUserData(unit, kAudioOutputUnitProperty_IsRunning, yt_rio_running_changed, r);
+    AudioUnitRemovePropertyListenerWithUserData(unit, kAudioUnitProperty_StreamFormat, yt_rio_format_changed, r);
     AudioComponentInstanceDispose(unit);
     return failed;
   }
@@ -235,6 +291,8 @@ static const char* yt_rio_setup(yt_rio* r) {
   ma_uint32 rate = yt_rio_hardware_rate();
   if (rate == 0) rate = engine_rate;
   r->device_rate = rate;
+  ma_atomic_store_32(&r->rate_changed, 0);
+  ma_atomic_store_32(&r->failing, 0);
   const char* failed = yt_rio_create_unit(r, rate);
   if (failed != NULL) return failed;
   if (rate != engine_rate) {
@@ -289,7 +347,8 @@ static int32_t yt_platform_device_start(yt_engine* e) {
     // own conversion.
     ma_uint32 rate = yt_rio_hardware_rate();
     int reset = ma_atomic_exchange_32(&r->rebuild, 0) != 0;
-    if (reset || r->unit == NULL || (rate != 0 && rate != r->device_rate)) {
+    int moved = ma_atomic_load_32(&r->rate_changed) != 0 || (rate != 0 && rate != r->device_rate);
+    if (reset || r->unit == NULL || moved) {
       ma_atomic_store_32(&e->running_requested, 0);
       yt_rio_teardown(r);
       ma_atomic_store_32(&r->restart, 0);
@@ -319,7 +378,73 @@ static int32_t yt_platform_device_start(yt_engine* e) {
     yt_audio_log_add(line);
     return -2;
   }
+  // The watchdog counts from here.
+  r->seen_heartbeat = ma_atomic_load_32(&r->heartbeat);
+  r->seen_at = [NSProcessInfo processInfo].systemUptime;
+  r->rebuilds = 0;
   return 0;
+}
+
+// Control thread, every UI frame (yt_engine_take_audio_events): builds the
+// unit again when the hardware rate changed, when callbacks stopped coming
+// for half a second, or when the microphone failed for half a second, and
+// starts it again. A few rebuilds that do not help end in a stop the user
+// sees (YT_EVENT_STOPPED), not in a loop.
+static void yt_platform_device_maintain(yt_engine* e) {
+  yt_rio* r = (yt_rio*)e->platform_device;
+  if (r == NULL || r->unit == NULL || !ma_atomic_load_32(&e->running_requested)) return;
+  const double now = [NSProcessInfo processInfo].systemUptime;
+  const ma_uint32 beat = ma_atomic_load_32(&r->heartbeat);
+  if (beat != r->seen_heartbeat) {
+    r->seen_heartbeat = beat;
+    r->seen_at = now;
+  }
+  const char* why = NULL;
+  const ma_uint32 frames = ma_atomic_load_32(&r->frames);
+  const double failing_s =
+      r->device_rate > 0 ? (double)ma_atomic_load_32(&r->failing) * (double)frames / (double)r->device_rate : 0.0;
+  if (ma_atomic_load_32(&r->rate_changed)) {
+    why = "new rate";
+  } else if (now - r->seen_at > 1.0) {
+    why = "no callbacks";
+  } else if (failing_s > 0.5) {
+    why = "no microphone";
+  }
+  if (why == NULL) return;
+  if (r->rebuilds >= 3 && now - r->rebuilt_at < 10.0) {
+    // Not getting better: stop and let the user try again.
+    yt_audio_log_add("rio: still failing after rebuilds, stopping");
+    ma_atomic_store_32(&e->running_requested, 0);
+    AudioOutputUnitStop(r->unit);
+    yt_engine_signal_audio_event(e, YT_EVENT_STOPPED);
+    return;
+  }
+  ma_atomic_store_32(&e->running_requested, 0);
+  yt_rio_teardown(r);
+  const char* failed = NULL;
+  @autoreleasepool {
+    failed = yt_rio_setup(r);
+    if (failed == NULL) {
+      char line[64];
+      snprintf(line, sizeof(line), "rebuilt (%s)", why);
+      yt_rio_log_route(r, line);
+    }
+  }
+  r->rebuilds++;
+  r->rebuilt_at = now;
+  if (failed != NULL || AudioOutputUnitStart(r->unit) != noErr) {
+    char line[112];
+    snprintf(line, sizeof(line), "rio: rebuild failed (%s)", failed != NULL ? failed : "start");
+    yt_audio_log_add(line);
+    ma_atomic_store_32(&r->rebuild, 1);  // try again on the next start
+    yt_engine_signal_audio_event(e, YT_EVENT_STOPPED);
+    return;
+  }
+  ma_atomic_store_32(&e->running_requested, 1);
+  r->seen_heartbeat = ma_atomic_load_32(&r->heartbeat);
+  r->seen_at = now;
+  // The latency compensation and the monitor route are read again.
+  yt_engine_signal_audio_event(e, YT_EVENT_ROUTE_CHANGED);
 }
 
 static int32_t yt_platform_device_stop(yt_engine* e) {
@@ -354,12 +479,17 @@ static void yt_platform_device_uninit(yt_engine* e) {
   yt_rio_free(r);
 }
 
+// In engine frames: what the callbacks actually get once running (iOS 18
+// has been seen to report a stale IOBufferDuration), the session's buffer
+// before that.
 static int32_t yt_platform_device_period_frames(yt_engine* e) {
   yt_rio* r = (yt_rio*)e->platform_device;
-  double seconds = [AVAudioSession sharedInstance].IOBufferDuration;
-  if (seconds > 0) return (int32_t)lround(seconds * (double)e->sample_rate);
-  ma_uint32 frames = ma_atomic_load_32(&r->frames);
-  return r->device_rate > 0 ? (int32_t)((ma_uint64)frames * (ma_uint64)e->sample_rate / r->device_rate) : 0;
+  const ma_uint32 frames = ma_atomic_load_32(&r->frames);
+  if (frames > 0 && r->device_rate > 0) {
+    return (int32_t)(((ma_uint64)frames * (ma_uint64)e->sample_rate + r->device_rate / 2) / r->device_rate);
+  }
+  const double seconds = [AVAudioSession sharedInstance].IOBufferDuration;
+  return seconds > 0 ? (int32_t)lround(seconds * (double)e->sample_rate) : 0;
 }
 
 // Observers (yt_platform_apple.inc), under the route lock.
@@ -368,6 +498,7 @@ static void yt_platform_device_interrupted(yt_engine* e, int began) {
   if (r == NULL) return;  // miniaudio reports its own interruptions
   if (began) {
     ma_atomic_store_32(&r->restart, 1);
+    ma_atomic_store_32(&e->running_requested, 0);  // no watchdog rebuilds during a call
     yt_engine_signal_audio_event(e, YT_EVENT_STOPPED);
   } else {
     yt_engine_signal_audio_event(e, YT_EVENT_INTERRUPTION_ENDED);
@@ -378,5 +509,6 @@ static void yt_platform_device_media_reset(yt_engine* e) {
   yt_rio* r = (yt_rio*)e->platform_device;
   if (r == NULL) return;
   ma_atomic_store_32(&r->rebuild, 1);
+  ma_atomic_store_32(&e->running_requested, 0);
   yt_engine_signal_audio_event(e, YT_EVENT_STOPPED);
 }
