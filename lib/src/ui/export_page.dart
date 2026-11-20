@@ -221,12 +221,14 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
 
   void _seekPreview(double seconds) => _engine?.seek(Duration(milliseconds: (seconds * 1000).round()));
 
-  void _finishScrub(double seconds) {
+  void _finishScrub(double? seconds) {
     _seekingWithSlider = false;
     final e = _engine;
     if (e == null || !_scrub.active) return;
     if (e.takeAudioEvents() & AudioEvents.silencing != 0) {
       _pausePreview();
+    } else if (seconds == null) {
+      _scrub.cancel(e);
     } else {
       _scrub.update(seconds);
       _scrub.end(e, _seekPreview);
@@ -413,20 +415,23 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Slider(
-                    value: pos.toDouble(),
-                    max: length > 0 ? length : 1,
-                    onChangeStart: (_) => _seekingWithSlider = _scrub.begin(e),
-                    onChanged: _ready
-                        ? (v) => setState(() {
-                            if (_seekingWithSlider) {
-                              _scrub.update(v);
-                            } else {
-                              _seekPreview(v);
-                            }
-                          })
-                        : null,
-                    onChangeEnd: _finishScrub,
+                  Listener(
+                    onPointerCancel: (_) => _finishScrub(null),
+                    child: Slider(
+                      value: pos.toDouble(),
+                      max: length > 0 ? length : 1,
+                      onChangeStart: (_) => _seekingWithSlider = _scrub.begin(e),
+                      onChanged: _ready
+                          ? (v) => setState(() {
+                              if (_seekingWithSlider) {
+                                _scrub.update(v);
+                              } else {
+                                _seekPreview(v);
+                              }
+                            })
+                          : null,
+                      onChangeEnd: _finishScrub,
+                    ),
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),

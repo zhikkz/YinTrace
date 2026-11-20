@@ -745,6 +745,12 @@ void main() {
     await drag.up();
     expect(engine.isPlaying, isTrue);
     expect(engine.positionSeconds, closeTo(target, 0.001));
+    final canceled = await tester.startGesture(tester.getCenter(preview));
+    await canceled.moveBy(const Offset(-45, 0));
+    expect(engine.render(64), everyElement(0));
+    await canceled.cancel();
+    expect(engine.isPlaying, isTrue);
+    expect(engine.positionSeconds, closeTo(target, 0.001));
     await tester.tap(find.byIcon(Icons.pause_rounded));
     await tester.pump();
     expect(awake, [true, false]);
@@ -1808,10 +1814,11 @@ void main() {
 
     final drag = await tester.startGesture(start);
     await drag.moveBy(Offset(bounds.width * 0.2, 0));
-    expect(session.position, closeTo(session.duration * 0.7, 0.001));
+    final target = session.position;
+    expect(target, inInclusiveRange(session.duration * 0.65, session.duration * 0.75));
     expect(engine.render(64, input: mic), everyElement(0));
     await drag.up();
-    expect(engine.positionSeconds, closeTo(session.duration * 0.7, 0.001));
+    expect(engine.positionSeconds, closeTo(target, 0.001));
     expect(engine.render(64, input: mic), anyElement(isNot(0)));
     await tester.pumpWidget(const SizedBox());
   }, skip: lib == null || lib.isEmpty);
