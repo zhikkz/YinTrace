@@ -328,6 +328,7 @@ void main() {
       final detected = (await stored()).notes.first.midi;
       await screenshot(tester, '2b_pitch_editor');
       await tester.tap(find.text('修改拼音'));
+      await settleIo(tester, rounds: 15);
       await tester.pumpAndSettle();
       expect(find.text('修改「记」的拼音'), findsOneWidget);
       expect(find.text('自动读音：ji'), findsOneWidget);
@@ -768,6 +769,10 @@ void main() {
     await tester.pump();
     await tester.scrollUntilVisible(find.text('导出成品'), 300, scrollable: find.byType(Scrollable).first);
     await tester.tap(find.text('导出成品'));
+    await tester.pumpAndSettle();
+    expect(find.text('版权提示'), findsOneWidget);
+    expect(shared, isNull);
+    await tester.tap(find.text('确认并导出及分享'));
     await settleIo(tester, rounds: 20);
     expect(shared, isNotNull);
     expect(File(shared!).existsSync(), isTrue);
@@ -1032,14 +1037,28 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.text('导出歌曲文件'));
-    await settleIo(tester, rounds: 5);
     final file = '${out.path}/夜航（示例） - 演示.yintrace';
+    await tester.tap(find.text('导出歌曲文件'));
+    await tester.pumpAndSettle();
+    expect(find.text('版权提示'), findsOneWidget);
+    expect(find.textContaining('歌曲文件包含人声、伴奏、歌词'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(shared, isEmpty);
+    expect(File(file).existsSync(), isFalse);
+
+    await tester.tap(find.text('导出歌曲文件'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确认并导出及分享'));
+    await settleIo(tester, rounds: 5);
     expect(shared, [file]);
     expect(File(file).lengthSync(), greaterThan(100000));
     expect(find.text('已导出 夜航（示例） - 演示.yintrace'), findsOneWidget);
     await tester.tap(find.text('分享或存到别处'));
-    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(shared, [file]);
+    await tester.tap(find.text('确认并分享'));
+    await tester.pumpAndSettle();
     expect(shared, [file, file]);
     await tester.pumpWidget(const SizedBox());
 

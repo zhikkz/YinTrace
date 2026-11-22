@@ -10,6 +10,7 @@ import 'package:yintrace/src/analysis/hubertfa_decoder.dart';
 import 'package:yintrace/src/analysis/hubertfa_lexicon.dart';
 import 'package:yintrace/src/analysis/lrc.dart';
 import 'package:yintrace/src/analysis/lyrics_language.dart';
+import 'package:yintrace/src/analysis/mandarin_readings.dart';
 import 'package:yintrace/src/analysis/manual_timing.dart';
 import 'package:yintrace/src/analysis/pitch_track.dart';
 import 'package:yintrace/src/analysis/reference.dart';
@@ -84,7 +85,8 @@ void main() {
   tearDown(() => tmp.deleteSync(recursive: true));
 
   test('G2P uses phrase context and maps overrides by token, including repeated characters', () async {
-    expect(mandarinPinyin(tokenize('長大 了解 還給')), {0: 'zhang', 1: 'da', 2: 'liao', 3: 'jie', 4: 'huan', 5: 'gei'});
+    final readings = await MandarinReadings.load();
+    expect(readings.forTokens(tokenize('長大 了解 還給')), {0: 'zhang', 1: 'da', 2: 'liao', 3: 'jie', 4: 'huan', 5: 'gei'});
     expect(normalizePinyin('LǙ'), 'lv');
     expect(normalizePinyin('zhang3'), 'zhang');
     final lines = parseLrc('[00:00]长长 go\n[00:02]カ').lines;

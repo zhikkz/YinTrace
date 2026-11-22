@@ -2,15 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:kana_kit/kana_kit.dart';
-import 'package:pinyin/pinyin.dart';
 
 import 'lrc.dart';
 import 'lyrics_language.dart';
+import 'mandarin_readings.dart';
 
 const silencePhone = 0;
 const unknownPhone = -1;
-
-bool isMandarinToken(String text) => text.runes.length == 1 && isIdeograph(text.runes.first);
 
 final _toneNumber = RegExp(r'[0-5]$');
 final _combiningTones = RegExp(r'[\u0300\u0301\u0304\u030c]');
@@ -27,44 +25,12 @@ String normalizePinyin(String text) {
   }).join();
 }
 
-/// Phrase-aware readings within each uninterrupted run of Mandarin tokens.
-Map<int, String> mandarinPinyin(List<LyricToken> tokens) {
-  final readings = <int, String>{};
-  var i = 0;
-  while (i < tokens.length) {
-    if (!isMandarinToken(tokens[i].text)) {
-      i++;
-      continue;
-    }
-    final start = i++;
-    while (i < tokens.length && !tokens[i].pauseBefore && isMandarinToken(tokens[i].text)) {
-      i++;
-    }
-    final phrase = tokens.getRange(start, i).map((t) => t.text).join();
-    try {
-      final syllables = PinyinHelper.getPinyin(phrase).split(' ');
-      if (syllables.length == i - start) {
-        for (final (j, syllable) in syllables.indexed) {
-          readings[start + j] = normalizePinyin(syllable);
-        }
-        continue;
-      }
-    } on PinyinException {
-      // An unknown character can still be surrounded by known ones.
-    }
-    for (var j = start; j < i; j++) {
-      final reading = PinyinHelper.convertToPinyinArray(tokens[j].text, PinyinFormat.WITHOUT_TONE).firstOrNull;
-      if (reading != null) readings[j] = normalizePinyin(reading);
-    }
-  }
-  return readings;
-}
-
 class HubertFaLexicon {
-  HubertFaLexicon._(this.size, this._mandarin, this._english, this._japanese);
+  HubertFaLexicon._(this.size, this._mandarin, this._english, this._japanese, this._readings);
 
   final int size;
   final Map<String, List<int>> _mandarin, _english, _japanese;
+  final MandarinReadings _readings;
 
   static Future<HubertFaLexicon> load(String modelPath, Iterable<LyricLine> lyrics) async {
     final dir = File(modelPath).parent.path;
@@ -103,14 +69,20 @@ class HubertFaLexicon {
     }
 
     final dictionariesByLanguage = await Future.wait([read('zh'), read('en', only: en), read('ja')]);
-    return HubertFaLexicon._(size, dictionariesByLanguage[0], dictionariesByLanguage[1], dictionariesByLanguage[2]);
+    return HubertFaLexicon._(
+      size,
+      dictionariesByLanguage[0],
+      dictionariesByLanguage[1],
+      dictionariesByLanguage[2],
+      await MandarinReadings.load(),
+    );
   }
 
   /// One phone sequence per displayed token. A wildcard uses the model's
   /// speech vs silence and edge scores for a word with no dictionary entry.
   List<List<int>> phones(LyricLine line, LyricsLanguage language, Map<int, String> overrides) {
     final tokens = line.tokens;
-    final mandarin = language == LyricsLanguage.japanese ? const <int, String>{} : mandarinPinyin(tokens);
+    final mandarin = language == LyricsLanguage.japanese ? const <int, String>{} : _readings.forTokens(tokens);
     return [
       for (final (i, token) in tokens.indexed) _tokenPhones(token, mandarin[i], overrides[i]) ?? const [unknownPhone],
     ];
@@ -125,8 +97,8 @@ class HubertFaLexicon {
     if (pinyin != null) {
       final phones = _mandarin[pinyin];
       if (phones != null) return phones;
-      for (final alternate in PinyinHelper.convertToPinyinArray(token.text, PinyinFormat.WITHOUT_TONE)) {
-        if (_mandarin[normalizePinyin(alternate)] case final match?) return match;
+      for (final alternate in _readings.alternatives(token.text)) {
+        if (_mandarin[alternate] case final match?) return match;
       }
       return null;
     }

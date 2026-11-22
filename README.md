@@ -306,14 +306,16 @@ details.
 简单说：你可以自由使用、研究、修改和再分发；但只要你分发它（包括改过的版本、编译好的安装包），
 或者用改过的版本通过网络对外提供服务，就必须以同样的 AGPL-3.0 许可向对方提供完整的源代码。
 
-- 仓库里移植或引用的第三方部分（UVR 的分离算法和网络结构、miniaudio、pypinyin 的拼音数据等）
-  原本是 MIT、BSD、Apache 2.0 或公有领域，都与 AGPL-3.0 兼容；它们的版权声明和许可全文保留在
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，App 里在“设置 → 致谢与开源许可”也能看到。
+- 第三方代码、模型与数据的许可范围见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+  App 内可在“关于 → 许可全文与开源组件”查看。改编的 CC-CEDICT 拼音数据以
+  [独立词表](assets/mandarin/cc-cedict-readings.tsv)按 CC BY-SA 4.0 分发。
 - **模型不属于本项目，也不受这份许可约束**：`UVR-MDX-NET-Voc_FT` 和 `6_HP-Karaoke-UVR` 由
   Ultimate Vocal Remover 的开发者（Anjok07、aufr33）训练并发布，App 下载它们的原版文件（见上面的“模型下载”），
   仓库和安装包里都没有这两个模型的权重。UVR 要求使用其模型的第三方应用注明 UVR 及其开发者。
   音高模型 SwiftF0 由 Lars Nieradzik 训练，按 MIT 许可发布；App 附带它（只改了接口，权重没动），
-  逐句对齐使用 wolfgitpr/HubertFA 发布的官方模型和词典。许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+  逐句对齐使用 wolfgitpr/HubertFA 发布的官方模型和词典。Apache 2.0 适用于移植的解码器代码。
+  权重和各词典的许可核对进度见 [第三方声明](THIRD_PARTY_NOTICES.md#hubertfa-v007-code-model-and-dictionaries)。
+- 导出或分享歌曲和练习录音前，请阅读[用户协议的版权与文件分享条款](assets/legal/user-terms-zh.txt)。
 - 你导入的歌曲、歌词归各自的权利人所有，只保存在你的设备上；仓库里的示例歌词是为本项目写的。
 
 ## 致谢

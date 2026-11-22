@@ -187,18 +187,6 @@ jobs:
           done
           [ "$missing" = 0 ] && echo "all yt_* symbols exported"
           exit $missing
-      - name: Check that the bundled notices contain the AGPL v3
-        run: |
-          python3 - <<'PYCODE'
-          from pathlib import Path
-          import gzip
-          assets = Path('build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app/Frameworks/App.framework/flutter_assets')
-          notices = assets / 'NOTICES.Z'
-          text = gzip.decompress(notices.read_bytes()).decode()
-          assert 'GNU AFFERO GENERAL PUBLIC LICENSE' in text
-          assert 'Version 3, 19 November 2007' in text
-          print('AGPL v3 bundled')
-          PYCODE
       # An .ipa is a zip with the app in Payload/. Sideloading tools sign it
       # with the tester's Apple ID; see docs/phone-testing.md.
       - name: Package the test build as an unsigned .ipa
@@ -207,6 +195,8 @@ jobs:
           cp -R build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app build/test-ipa/Payload/
           cd build/test-ipa && zip -qry "$GITHUB_WORKSPACE/YinTrace-test-unsigned.ipa" Payload
           unzip -l "$GITHUB_WORKSPACE/YinTrace-test-unsigned.ipa" Payload/Runner.app/Info.plist
+      - name: Verify third-party notices inside the IPA
+        run: python3 tools/check_ipa_notices.py YinTrace-test-unsigned.ipa
       - uses: actions/upload-artifact@v6
         with:
           name: YinTrace-test-ipa

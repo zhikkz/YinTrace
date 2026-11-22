@@ -1,0 +1,13 @@
+HuBERTFA v0.0.7
+https://github.com/wolfgitpr/HubertFA/releases/tag/v0.0.7
+Official ZIP SHA-256: 48bd6dbcc293e47cc6cbcc556baf575e3d91d61d0ac88ddeccd6098f8f346fa2
+
+AlignmentDecoder: YinTrace's Dart port follows the HuBERTFA code at v0.0.7. See the accompanying Apache License 2.0 for the upstream code.
+
+model.onnx: Terms for the trained weights and ONNX export remain unconfirmed after review of the ZIP and release notes. The ZIP's config.json identifies the cn_hubert encoder at dependencies/chinese-hubert-base. TencentGameMate labels its published base model MIT. The HuBERTFA weights and export need their own terms.
+https://huggingface.co/TencentGameMate/chinese-hubert-base
+
+ds_cmudict-07b.txt: English phoneme dictionary based on the Carnegie Mellon Pronouncing Dictionary. See the accompanying CMUdict notice for the upstream data. The ZIP does not identify the terms for the converted dictionary's modifications.
+https://github.com/cmusphinx/cmudict
+
+ds-zh-pinyin-lite.txt and japanese_dict_full.txt: The v0.0.7 tag contains the same Chinese and Japanese phoneme tables, respectively. The ZIP and release notes give no file-specific terms or upstream attribution for those tables.
