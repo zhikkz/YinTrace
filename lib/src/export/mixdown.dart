@@ -4,7 +4,9 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../audio/audio_backend.dart';
+import '../audio/shifted_track.dart';
 import '../dsp/reverb.dart';
+import '../library/song.dart';
 
 /// How a recording is mixed into a finished track.
 class MixSettings {
@@ -15,6 +17,7 @@ class MixSettings {
     this.offsetMs = 0,
     this.wholeSong = true,
     this.vocalOnly = false,
+    this.transpose = 0,
   });
 
   /// Gain of the singer's voice (0..1.5).
@@ -35,6 +38,9 @@ class MixSettings {
   /// Only the voice (with its reverb), no accompaniment.
   bool vocalOnly;
 
+  /// Key in which the singer recorded the take.
+  final int transpose;
+
   MixSettings copy() => MixSettings.fromJson(toJson());
 
   Map<String, dynamic> toJson() => {
@@ -44,6 +50,7 @@ class MixSettings {
     'offsetMs': offsetMs,
     'wholeSong': wholeSong,
     'vocalOnly': vocalOnly,
+    if (transpose != 0) 'transpose': transpose,
   };
 
   factory MixSettings.fromJson(Map<String, dynamic> j) => MixSettings(
@@ -53,6 +60,7 @@ class MixSettings {
     offsetMs: (j['offsetMs'] as num?)?.toDouble() ?? 0,
     wholeSong: j['wholeSong'] as bool? ?? true,
     vocalOnly: j['vocalOnly'] as bool? ?? false,
+    transpose: readTranspose(j['transpose']),
   );
 
   /// Gain of the dry voice (a little less of it as reverb is added).
@@ -199,6 +207,7 @@ class ExportJob {
     required this.songDuration,
     required this.settings,
     required this.outputBase,
+    this.keyShiftCacheDirectory,
   });
 
   final String voicePath;
@@ -206,6 +215,7 @@ class ExportJob {
   final String? accompanimentPath;
   final double songDuration;
   final MixSettings settings;
+  final String? keyShiftCacheDirectory;
 
   /// Output path without extension (.m4a where AAC is available, else .wav).
   final String outputBase;
@@ -214,6 +224,7 @@ class ExportJob {
     'voice': voicePath,
     'start': voiceStart,
     'acc': accompanimentPath,
+    'keyShiftCache': keyShiftCacheDirectory,
     'duration': songDuration,
     'settings': settings.toJson(),
     'out': outputBase,
@@ -257,6 +268,17 @@ class ExportException implements Exception {
   String toString() => message;
 }
 
+/// Decodes the same accompaniment for the live preview and the export.
+Float32List decodeMixAccompaniment(
+  String path,
+  int transpose, {
+  String? cacheDirectory,
+  void Function(double)? onProgress,
+}) {
+  if (transpose == 0) return const NativeAudioBackend().decode(path).samples;
+  return ShiftedTrack(path, transpose, cacheDirectory: cacheDirectory).decode(onProgress: onProgress).samples;
+}
+
 /// The mix of [job], done on the calling isolate (used by [runExport]).
 String exportNow(Map<String, dynamic> job, {void Function(double)? onProgress}) {
   const sr = 44100;
@@ -265,7 +287,14 @@ String exportNow(Map<String, dynamic> job, {void Function(double)? onProgress}) 
   final voice = audio.decode(job['voice'] as String, sampleRate: sr, channels: 1).samples;
   onProgress?.call(0.05);
   final accPath = job['acc'] as String?;
-  final acc = accPath == null || settings.vocalOnly ? null : audio.decode(accPath, sampleRate: sr, channels: 2).samples;
+  final acc = accPath == null || settings.vocalOnly
+      ? null
+      : decodeMixAccompaniment(
+          accPath,
+          settings.transpose,
+          cacheDirectory: job['keyShiftCache'] as String?,
+          onProgress: (f) => onProgress?.call(0.05 + 0.1 * f),
+        );
   onProgress?.call(0.15);
   final voiceStart = (job['start'] as num).toDouble();
   final duration = (job['duration'] as num).toDouble();

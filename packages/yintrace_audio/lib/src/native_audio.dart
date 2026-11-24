@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -285,6 +286,7 @@ class PracticeEngine {
   final Pointer<Int64> _clock;
   final Pointer<Int32> _flags;
   bool _disposed = false;
+  int _trackLoads = 0;
 
   static YtBindings get _b => YtBindings.instance;
 
@@ -331,7 +333,13 @@ class PracticeEngine {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _b.engineDestroy(_ptr);
+    if (_trackLoads == 0) {
+      _b.engineDestroy(_ptr);
+    } else {
+      // A worker still holds the native handle. Stop the device now and
+      // release the handle after its last load returns.
+      _b.engineStop(_ptr);
+    }
     malloc.free(_capBuf);
     malloc.free(_song);
     malloc.free(_clock);
@@ -343,10 +351,31 @@ class PracticeEngine {
 
   void loadTrackPcm(int slot, Float32List interleaved, int channels) {
     _check();
+    _installPcm(_ptr, slot, interleaved, channels);
+  }
+
+  /// Prepares and installs a track on a worker. [prepare] must be sendable
+  /// to an isolate. The engine's track lock protects the swap during render.
+  Future<void> loadTrackPcmInBackground(int slot, DecodedAudio Function() prepare) async {
+    _check();
+    _trackLoads++;
+    try {
+      await _prepareTrack(_ptr.address, slot, prepare);
+    } finally {
+      if (--_trackLoads == 0 && _disposed) _b.engineDestroy(_ptr);
+    }
+  }
+
+  static Future<void> _prepareTrack(int address, int slot, DecodedAudio Function() prepare) => Isolate.run(() {
+    final audio = prepare();
+    _installPcm(Pointer<YtEngine>.fromAddress(address), slot, audio.samples, audio.channels);
+  });
+
+  static void _installPcm(Pointer<YtEngine> engine, int slot, Float32List interleaved, int channels) {
     using((arena) {
       final data = arena<Float>(interleaved.length);
       data.asTypedList(interleaved.length).setAll(0, interleaved);
-      final r = _b.engineLoadTrackPcm(_ptr, slot, data, interleaved.length ~/ channels, channels);
+      final r = _b.engineLoadTrackPcm(engine, slot, data, interleaved.length ~/ channels, channels);
       if (r != 0) throw NativeAudioException('load track failed ($r)');
     });
   }

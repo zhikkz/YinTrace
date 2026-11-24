@@ -31,6 +31,7 @@ class Recording {
   MixSettings mix;
 
   double get end => start + duration;
+  int get transpose => mix.transpose;
 
   Map<String, dynamic> toJson() => {
     'id': id,

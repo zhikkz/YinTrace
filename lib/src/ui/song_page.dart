@@ -325,15 +325,15 @@ class _SongPageState extends State<SongPage> {
         ),
       );
     }
-    final lastLineScores = <int, double>{};
-    for (final r in _history) {
-      lastLineScores.addAll(r.lineScores);
-    }
+    final lastLineScores = <int, ScoreInKey>{
+      for (final r in _history)
+        for (final e in r.lineScores.entries) e.key: (score: e.value, transpose: r.transpose),
+    };
     // The lines sung least well the last time, worst first.
     final weak = [
       for (final line in ref.lines)
-        if (lastLineScores[line.index] case final s? when s < 80) (line, s),
-    ]..sort((a, b) => a.$2.compareTo(b.$2));
+        if (lastLineScores[line.index] case final s? when s.score < 80) (line, s),
+    ]..sort((a, b) => a.$2.score.compareTo(b.$2.score));
     final p = context.yt;
     return Scaffold(
       // Always at hand, however far down the lines go.
@@ -395,7 +395,7 @@ class _SongPageState extends State<SongPage> {
                     size: 34,
                     // The best score is of runs through the whole song.
                     label: meta.bestScore != null
-                        ? '最高分'
+                        ? '最高分${transposeSuffix(meta.bestScoreTranspose)}'
                         : (meta.practiceCount > 0 ? '还没唱完过整首' : '还没练过'),
                   ),
                 ],
@@ -428,7 +428,7 @@ class _SongPageState extends State<SongPage> {
                           ActionChip(
                             avatar: Icon(Icons.repeat_one_rounded, size: 18, color: p.ink),
                             label: Text(
-                              '${_excerpt(line.text)}  ${score.round()} 分',
+                              '${_excerpt(line.text)}  ${score.score.round()} 分${transposeSuffix(score.transpose)}',
                               style: lyricsStyle(context.type.bodyMedium?.copyWith(color: p.ink), ref.language),
                             ),
                             onPressed: () => _practice(line: line.index),
@@ -456,7 +456,7 @@ class _SongPageState extends State<SongPage> {
                         title: Text(_recordingTitle(r)),
                         subtitle: Text(
                           '从 ${clock(r.start)} 起，${clock(r.duration)}'
-                          '${r.score == null ? '' : '，${r.score!.round()} 分'}',
+                          '${transposeSuffix(r.transpose)}${r.score == null ? '' : '，${r.score!.round()} 分'}',
                           style: context.type.bodySmall?.copyWith(fontFeatures: tabular),
                         ),
                         trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
@@ -478,7 +478,7 @@ class _SongPageState extends State<SongPage> {
             itemBuilder: (context, i) {
               final line = ref.lines[i];
               final score = lastLineScores[line.index];
-              final trend = lineScores(_history, line.index);
+              final trend = recentScores(_history, line: line.index, last: 10);
               final missing = line.tokens.where((t) => t.notes.isEmpty).length;
               final corrected = line.tokens.where((t) => t.corrected).length;
               return InkWell(
@@ -515,9 +515,17 @@ class _SongPageState extends State<SongPage> {
                           if (trend.length >= 2)
                             Padding(
                               padding: const EdgeInsets.only(right: 10, top: 2),
-                              child: LineScoreSparkline(scores: trend),
+                              child: LineScoreSparkline(
+                                scores: [for (final s in trend) s.score],
+                                transposes: [for (final s in trend) s.transpose],
+                              ),
                             ),
-                          if (score != null) ScoreNumeral(score: score, size: 20),
+                          if (score != null)
+                            ScoreNumeral(
+                              score: score.score,
+                              size: 20,
+                              label: score.transpose == 0 ? null : transposeMark(score.transpose),
+                            ),
                           IconButton(
                             tooltip: '校正这一句',
                             visualDensity: VisualDensity.compact,

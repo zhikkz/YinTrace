@@ -427,6 +427,7 @@ class LinePitchGraph extends StatelessWidget {
     required this.line,
     this.contour,
     this.tokenScores,
+    this.transpose = 0,
     this.height = 96,
   });
 
@@ -435,6 +436,7 @@ class LinePitchGraph extends StatelessWidget {
   final PitchTrack? contour;
   final Map<RefToken, double>? tokenScores;
   final double height;
+  final int transpose;
 
   @override
   Widget build(BuildContext context) {
@@ -449,7 +451,7 @@ class LinePitchGraph extends StatelessWidget {
       hi = r.$2;
     }
     // Leave room above the highest note for its character.
-    final (a, b) = paddedRange(lo, hi, minSpan: 9, pad: 2);
+    final (a, b) = paddedRange(lo + transpose, hi + transpose, minSpan: 9, pad: 2);
     final start = line.start - 0.2, end = math.max(line.end, line.start + 1) + 0.2;
     return SizedBox(
       height: height,
@@ -458,6 +460,7 @@ class LinePitchGraph extends StatelessWidget {
         painter: PitchGraphPainter(
           reference: SongReference(lines: [line], duration: reference.duration, language: reference.language),
           contour: contour,
+          transpose: transpose,
           t0: start,
           t1: end,
           midiLo: a,

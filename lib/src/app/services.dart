@@ -52,7 +52,11 @@ class AppServices {
 
   static Future<AppServices> init() async {
     final support = await getApplicationSupportDirectory();
-    final songs = SongRepository(Directory('${support.path}/songs'));
+    final cache = await getApplicationCacheDirectory();
+    final songs = SongRepository(
+      Directory('${support.path}/songs'),
+      keyShiftRoot: Directory('${cache.path}/key-shifts'),
+    );
     await songs.root.create(recursive: true);
     void excludeFromBackup(String path) {
       try {
