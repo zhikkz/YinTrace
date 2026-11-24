@@ -7,6 +7,7 @@ import 'package:yintrace_audio/yintrace_audio.dart';
 import '../app/services.dart';
 import '../library/song.dart';
 import '../library/song_package.dart';
+import 'copyright_notice.dart';
 import 'theme.dart';
 
 Future<void> showSongShare(BuildContext context, SongMeta song) => showModalBottomSheet<void>(
@@ -34,11 +35,25 @@ class SongShareSheet extends StatefulWidget {
 
 class _SongShareSheetState extends State<SongShareSheet> {
   bool _busy = false;
+  bool _confirming = false;
   String? _exported;
   String? _notice;
   String? _error;
 
+  String get _audio => songPackageAudioFiles(widget.song).map((file) => file.$1.label).join('、');
+
+  Future<bool> _confirm(String action) async {
+    if (_busy || _confirming) return false;
+    _confirming = true;
+    try {
+      return await confirmCopyright(context, contents: '歌曲文件包含$_audio、歌词', action: action);
+    } finally {
+      _confirming = false;
+    }
+  }
+
   Future<void> _export() async {
+    if (!await _confirm('确认并导出及分享') || !mounted) return;
     final root = AppScope.of(context).songs.root.path;
     setState(() {
       _busy = true;
@@ -75,11 +90,14 @@ class _SongShareSheetState extends State<SongShareSheet> {
     if (!shared) setState(() => _notice = '已保存到 $path');
   }
 
+  Future<void> _shareAgain(String path) async {
+    if (await _confirm('确认并分享') && mounted) _share(path);
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.yt;
     final exported = _exported;
-    final audio = songPackageAudioFiles(widget.song).map((file) => file.$1.label).join('、');
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
@@ -95,7 +113,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
             ),
             const SizedBox(height: 8),
             Text(
-              '文件里有$audio、歌词，以及你校正过的位置和音高；'
+              '文件里有$_audio、歌词，以及你校正过的位置和音高；'
               '不包含你的练习成绩和录音。',
               style: context.type.bodySmall,
             ),
@@ -123,7 +141,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
               ),
               const SizedBox(height: 14),
               FilledButton.icon(
-                onPressed: () => _share(exported),
+                onPressed: () => _shareAgain(exported),
                 icon: const Icon(Icons.ios_share_rounded),
                 label: const Text('分享或存到别处'),
               ),

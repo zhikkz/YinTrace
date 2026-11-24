@@ -134,12 +134,25 @@ https://github.com/mackron/miniaudio — `packages/yintrace_audio/src/miniaudio.
 (Unlicense) or MIT No Attribution, at your choice; the full text is at the end
 of the header. YinTrace uses it under MIT No Attribution.
 
-## ONNX Runtime (MIT License)
+## ONNX Runtime 1.28.0 (MIT License and third-party notices)
 
 https://github.com/microsoft/onnxruntime — linked through the
-`flutter_onnxruntime` plugin (MIT License, © MASIC AI). ONNX Runtime itself
-bundles further open-source components; their notices are in
-`ThirdPartyNotices.txt` of the ONNX Runtime repository.
+`flutter_onnxruntime` plugin (MIT License, © MASIC AI). The iOS and macOS
+CocoaPods dependency and the Android Maven dependency are pinned to 1.28.0.
+YinTrace ships the [Microsoft MIT text](assets/licenses/onnxruntime-1.28.0-LICENSE.txt)
+and the [complete 1.28.0 third-party notices](assets/licenses/onnxruntime-1.28.0-ThirdPartyNotices.txt),
+including the KleidiAI Apache 2.0 text. The two files were copied verbatim from
+Microsoft's [ONNX Runtime 1.28.0 macOS arm64 wheel](https://pypi.org/project/onnxruntime/1.28.0/#files).
+The iOS CI reads the Podfile lock and checks both files inside the IPA.
+
+The iOS podspecs use the device and simulator XCFramework from Microsoft's
+SHA-256-pinned NuGet package. Its manifest identifies ONNX Runtime commit
+`da9b5e364c465de65c49d91e696cd6485270757f`. The Objective-C binding is
+fetched at a fixed commit of the plugin maintainer's source mirror. Its
+entire `objectivec` tree matches that Microsoft commit (Git tree
+`4f2470ea4b95f32b759534719040b7a5bd35c7bb`).
+[Microsoft NuGet package](https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.28.0)
+· [Objective-C source](https://github.com/masicai/onnxruntime-swift-package-manager/tree/3fb68950a5967c8c120f9f99a1a850a43985a4c9/objectivec)
 
     MIT License
 
@@ -163,55 +176,32 @@ bundles further open-source components; their notices are in
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
-## pypinyin and pinyin-data (MIT License)
+## Mandarin pronunciation data
 
-https://github.com/mozillazg/python-pinyin and
-https://github.com/mozillazg/pinyin-data — `lib/src/analysis/pinyin_initials.dart`
-(the onset class of each GB2312 character) is generated from their data by
-`tools/reference/make_pinyin_table.py`.
+**Unicode Unihan 17.0.0.** [Unihan.zip](https://www.unicode.org/Public/17.0.0/ucd/Unihan.zip)
+supplies `kMandarin` and `kSimplifiedVariant` for [single-character readings](assets/mandarin/unihan-readings.tsv)
+and the GB2312 onset table. Copyright Unicode, Inc. The [Unicode License v3](assets/licenses/Unicode-3.0.txt)
+is bundled. Source ZIP SHA-256 `f7a48b2b545acfaa77b2d607ae28747404ce02baefee16396c5d2d7a8ef34b5e`.
 
-    The MIT License (MIT)
+**CC-CEDICT.** CC-CEDICT contributors, published by MDBG. The source credits
+CEDICT (Copyright (C) 1997, 1998 Paul Andrew Denisowski). YinTrace extracted
+Chinese headwords and readings from the [MDBG 1.0 UTF-8 snapshot](https://www.mdbg.net/chinese/dictionary?page=cedict)
+dated 2026-11-22T09:11:05Z, removed definitions and tones, and retained supplementary
+single-character readings and unambiguous phrases requiring context. The
+[resulting TSV](assets/mandarin/cc-cedict-readings.tsv) is distributed as a separate
+data file under [CC BY-SA 4.0 International](assets/licenses/CC-BY-SA-4.0.txt). You
+can obtain and redistribute that file under the same license. Source ZIP SHA-256
+`426d7ed1d6e2bd2391be03bfee6ee36be6a5ae6f5e7c6fca17dde7f95171cd60`.
+Rebuild both tables with [build_mandarin_readings.py](tools/reference/build_mandarin_readings.py).
 
-    Copyright (c) 2016 mozillazg, 闲耘 <hotoo.cn@gmail.com>
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy of
-    this software and associated documentation files (the "Software"), to deal in
-    the Software without restriction, including without limitation the rights to
-    use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-    the Software, and to permit persons to whom the Software is furnished to do so,
-    subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-    FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-    COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-    IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-    The MIT License (MIT)
-
-    Copyright (c) 2016 mozillazg
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
+**Earlier distributions.** `pinyin` 3.3.0 (BSD 2-Clause for the Dart package) shipped
+the phrase table produced by its [generation script](https://github.com/sun-jiao/dart-pinyin/blob/cda5704260dba7df639a1756de78c24f0632414d/dev/data/phrase_generator.dart)
+from [phrase-pinyin-data](https://github.com/mozillazg/phrase-pinyin-data)'s
+`large_pinyin.txt`, which combines CC-CEDICT readings and readings from other
+sources. The [phrase-pinyin-data MIT notice](assets/licenses/phrase-pinyin-data-LICENSE.txt)
+applies to its MIT-licensed material. The scope of CC-CEDICT's share-alike
+terms for that mixed artifact needs separate assessment. YinTrace replaced
+that package and the earlier pypinyin-derived onset table with the sources above.
 
 ## Model: SwiftF0 (MIT License)
 
@@ -255,15 +245,24 @@ The license file of the release reads:
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
-## HubertFA (Apache License 2.0)
+## HuBERTFA v0.0.7 code, model, and dictionaries
 
-The waveform model and dictionaries come from the official HubertFA v0.0.7
-release. YinTrace downloads the original archive via ghfast.top and falls back
-to the upstream GitHub Release. YinTrace adapts the project's AlignmentDecoder
-to Dart, with LRC timing hints, optional silence, and one output interval per
-lyric token.
-The upstream license is included in [assets/models/hubertfa-LICENSE.txt](assets/models/hubertfa-LICENSE.txt).
-[HubertFA v0.0.7](https://github.com/wolfgitpr/HubertFA/tree/v0.0.7)
+YinTrace ports the HuBERTFA AlignmentDecoder to Dart and bundles the upstream
+[Apache 2.0 code license](assets/models/hubertfa-LICENSE.txt). YinTrace retrieves
+the original [v0.0.7 release ZIP](https://github.com/wolfgitpr/HubertFA/releases/tag/v0.0.7)
+on demand and verifies SHA-256 `48bd6dbcc293e47cc6cbcc556baf575e3d91d61d0ac88ddeccd6098f8f346fa2`.
+The ZIP contains the following files with no accompanying license text.
+
+| File or component | Provenance and license evidence |
+| --- | --- |
+| `model.onnx` | Neither the verified ZIP nor the release notes specifies terms for the trained weights or ONNX export. |
+| Chinese HuBERT base encoder | The ZIP's `config.json` names `cn_hubert` and `dependencies/chinese-hubert-base`. The [TencentGameMate model card](https://huggingface.co/TencentGameMate/chinese-hubert-base) labels the published base model MIT. The exact base checkpoint and terms for the combined export remain to be confirmed. |
+| `ds_cmudict-07b.txt` | Converted English dictionary based on the [Carnegie Mellon Pronouncing Dictionary](https://github.com/cmusphinx/cmudict). The [CMUdict notice](assets/licenses/cmudict-LICENSE.txt) ships with YinTrace. The terms on upstream conversion changes remain to be confirmed. |
+| `ds-zh-pinyin-lite.txt` | Chinese phoneme table also present in the [v0.0.7 source tag](https://github.com/wolfgitpr/HubertFA/tree/v0.0.7/dictionaries). Its file-specific terms and upstream source are unconfirmed. |
+| `japanese_dict_full.txt` | Japanese phoneme table also present in the same source tag. Its file-specific terms and upstream source are unconfirmed. |
+
+The app exposes this [provenance notice](assets/licenses/hubertfa-v0.0.7-provenance.txt)
+alongside the decoder and CMUdict licenses.
 
 ## YIN
 
@@ -283,15 +282,19 @@ Linked into the app, each under the license published with the package:
 | Flutter SDK, `flutter_localizations` | BSD 3-Clause |
 | `flutter_onnxruntime` | MIT |
 | `file_picker`, `archive`, `kana_kit` | MIT |
-| `pinyin` | BSD 2-Clause |
 | `fftea` | Apache 2.0 |
 | `crypto`, `ffi`, `path_provider` | BSD 3-Clause |
 | `wakelock_plus` (and `package_info_plus`) | BSD 3-Clause |
 | `cupertino_icons` | MIT |
 
+`archive` 4.7.1 also ships code derived from Zstandard 1.5.7 (including xxHash)
+and other projects. The verbatim [LICENSE-other.md](assets/licenses/archive-4.7.1-LICENSE-other.md)
+is taken from the [versioned pub.dev archive](https://pub.dev/api/archives/archive-4.7.1.tar.gz)
+and shipped alongside the main package license that Flutter collects.
+
 ## Development-only tools
 
-Not part of the app: CairoSVG (LGPL-3.0-or-later, icon rendering only),
+Development dependencies include CairoSVG and Pillow (icon rendering),
 PyTorch, ONNX, NumPy, SciPy, librosa and pYIN (used by
 `tools/` to export the network graph and to produce reference values for the
 tests).

@@ -5,6 +5,7 @@ import 'dart:isolate';
 import 'package:flutter/services.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
+import '../analysis/mandarin_readings.dart';
 import '../audio/audio_backend.dart';
 import '../library/song.dart';
 import '../library/song_repository.dart';
@@ -119,6 +120,8 @@ class ImportWorker {
 
   void _onMessage(dynamic message) {
     switch (message) {
+      case ('mandarinTables', final SendPort reply):
+        MandarinReadings.bundledTables().then<void>(reply.send, onError: (Object e) => reply.send('$e'));
       case final SendPort commands:
         _commands = commands;
         for (final pending in _pendingCommands) {
@@ -154,6 +157,17 @@ class ImportWorker {
   static void _entry((SendPort, RootIsolateToken, String, bool) args) {
     final (out, token, root, shared) = args;
     BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+    MandarinReadings.initializeWorker(() async {
+      final reply = ReceivePort();
+      try {
+        out.send(('mandarinTables', reply.sendPort));
+        final tables = await reply.first;
+        if (tables is List<String>) return tables;
+        throw StateError('$tables');
+      } finally {
+        reply.close();
+      }
+    });
     final pool = shared ? ImportModelPool() : null;
     final pipeline = ImportPipeline(
       audio: const NativeAudioBackend(),

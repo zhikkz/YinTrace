@@ -21,7 +21,6 @@ dependencies:
     path: packages/flutter_onnxruntime
   kana_kit: ^2.1.1
   path_provider: ^2.1.6
-  pinyin: ^3.3.0
   wakelock_plus: ^1.8.2
   yintrace_audio:
     path: packages/yintrace_audio
@@ -48,6 +47,9 @@ flutter:
     - assets/models/karaoke_graph.json
     - assets/models/swift_f0.onnx
     - assets/models/hubertfa-LICENSE.txt
+    - assets/legal/user-terms-zh.txt
+    - assets/licenses/
+    - assets/mandarin/
   config:
     # All plugins are integrated through CocoaPods (the native audio core
     # ships a podspec only).

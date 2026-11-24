@@ -16,6 +16,7 @@ import '../export/mixdown.dart';
 import '../export/recordings.dart';
 import '../library/recording.dart';
 import '../library/song.dart';
+import 'copyright_notice.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -82,6 +83,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   bool _ready = false;
   Timer? _clock;
   double? _progress;
+  bool _confirming = false;
   String? _exported;
   bool _loaded = false;
   final _scrub = PlaybackScrub();
@@ -263,6 +265,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   Future<void> _export() async {
     final meta = _meta, rec = _rec;
     if (meta == null || rec == null || _progress != null) return;
+    if (!await _confirm('确认并导出及分享') || !mounted) return;
     _pausePreview();
     setState(() => _progress = 0);
     _syncAwake();
@@ -310,6 +313,20 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   void _share(String path) {
     final shared = (widget.share ?? NativeAudio.shareFile)(path);
     if (!shared) _snack('已保存：$path');
+  }
+
+  Future<bool> _confirm(String action) async {
+    if (_confirming) return false;
+    _confirming = true;
+    try {
+      return await confirmCopyright(context, contents: '成品可能包含受保护的词曲、表演、录音或伴奏', action: action);
+    } finally {
+      _confirming = false;
+    }
+  }
+
+  Future<void> _shareAgain(String path) async {
+    if (await _confirm('确认并分享') && mounted && path == _exported) _share(path);
   }
 
   Future<void> _delete() async {
@@ -533,7 +550,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(
-                    onPressed: () => _share(_exported!),
+                    onPressed: () => _shareAgain(_exported!),
                     icon: const Icon(Icons.ios_share_rounded),
                     label: const Text('分享或存到别处'),
                   ),

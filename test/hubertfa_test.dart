@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -10,6 +11,7 @@ import 'package:yintrace/src/analysis/hubertfa_decoder.dart';
 import 'package:yintrace/src/analysis/hubertfa_lexicon.dart';
 import 'package:yintrace/src/analysis/lrc.dart';
 import 'package:yintrace/src/analysis/lyrics_language.dart';
+import 'package:yintrace/src/analysis/mandarin_readings.dart';
 import 'package:yintrace/src/analysis/manual_timing.dart';
 import 'package:yintrace/src/analysis/pitch_track.dart';
 import 'package:yintrace/src/analysis/reference.dart';
@@ -31,6 +33,12 @@ const _phones = {
   'en/ow': 9,
   'ja/k': 10,
   'ja/a': 11,
+  'zh/d': 12,
+  'zh/t': 13,
+  'zh/an': 14,
+  'zh/x': 15,
+  'zh/ing': 16,
+  'zh/h': 17,
 };
 const _lyrics = '[00:00.80]长啊\n[00:02.10]了\n[00:02.70]\n';
 
@@ -84,7 +92,8 @@ void main() {
   tearDown(() => tmp.deleteSync(recursive: true));
 
   test('G2P uses phrase context and maps overrides by token, including repeated characters', () async {
-    expect(mandarinPinyin(tokenize('長大 了解 還給')), {0: 'zhang', 1: 'da', 2: 'liao', 3: 'jie', 4: 'huan', 5: 'gei'});
+    final readings = await MandarinReadings.load();
+    expect(readings.forTokens(tokenize('長大 了解 還給')), {0: 'zhang', 1: 'da', 2: 'liao', 3: 'jie', 4: 'huan', 5: 'gei'});
     expect(normalizePinyin('LǙ'), 'lv');
     expect(normalizePinyin('zhang3'), 'zhang');
     final lines = parseLrc('[00:00]长长 go\n[00:02]カ').lines;
@@ -98,6 +107,67 @@ void main() {
       [10, 11],
     ]);
     expect(() => lexicon.phones(lines[0], LyricsLanguage.chinese, {1: 'bad'}), throwsFormatException);
+  });
+
+  test('the alignment worker can read both bundled Mandarin tables', () async {
+    final token = RootIsolateToken.instance!;
+    final tables = await MandarinReadings.bundledTables();
+    final pinyin = await Isolate.run(() async {
+      BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+      MandarinReadings.initializeWorker(() async => tables);
+      final readings = await MandarinReadings.load();
+      return readings.forTokens(tokenize('彈著吉他 一行淚')).values.join(' ');
+    });
+    expect(pinyin, 'tan zhe ji ta yi hang lei');
+  });
+
+  test('Mandarin lyrics distinguish playing an instrument and counting rows', () async {
+    final readings = await MandarinReadings.load();
+    for (final entry in const {
+      '弹着吉他': 'tan zhe ji ta',
+      '彈著鋼琴': 'tan zhe gang qin',
+      '弹过琵琶': 'tan guo pi pa',
+      '你彈著那把木吉他': 'ni tan zhe na ba mu ji ta',
+      '弹了一夜琴': 'tan le yi ye qin',
+      '看著你 聽著音樂 著名': 'kan zhe ni ting zhe yin yue zhu ming',
+      '一行泪': 'yi hang lei',
+      '兩行清淚': 'liang hang qing lei',
+      '几行诗句': 'ji hang shi ju',
+      '那一行行文字': 'na yi hang hang wen zi',
+      '清淚兩行 泪成行 写下诗行': 'qing lei liang hang lei cheng hang xie xia shi hang',
+      '一行诗人 诗行天下': 'yi xing shi ren shi xing tian xia',
+      '重重心事 重重地敲门': 'chong chong xin shi zhong zhong de qiao men',
+      '重弹旧曲 心情沉重': 'chong tan jiu qu xin qing chen zhong',
+      '弹琴 子弹着火 弹药': 'tan qin zi dan zhao huo dan yao',
+      '一行人 步行 行李': 'yi xing ren bu xing xing li',
+      '五行相生': 'wu xing xiang sheng',
+      '音樂 長大 重新开始 银行 成长': 'yin yue zhang da chong xin kai shi yin hang cheng zhang',
+      '弹，吉他 弹着，吉他': 'dan ji ta dan zhe ji ta',
+      '一，行泪 一行，泪': 'yi xing lei yi xing lei',
+      '泪，两行': 'lei liang xing',
+      '弹着go吉他 一行カ泪': 'dan zhe ji ta yi xing lei',
+      '一行(いっこう)行泪': 'xing lei',
+    }.entries) {
+      expect(readings.forTokens(tokenize(entry.key)).values.join(' '), entry.value, reason: entry.key);
+    }
+  });
+
+  test('HuBERTFA receives contextual phones unless that token has an override', () async {
+    File('${tmp.path}/zh.txt').writeAsStringSync('dan\td an\ntan\tt an\nxing\tx ing\nhang\th ang\n');
+    final line = parseLrc('[00:00]弹着吉他 一行泪').lines.single;
+    final lexicon = await HubertFaLexicon.load(modelPath, [line]);
+    final phones = lexicon.phones(line, LyricsLanguage.chinese, {});
+    expect(phones[0], [13, 14]); // tan
+    expect(phones[5], [17, 2]); // hang
+    final overridden = lexicon.phones(line, LyricsLanguage.chinese, {0: 'dàn'});
+    expect(overridden[0], [12, 14]);
+    expect(overridden.skip(1), phones.skip(1));
+    expect(lexicon.phones(line, LyricsLanguage.japanese, {}).expand((p) => p), everyElement(unknownPhone));
+    File('${tmp.path}/zh.txt').writeAsStringSync('dan\td an\nxing\tx ing\n');
+    final limited = await HubertFaLexicon.load(modelPath, [line]);
+    final fallback = limited.phones(line, LyricsLanguage.chinese, {});
+    expect(fallback[0], [12, 14]);
+    expect(fallback[5], [15, 16]);
   });
 
   test('model edges distinguish repeated syllables even with no silence between them', () {

@@ -20,11 +20,32 @@ const appSourceUrl = 'https://github.com/zhikkz/YinTrace';
 void registerThirdPartyLicenses() {
   LicenseRegistry.addLicense(() async* {
     final license = await rootBundle.loadString('assets/models/hubertfa-LICENSE.txt');
-    yield LicenseEntryWithLineBreaks(const ['HubertFA'], '''
-YinTrace downloads the HubertFA v0.0.7 model and dictionaries and adapts the upstream AlignmentDecoder to Dart.
+    yield LicenseEntryWithLineBreaks(const ['HuBERTFA AlignmentDecoder'], '''
+YinTrace adapts the HuBERTFA v0.0.7 AlignmentDecoder to Dart.
 https://github.com/wolfgitpr/HubertFA
 
 $license''');
+    for (final (name, file) in const [
+      ('HuBERTFA v0.0.7 model and dictionary provenance', 'hubertfa-v0.0.7-provenance.txt'),
+      ('CMUdict', 'cmudict-LICENSE.txt'),
+      ('ONNX Runtime 1.28.0', 'onnxruntime-1.28.0-LICENSE.txt'),
+      ('ONNX Runtime 1.28.0 third-party notices (including KleidiAI)', 'onnxruntime-1.28.0-ThirdPartyNotices.txt'),
+      ('archive 4.7.1 third-party notices (including Zstandard)', 'archive-4.7.1-LICENSE-other.md'),
+      ('Unicode Unihan 17.0.0', 'Unicode-3.0.txt'),
+      ('phrase-pinyin-data (used by earlier versions)', 'phrase-pinyin-data-LICENSE.txt'),
+    ]) {
+      yield LicenseEntryWithLineBreaks([name], await rootBundle.loadString('assets/licenses/$file'));
+    }
+    final ccLicense = await rootBundle.loadString('assets/licenses/CC-BY-SA-4.0.txt');
+    yield LicenseEntryWithLineBreaks(const ['CC-CEDICT'], '''
+CC-CEDICT contributors, published by MDBG. Based on CEDICT, Copyright (C) 1997, 1998 Paul Andrew Denisowski.
+https://www.mdbg.net/chinese/dictionary?page=cedict
+
+YinTrace extracted Chinese headwords and pronunciations, normalized them to toneless pinyin, and retained additional readings and unambiguous context-dependent phrases. This adaptation is available separately under CC BY-SA 4.0 International.
+https://github.com/zhikkz/YinTrace/blob/main/assets/mandarin/cc-cedict-readings.tsv
+https://creativecommons.org/licenses/by-sa/4.0/
+
+$ccLicense''');
   });
   LicenseRegistry.addLicense(
     () => Stream.fromIterable([
@@ -59,15 +80,6 @@ YinTrace adds an Apple CPU arena option using ONNX Runtime's MIT-licensed intern
 
 ${_mit('Copyright (c) MASIC AI')}''',
       ),
-      LicenseEntryWithLineBreaks(
-        const ['ONNX Runtime'],
-        '''
-https://github.com/microsoft/onnxruntime
-
-ONNX Runtime bundles further open-source components; their notices are in ThirdPartyNotices.txt of the ONNX Runtime repository.
-
-${_mit('Copyright (c) Microsoft Corporation')}''',
-      ),
       const LicenseEntryWithLineBreaks(
         ['miniaudio'],
         '''
@@ -87,13 +99,6 @@ YinTrace measures the original singer's pitch, when a song is imported, with Swi
 The app bundles the model of swift-f0 0.3.0. Its weights are unchanged; its interface was adapted for the app (the pitch range fixed at 60 to 1400 Hz, the pitch output cast to 32-bit floats, the two outputs joined into one) by tools/build_pitch_model.py.
 
 ${_mit('Copyright (c) 2025-2026 Lars Nieradzik')}''',
-      ),
-      LicenseEntryWithLineBreaks(
-        const ['pypinyin', 'pinyin-data'],
-        '''
-The table of syllable onsets used to align lyrics is generated from the data of https://github.com/mozillazg/python-pinyin and https://github.com/mozillazg/pinyin-data.
-
-${_mit('Copyright (c) 2016 mozillazg, 闲耘 <hotoo.cn@gmail.com>')}''',
       ),
     ]),
   );

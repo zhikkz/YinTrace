@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../analysis/corrections.dart';
 import '../analysis/hubertfa_lexicon.dart';
 import '../analysis/lyrics_language.dart';
+import '../analysis/mandarin_readings.dart';
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../app/pitch_correction_session.dart';
@@ -254,7 +255,9 @@ class _PitchEditorPageState extends State<PitchEditorPage> with WidgetsBindingOb
     final tokens = ref.lines[lineIndex].tokens;
     final token = tokens[tokenIndex];
     final line = _session.lyricLine(lineIndex);
-    final automatic = mandarinPinyin(line.tokens)[tokenIndex];
+    final readings = await MandarinReadings.load();
+    if (!mounted || !_attached || _line != lineIndex) return;
+    final automatic = readings.forTokens(line.tokens)[tokenIndex];
     var input = token.pinyinOverride ?? automatic ?? '';
     final answer = await showDialog<String>(
       context: context,

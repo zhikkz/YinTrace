@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/licenses.dart';
+import 'copyright_notice.dart';
 import 'theme.dart';
 
 /// Credits for the work YinTrace is built on, and the license texts.
@@ -44,9 +45,10 @@ class AboutPage extends StatelessWidget {
               credit('音高检测',
                   '原唱的音高用 SwiftF0 音高模型测（Lars Nieradzik，2025，MIT 许可，随 App 附带）；'
                       '你唱的音高用 YIN 算法实时测（Alain de Cheveigné 与 Hideki Kawahara，2002）。'),
-              credit('逐句歌词对齐', '使用 wolfgitpr/HubertFA 发布的模型和词典（Apache 2.0 许可）。'),
-              credit('其他', '音频引擎 miniaudio（David Reid）；推理引擎 ONNX Runtime（Microsoft）；'
-                  '拼音数据 pypinyin（mozillazg）；界面 Flutter。'),
+              credit('逐句歌词对齐', '对齐解码器移植自 wolfgitpr/HubertFA（Apache 2.0）。'
+                  '模型权重及中、日文词典的适用许可待上游确认。英文词典衍生自 Carnegie Mellon Pronouncing Dictionary。'),
+              credit('拼音数据', '单字读音来自 Unicode Unihan。词组和补充读音改编自 CC-CEDICT（CC BY-SA 4.0）。'),
+              credit('其他', '音频引擎 miniaudio（David Reid）、推理引擎 ONNX Runtime（Microsoft）、界面 Flutter。'),
               const SizedBox(height: 10),
               Text('许可', style: context.type.titleLarge),
               const SizedBox(height: 14),
@@ -65,6 +67,13 @@ class AboutPage extends StatelessWidget {
                 ),
                 child: Row(children: [
                   const Expanded(child: Text('许可全文与开源组件')),
+                  Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+                ]),
+              ),
+              OutlinedButton(
+                onPressed: () => showUserTerms(context),
+                child: Row(children: [
+                  const Expanded(child: Text('用户协议')),
                   Icon(Icons.chevron_right_rounded, color: p.inkFaint),
                 ]),
               ),
