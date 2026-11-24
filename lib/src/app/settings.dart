@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:yintrace_audio/yintrace_audio.dart' show PracticeEngine;
+import 'package:yintrace_audio/yintrace_audio.dart' show OutputRoute, PracticeEngine;
 
 import 'atomic_file.dart';
 
@@ -20,9 +20,17 @@ class AppSettings extends ChangeNotifier {
     null => null,
   };
 
-  /// Extra latency compensation in milliseconds, added to the value the OS
-  /// reports (positive = your voice is shown earlier).
+  /// Legacy compensation in milliseconds, used until this route and mode
+  /// have their own value (positive = your voice is shown earlier).
   int latencyOffsetMs = 0;
+  final _latencyOffsetsMs = <OutputRoute, Map<bool, int>>{};
+
+  int latencyOffsetFor(OutputRoute route, {required bool measurement}) =>
+      _latencyOffsetsMs[route]?[measurement] ?? latencyOffsetMs;
+
+  void setLatencyOffset(OutputRoute route, int offsetMs, {required bool measurement}) {
+    (_latencyOffsetsMs[route] ??= {})[measurement] = offsetMs;
+  }
 
   /// Tolerance counted as "on pitch" (cents).
   int toleranceCents = 50;
@@ -83,6 +91,17 @@ class AppSettings extends ChangeNotifier {
 
   void _apply(Map<String, dynamic> j) {
     latencyOffsetMs = (j['latencyOffsetMs'] as num?)?.toInt() ?? latencyOffsetMs;
+    final offsets = j['latencyOffsetsMs'];
+    if (offsets is Map<String, dynamic>) {
+      for (final route in OutputRoute.values) {
+        final modes = offsets[route.name];
+        if (modes is! Map<String, dynamic>) continue;
+        for (final mode in const {false: 'default', true: 'measurement'}.entries) {
+          final offset = modes[mode.value];
+          if (offset is num && offset.isFinite) setLatencyOffset(route, offset.toInt(), measurement: mode.key);
+        }
+      }
+    }
     toleranceCents = (j['toleranceCents'] as num?)?.toInt() ?? toleranceCents;
     octaveTolerant = j['octaveTolerant'] as bool? ?? octaveTolerant;
     micGateDb = (j['micGateDb'] as num?)?.toDouble() ?? micGateDb;
@@ -101,6 +120,13 @@ class AppSettings extends ChangeNotifier {
 
   Map<String, dynamic> toJson() => {
     'latencyOffsetMs': latencyOffsetMs,
+    'latencyOffsetsMs': {
+      for (final entry in _latencyOffsetsMs.entries)
+        entry.key.name: {
+          'default': ?entry.value[false],
+          'measurement': ?entry.value[true],
+        },
+    },
     'toleranceCents': toleranceCents,
     'octaveTolerant': octaveTolerant,
     'micGateDb': micGateDb,

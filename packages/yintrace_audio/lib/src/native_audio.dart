@@ -49,6 +49,9 @@ class DecodedAudio {
 
 enum MicPermission { undetermined, granted, denied }
 
+/// The active system output (YT_OUTPUT_* in yt_audio.h).
+enum OutputRoute { unknown, speaker, wired, usb, bluetooth, airPlay }
+
 /// The system's thermal state (Apple's NSProcessInfo.thermalState).
 enum ThermalState { nominal, fair, serious, critical }
 
@@ -70,6 +73,9 @@ abstract final class AudioEvents {
   /// Headphones, a Bluetooth/USB device or AirPlay went away, so the sound
   /// would now come from the phone. Playback and capture are silenced.
   static const deviceLost = 8;
+
+  /// The active input or output ports changed, even within the same type.
+  static const routePortsChanged = 16;
 
   /// Events after which the user has to resume playback.
   static const silencing = stopped | deviceLost;
@@ -178,7 +184,21 @@ class NativeAudio {
   static int configureSession({required bool record, bool measurement = false}) =>
       _b.configureSession(record ? 1 : 0, measurement ? 1 : 0);
 
-  /// Input + output hardware latency reported by the OS, in seconds.
+  /// Opens the same recording session as practice and saves the previous
+  /// configuration. Returns 0 on success.
+  static int beginLatencyCalibration({required bool measurement}) =>
+      _b.beginLatencyCalibration(measurement ? 1 : 0);
+
+  /// Restores the shared session after the calibration device was closed.
+  static int endLatencyCalibration() => _b.endLatencyCalibration();
+
+  /// The active system output, or unknown where the platform cannot report it.
+  static OutputRoute get outputRoute {
+    final value = _b.outputRoute();
+    return value >= 0 && value < OutputRoute.values.length ? OutputRoute.values[value] : OutputRoute.unknown;
+  }
+
+  /// OS-reported input latency, output latency and I/O buffer, in seconds.
   static double get sessionLatency => _b.sessionLatency();
 
   /// Bytes the app can still allocate before iOS terminates it, or null
@@ -340,6 +360,9 @@ class PracticeEngine {
 
   /// Device period in engine frames (0 when unknown/offline).
   int get periodFrames => _b.enginePeriodFrames(_ptr);
+
+  /// The practice round-trip estimate before any user compensation.
+  double get systemLatencySeconds => NativeAudio.sessionLatency + periodFrames / sampleRate;
 
   void loadTrackPcm(int slot, Float32List interleaved, int channels) {
     _check();
