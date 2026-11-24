@@ -1177,12 +1177,15 @@ class _MixSheetState extends State<_MixSheet> {
                 Expanded(child: Text('当前线路：${latencyRouteLabel(route, measurement: measurement)}')),
                 TextButton(
                   onPressed: widget.session.started
-                      ? () => showLatencyCalibration(
-                          context,
-                          settings: s,
-                          measurer: widget.latencyMeasurer,
-                          practice: widget.session,
-                        )
+                      ? () async {
+                          await showLatencyCalibration(
+                            context,
+                            settings: s,
+                            measurer: widget.latencyMeasurer,
+                            practice: widget.session,
+                          );
+                          if (mounted) setState(() {});
+                        }
                       : null,
                   child: const Text('测量延迟'),
                 ),

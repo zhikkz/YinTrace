@@ -1336,12 +1336,18 @@ void main() {
 
   final lib = Platform.environment['YINTRACE_AUDIO_LIB'];
 
-  testWidgets('the practice entry pauses the song and reports failed calibration without a value', (tester) async {
+  testWidgets('the practice entry pauses the song, shows failures and applies the confirmed offset', (tester) async {
     phone(tester);
     final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
     final measurer = _FakeLatencyMeasurer(OutputRoute.wired, [
       LatencyCalibrationFailure.noTestSound,
       LatencyCalibrationFailure.routeChanged,
+      const LatencyCalibrationReading(
+        route: OutputRoute.wired,
+        measurement: true,
+        totalSeconds: 0.094,
+        systemSeconds: 0.060,
+      ),
     ]);
     final settings = AppSettings(null);
     final app = AppServices(settings: settings, songs: services.songs, models: services.models, latencyMeasurer: measurer);
@@ -1401,14 +1407,23 @@ void main() {
     await tester.tap(find.text('再测一次'));
     await tester.pump();
     expect(find.textContaining('音频线路变了'), findsOneWidget);
-    await tester.tap(find.text('取消'));
+    expect(settings.latencyOffsetFor(OutputRoute.wired, measurement: true), 0);
+
+    await tester.tap(find.text('再测一次'));
+    await tester.pump();
+    expect(find.textContaining('设为 +34 ms'), findsOneWidget);
+    expect(settings.latencyOffsetFor(OutputRoute.wired, measurement: true), 0);
+    await tester.tap(find.text('使用'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(session.isPlaying, isFalse);
     expect(session.monitorEnabled, isTrue);
     expect(engine.positionFrame, position);
-    expect(settings.latencyOffsetFor(OutputRoute.wired, measurement: true), 0);
+    expect(settings.latencyOffsetFor(OutputRoute.wired, measurement: true), 34);
+    expect(session.latency - session.systemLatency, closeTo(0.034, 1e-9));
+    expect(find.text('+34 ms'), findsOneWidget);
     expect(measurer.calls, [
+      (LatencyCalibrationMethod.automatic, true),
       (LatencyCalibrationMethod.automatic, true),
       (LatencyCalibrationMethod.automatic, true),
     ]);
