@@ -34,6 +34,10 @@ target 'Runner' do
   # C symbols stay visible to dart:ffi.
   use_frameworks! :linkage => :static
 
+  # The upstream pod archive host is unavailable. These specs keep the
+  # 1.28.0 binaries and Objective-C sources pinned (see THIRD_PARTY_NOTICES.md).
+  pod 'onnxruntime-c', :podspec => 'onnxruntime/onnxruntime-c.podspec.json'
+  pod 'onnxruntime-objc', :podspec => 'onnxruntime/onnxruntime-objc.podspec.json'
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths

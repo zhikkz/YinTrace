@@ -24,9 +24,12 @@ def verify_versions(pub_lock, pod_lock):
     archive = re.search(r'^  archive:\n((?:    .*\n)+)', pub_lock.read_text(), re.MULTILINE)
     if archive is None or not re.search(r'^    version: ["\']?4\.7\.1["\']?$', archive.group(1), re.MULTILINE):
         raise SystemExit('Update the archive notices for the version in pubspec.lock.')
-    pods = pod_lock.read_text()
+    # DEPENDENCIES can also list these names with a local podspec path.
+    pods = re.search(r'^PODS:\n((?: .+(?:\n|$))+)', pod_lock.read_text(), re.MULTILINE)
+    if pods is None:
+        raise SystemExit('Missing installed PODS section in Podfile.lock.')
     for name in ('onnxruntime-c', 'onnxruntime-objc'):
-        versions = set(re.findall(rf'^  - {name}(?:/Core)? \(([^)]*)\)(?::|$)', pods, re.MULTILINE))
+        versions = set(re.findall(rf'^  - {name}(?:/Core)? \(([^)]*)\)(?::|$)', pods[1], re.MULTILINE))
         if versions != {'1.28.0'}:
             raise SystemExit(f'Update the ONNX Runtime notices for the version of {name} in Podfile.lock.')
 

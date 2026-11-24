@@ -145,6 +145,15 @@ including the KleidiAI Apache 2.0 text. The two files were copied verbatim from
 Microsoft's [ONNX Runtime 1.28.0 macOS arm64 wheel](https://pypi.org/project/onnxruntime/1.28.0/#files).
 The iOS CI reads the Podfile lock and checks both files inside the IPA.
 
+The iOS podspecs use the device and simulator XCFramework from Microsoft's
+SHA-256-pinned NuGet package. Its manifest identifies ONNX Runtime commit
+`da9b5e364c465de65c49d91e696cd6485270757f`. The Objective-C binding is
+fetched at a fixed commit of the plugin maintainer's source mirror. Its
+entire `objectivec` tree matches that Microsoft commit (Git tree
+`4f2470ea4b95f32b759534719040b7a5bd35c7bb`).
+[Microsoft NuGet package](https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.28.0)
+· [Objective-C source](https://github.com/masicai/onnxruntime-swift-package-manager/tree/3fb68950a5967c8c120f9f99a1a850a43985a4c9/objectivec)
+
     MIT License
 
     Copyright (c) Microsoft Corporation
