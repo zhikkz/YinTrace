@@ -51,14 +51,21 @@ class MandarinReadings {
   final int _lookahead;
 
   static Future<MandarinReadings>? _shared;
+  static Future<List<String>> Function() _readTables = bundledTables;
 
   static Future<MandarinReadings> load() => _shared ??= _load();
 
+  static Future<List<String>> bundledTables() => Future.wait([
+    rootBundle.loadString('assets/mandarin/unihan-readings.tsv'),
+    rootBundle.loadString('assets/mandarin/cc-cedict-readings.tsv'),
+  ]);
+
+  /// Flutter assets belong to the root isolate. Each worker parses and caches
+  /// the two source strings on first use.
+  static void initializeWorker(Future<List<String>> Function() readTables) => _readTables = readTables;
+
   static Future<MandarinReadings> _load() async {
-    final [unihan, cedict] = await Future.wait([
-      rootBundle.loadString('assets/mandarin/unihan-readings.tsv'),
-      rootBundle.loadString('assets/mandarin/cc-cedict-readings.tsv'),
-    ]);
+    final [unihan, cedict] = await _readTables();
     final characters = <String, List<String>>{};
     final simplified = <String, String>{};
     final phrases = <String, List<String>>{};

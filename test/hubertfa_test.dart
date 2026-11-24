@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -106,6 +107,18 @@ void main() {
       [10, 11],
     ]);
     expect(() => lexicon.phones(lines[0], LyricsLanguage.chinese, {1: 'bad'}), throwsFormatException);
+  });
+
+  test('the alignment worker can read both bundled Mandarin tables', () async {
+    final token = RootIsolateToken.instance!;
+    final tables = await MandarinReadings.bundledTables();
+    final pinyin = await Isolate.run(() async {
+      BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+      MandarinReadings.initializeWorker(() async => tables);
+      final readings = await MandarinReadings.load();
+      return readings.forTokens(tokenize('彈著吉他 一行淚')).values.join(' ');
+    });
+    expect(pinyin, 'tan zhe ji ta yi hang lei');
   });
 
   test('Mandarin lyrics distinguish playing an instrument and counting rows', () async {

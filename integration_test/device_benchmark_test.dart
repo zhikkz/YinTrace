@@ -56,7 +56,7 @@ void main() {
     expect(report['finished_at'], isNotNull);
     final imp = report['import'] as Map;
     expect(imp['error'], isNull);
-    expect(imp['alignment'], 'HuBERTFA');
+    expect(imp['alignment'], 'HuBERTFA', reason: imp['alignment_error']?.toString());
     expect(imp['mdx_runtime'], 'Core ML');
     expect('${imp['coreml_check']}', startsWith('checked'));
     expect(imp['mdx_run_s'], greaterThan(0));

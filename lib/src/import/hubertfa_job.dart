@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../analysis/hubertfa_aligner.dart';
 import '../analysis/lrc.dart';
+import '../analysis/mandarin_readings.dart';
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../audio/audio_backend.dart';
@@ -108,11 +109,13 @@ Future<T> _inBackground<T>(
   String vocalPath,
   List<LyricLine> lines,
   Future<T> Function(HubertFaAligner aligner, Float32List vocal) run,
-) {
+) async {
   final token = RootIsolateToken.instance;
   if (token == null) throw StateError('Lyric alignment must be started from the root isolate');
+  final tables = await MandarinReadings.bundledTables();
   return Isolate.run(() async {
     BackgroundIsolateBinaryMessenger.ensureInitialized(token);
+    MandarinReadings.initializeWorker(() async => tables);
     final vocal = const NativeAudioBackend()
         .decode(vocalPath, sampleRate: HubertFaAligner.sampleRate, channels: 1)
         .samples;
