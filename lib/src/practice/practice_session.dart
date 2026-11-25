@@ -316,7 +316,7 @@ class PracticeSession extends ChangeNotifier {
       final track = ShiftedTrack(
         repository.pathFor(meta.id, entry.value),
         key,
-        cacheDirectory: cache,
+        cache: cache,
         sampleRate: e.sampleRate,
       );
       void progress(double fraction) {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:yintrace_audio/yintrace_audio.dart';
 
+import '../audio/key_shift_cache.dart';
 import '../import/import_queue.dart';
 import '../import/vocal_acceleration.dart';
 import '../library/song_repository.dart';
@@ -62,6 +64,7 @@ class AppServices {
       keyShiftRoot: Directory('${cache.path}/key-shifts'),
     );
     await songs.root.create(recursive: true);
+    unawaited(KeyShiftCache.trimInBackground(songs.keyShiftRoot.path));
     void excludeFromBackup(String path) {
       try {
         NativeAudio.excludeFromBackup(path);
