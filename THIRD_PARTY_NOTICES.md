@@ -5,7 +5,7 @@ License, version 3 (see `LICENSE`). It is built on the work listed here. Those
 parts were published under permissive terms (MIT, BSD, Apache 2.0, public
 domain) that are compatible with the AGPL; their copyright notices and license
 texts are kept below, as those licenses require. The app shows the same credits
-under 设置 → 致谢与开源许可, together with the licenses of every Flutter
+under 设置 → 关于音迹, together with the licenses of every Flutter
 package it links.
 
 What this repository does **not** contain: no weights of the separation
@@ -293,6 +293,7 @@ Linked into the app, each under the license published with the package:
 | `fftea` | Apache 2.0 |
 | `crypto`, `ffi`, `path_provider` | BSD 3-Clause |
 | `wakelock_plus` (and `package_info_plus`) | BSD 3-Clause |
+| `url_launcher` | BSD 3-Clause |
 | `cupertino_icons` | MIT |
 
 `archive` 4.7.1 also ships code derived from Zstandard 1.5.7 (including xxHash)

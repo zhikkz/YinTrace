@@ -108,6 +108,18 @@ flutter test test/real_import_test.dart
 提供 `REAL_IMPORT_REFERENCE=/path/to/uvr_lead.wav` 时还与 UVR 主唱生成的图比较；
 `REAL_IMPORT_OUT` 可保留本地曲库输出。CI 使用原创示例歌词和合成音频验证此路径。
 
+## 发布新版本
+
+App 的“检查更新”读取 GitHub 上的最新 Release（`api.github.com/repos/zhikkz/YinTrace/releases/latest`，
+不含草稿和预发布），把它的 tag 和 App 自己的版本比较。发布时：
+
+1. 同时改 `pubspec.yaml` 的 `version` 和 `lib/src/app/licenses.dart` 的 `appVersion`（有测试保证两者一致）。
+2. 在 GitHub 发布 Release，tag 写成 `v` 加版本号，例如 `v1.1.0`，把安装包附在这个 Release 上。
+
+已装的 App 每天最多自动查一次（关于页可关），发现更高的版本时，只在曲库的设置按钮、设置里的“关于音迹”
+和关于页显示红点，不弹窗；打开关于页后前两处的红点消失，关于页里提供该 Release 页面的链接。
+还没有任何 Release 时，GitHub 返回 404，App 显示“已是最新版本”。
+
 ## 移植到其他平台
 
 代码按“与平台无关的 Dart + 可移植的 C 核心”组织，iOS 以外的平台需要补的东西：

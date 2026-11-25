@@ -51,9 +51,12 @@ void main() {
     expect(file.existsSync(), isFalse, reason: 'nothing written while dragging');
     await s.save(); // let go
     expect((await AppSettings.load(file)).latencyOffsetMs, 180);
-    await s.update((x) => x.octaveTolerant = false);
+    expect(s.autoCheckUpdates, isTrue, reason: 'checks for updates unless turned off');
+    await s.update((x) => x
+      ..octaveTolerant = false
+      ..autoCheckUpdates = false);
     final loaded = await AppSettings.load(file);
-    expect([loaded.latencyOffsetMs, loaded.octaveTolerant], [180, false]);
+    expect([loaded.latencyOffsetMs, loaded.octaveTolerant, loaded.autoCheckUpdates], [180, false, false]);
     // No file (tests, previews): nothing to do, nothing thrown.
     await AppSettings(null).update((x) => x.toleranceCents = 30);
   });

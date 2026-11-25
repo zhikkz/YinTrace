@@ -77,6 +77,10 @@ class AppSettings extends ChangeNotifier {
   /// pitch is measured with YIN either way.)
   bool yinPitch = false;
 
+  /// Asks GitHub for the latest version at most once a day (UpdateChecker);
+  /// a newer one shows as a red dot on the way to the About page.
+  bool autoCheckUpdates = true;
+
   static Future<AppSettings> load(File file) async {
     final s = AppSettings(file);
     if (file.existsSync()) {
@@ -116,6 +120,7 @@ class AppSettings extends ChangeNotifier {
     measurementMode = j['measurementMode'] as bool? ?? measurementMode;
     practiceWindowSeconds = (j['practiceWindowSeconds'] as num?)?.toDouble() ?? practiceWindowSeconds;
     yinPitch = j['yinPitch'] as bool? ?? yinPitch;
+    autoCheckUpdates = j['autoCheckUpdates'] as bool? ?? autoCheckUpdates;
   }
 
   Map<String, dynamic> toJson() => {
@@ -138,6 +143,7 @@ class AppSettings extends ChangeNotifier {
     'measurementMode': measurementMode,
     'practiceWindowSeconds': practiceWindowSeconds,
     'yinPitch': yinPitch,
+    'autoCheckUpdates': autoCheckUpdates,
   };
 
   /// Applies [change], notifies listeners and saves.
