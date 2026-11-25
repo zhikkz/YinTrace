@@ -247,6 +247,11 @@ jobs:
       - run: flutter pub get
       - name: Build the release APK
         run: flutter build apk --release
+      # Only a release build shows a permission missing from the main
+      # manifest (the debug one adds INTERNET), and the emulator test runs a
+      # debug build.
+      - name: The release APK asks for the network and the microphone
+        run: tools/check_android_permissions.sh build/app/outputs/flutter-apk/app-release.apk
       - uses: actions/upload-artifact@v6
         with:
           name: yintrace-android-apk
