@@ -16,6 +16,8 @@ typedef _EncodeC = Int32 Function(Pointer<Char>, Pointer<Float>, Int64, Int32, I
 typedef _EncodeD = int Function(Pointer<Char>, Pointer<Float>, int, int, int, int);
 typedef _VoidC = Void Function();
 typedef _VoidD = void Function();
+typedef _Int1C = Int32 Function(Int32);
+typedef _Int1D = int Function(int);
 typedef _Int2C = Int32 Function(Int32, Int32);
 typedef _Int2D = int Function(int, int);
 typedef _DoubleC = Double Function();
@@ -111,7 +113,10 @@ class YtBindings {
       micPermissionStatus = library.lookupFunction<_VersionC, _VersionD>('yt_mic_permission_status'),
       requestMicPermission = library.lookupFunction<_VoidC, _VoidD>('yt_request_mic_permission'),
       configureSession = library.lookupFunction<_Int2C, _Int2D>('yt_configure_session'),
+      beginLatencyCalibration = library.lookupFunction<_Int1C, _Int1D>('yt_begin_latency_calibration'),
+      endLatencyCalibration = library.lookupFunction<_VersionC, _VersionD>('yt_end_latency_calibration'),
       sessionLatency = library.lookupFunction<_DoubleC, _DoubleD>('yt_session_latency'),
+      outputRoute = library.lookupFunction<_VersionC, _VersionD>('yt_output_route'),
       availableMemory = library.lookupFunction<_Int64C, _Int64D>('yt_available_memory'),
       deviceModel = library.lookupFunction<_StringC, _StringD>('yt_device_model'),
       physicalMemory = library.lookupFunction<_Int64C, _Int64D>('yt_physical_memory'),
@@ -161,7 +166,10 @@ class YtBindings {
   final int Function() micPermissionStatus;
   final void Function() requestMicPermission;
   final int Function(int, int) configureSession;
+  final int Function(int) beginLatencyCalibration;
+  final int Function() endLatencyCalibration;
   final double Function() sessionLatency;
+  final int Function() outputRoute;
   final int Function() availableMemory;
   final int Function(Pointer<Char>, int) deviceModel;
   final int Function() physicalMemory;

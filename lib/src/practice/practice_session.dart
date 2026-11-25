@@ -51,9 +51,11 @@ class PracticeSession extends ChangeNotifier {
     this.contour,
     this.loopLine,
     PracticeEngine Function()? engineFactory,
+    OutputRoute Function()? readOutputRoute,
     this.loadTrack,
     this.decodeInBackground = true,
   }) : _engineFactory = engineFactory ?? (() => PracticeEngine.create(mode: EngineMode.duplex)),
+       _readOutputRoute = readOutputRoute ?? (() => NativeAudio.outputRoute),
        _transpose = meta.transpose {
     scorer = PracticeScorer(reference, options: _scoringOptions())..onlyLine = loopLine;
   }
@@ -64,6 +66,7 @@ class PracticeSession extends ChangeNotifier {
   final AppSettings settings;
   final PitchTrack? contour;
   final PracticeEngine Function() _engineFactory;
+  final OutputRoute Function() _readOutputRoute;
   final LoadPracticeTrack? loadTrack;
 
   /// Decode the tracks in a background isolate (keeps the UI responsive).
@@ -78,6 +81,8 @@ class PracticeSession extends ChangeNotifier {
   LivePitchTracker? _tracker;
   int _endCount = 0;
   double _latency = 0;
+  double _systemLatency = 0;
+  OutputRoute _outputRoute = OutputRoute.unknown;
   double _clock = 0;
 
   /// Trail of the singer's pitch (last [_keepSeconds] seconds).
@@ -94,6 +99,7 @@ class PracticeSession extends ChangeNotifier {
   bool _starting = false;
   bool _disposed = false;
   bool _suspended = false;
+  bool _calibrating = false;
   String? pauseReason;
 
   int _transpose;
@@ -157,7 +163,7 @@ class PracticeSession extends ChangeNotifier {
     _monitorEnabled = enabled && _monitorAvailable;
     if (_monitorEnabled != was && started && !_suspended) {
       try {
-        NativeAudio.configureSession(record: true, measurement: _measurement);
+        NativeAudio.configureSession(record: true, measurement: usesMeasurementMode);
       } catch (err) {
         _log('monitor session mode: $err');
       }
@@ -170,7 +176,7 @@ class PracticeSession extends ChangeNotifier {
   /// built-in microphone's processing delay) out of the input, also while
   /// monitoring: the monitor is only on with wired headphones, where the
   /// quieter speaker output of that mode does not matter.
-  bool get _measurement => settings.measurementMode || _monitorEnabled;
+  bool get usesMeasurementMode => settings.measurementMode || _monitorEnabled;
 
   /// Listening (to the take or the original singer) instead of practising.
   bool get reviewing => _review != null;
@@ -202,6 +208,9 @@ class PracticeSession extends ChangeNotifier {
 
   /// Total compensation applied to captured audio (seconds).
   double get latency => _latency;
+  double get systemLatency => _systemLatency;
+  OutputRoute get outputRoute => _outputRoute;
+  int get latencyOffsetMs => settings.latencyOffsetFor(outputRoute, measurement: usesMeasurementMode);
 
   /// Song position the singer currently hears or is previewing by dragging.
   double get position {
@@ -243,14 +252,9 @@ class PracticeSession extends ChangeNotifier {
       await _rememberKey();
       if (_disposed) return;
       _finishKeyShift();
-      applyMix();
-      final period = e.periodFrames / e.sampleRate;
-      _latency = NativeAudio.sessionLatency + period + settings.latencyOffsetMs / 1000.0;
-      _tracker = LivePitchTracker(
-        sampleRate: e.sampleRate,
-        options: LivePitchOptions(gateDb: settings.micGateDb, latencySeconds: _latency),
-      );
       take = _newTake(e);
+      // applyMix() below, once the device runs, sets the scoring key and
+      // the latency for the current output route.
       _endCount = e.endCount;
       if (_suspended || pauseReason != null) {
         // Backgrounding and returning while decode is still in flight must
@@ -260,6 +264,11 @@ class PracticeSession extends ChangeNotifier {
       } else {
         e.start();
       }
+      applyMix();
+      _tracker = LivePitchTracker(
+        sampleRate: e.sampleRate,
+        options: LivePitchOptions(gateDb: settings.micGateDb, latencySeconds: _latency),
+      );
       started = true;
       if (loopLine != null) {
         setLoopLine(loopLine);
@@ -367,7 +376,9 @@ class PracticeSession extends ChangeNotifier {
   Future<void> setTranspose(int target, {bool resumeAfterSaving = false}) async {
     RangeError.checkValueInInterval(target, minTranspose, maxTranspose, 'transpose');
     final e = _engine;
-    if (e == null || !started || _disposed || changingKey || error != null || target == _transpose) return;
+    if (e == null || !started || _disposed || _calibrating || changingKey || error != null || target == _transpose) {
+      return;
+    }
     final resumePlayback = !reviewing && (isPlaying || resumeAfterSaving);
     if (reviewing) stopListening();
     _scrub.cancel(e, resume: false);
@@ -443,10 +454,11 @@ class PracticeSession extends ChangeNotifier {
     _refreshMonitorRoute();
     e.setMonitorGain(_monitorEnabled && kind == null ? settings.monitorGain : 0);
     scorer.options = _scoringOptions();
+    _outputRoute = _readOutputRoute();
+    _systemLatency = e.systemLatencySeconds;
+    _latency = _systemLatency + latencyOffsetMs / 1000.0;
     final t = _tracker;
     if (t != null) {
-      final period = e.periodFrames / e.sampleRate;
-      _latency = NativeAudio.sessionLatency + period + settings.latencyOffsetMs / 1000.0;
       t.options = t.options.copyWith(gateDb: settings.micGateDb, latencySeconds: _latency);
     }
   }
@@ -466,17 +478,20 @@ class PracticeSession extends ChangeNotifier {
 
   void _play({bool restartAtEnd = true}) {
     final e = _engine;
-    if (e == null || !started || _suspended || _disposed || changingKey || error != null) return;
+    if (e == null || !started || _suspended || _disposed || _calibrating || changingKey || error != null) return;
     _scrub.cancel(e, resume: false);
     _log('play at ${position.toStringAsFixed(1)} s');
     try {
-      final measurement = _measurement;
+      final measurement = usesMeasurementMode;
       NativeAudio.configureSession(record: true, measurement: measurement);
       final events = e.takeAudioEvents();
       if (events & AudioEvents.deviceLost != 0) _monitorEnabled = false;
+      _refreshMonitorRoute();
       // The headphones went before the monitor could be turned off: not in
       // measurement mode on the speaker.
-      if (_measurement != measurement) NativeAudio.configureSession(record: true, measurement: _measurement);
+      if (usesMeasurementMode != measurement) {
+        NativeAudio.configureSession(record: true, measurement: usesMeasurementMode);
+      }
       e.flushCapture();
       _tracker?.reset();
       e.start();
@@ -617,6 +632,30 @@ class PracticeSession extends ChangeNotifier {
     if (_engine != null) _log('suspend: $reason');
     _suspended = true;
     pauseReason = reason;
+    _stopDevice();
+  }
+
+  /// Give calibration exclusive use of the microphone and output. The song
+  /// stays paused afterwards, at the same position with the same take.
+  Future<T> withAudioPausedForCalibration<T>(Future<T> Function() measure) async {
+    // The stems are being replaced: the engine is not the practice path yet.
+    if (changingKey) throw StateError('正在变调，变调完成后再测量延迟');
+    _calibrating = true;
+    pauseReason = '练习已暂停，点播放继续';
+    try {
+      _stopDevice();
+      return await measure();
+    } finally {
+      _calibrating = false;
+      if (!_disposed) {
+        tick();
+        applyMix();
+        notifyListeners();
+      }
+    }
+  }
+
+  void _stopDevice() {
     final e = _engine;
     _scrub.cancel(e, resume: false);
     if (e != null) {
@@ -804,12 +843,12 @@ class PracticeSession extends ChangeNotifier {
   void tick() {
     final e = _engine;
     final tr = _tracker;
-    if (e == null || tr == null || _suspended) return;
+    if (e == null || tr == null || _suspended || _calibrating) return;
     final events = e.takeAudioEvents();
     if (events != 0) _log('audio events 0x${events.toRadixString(16)}');
     if (events & AudioEvents.silencing != 0) {
       if (events & AudioEvents.deviceLost != 0) _monitorEnabled = false;
-      _refreshMonitorRoute();
+      applyMix();
       suspend(
         reason: events & AudioEvents.deviceLost != 0
             ? '耳机断开了，已暂停，免得从扬声器外放。点播放继续'
@@ -821,6 +860,15 @@ class PracticeSession extends ChangeNotifier {
     // iOS also reports this when playback and recording start: keep going,
     // only the new route's latency matters.
     if (events & AudioEvents.routeChanged != 0) {
+      final measurement = usesMeasurementMode;
+      _refreshMonitorRoute();
+      if (usesMeasurementMode != measurement && pauseReason == null) {
+        try {
+          NativeAudio.configureSession(record: true, measurement: usesMeasurementMode);
+        } catch (err) {
+          _log('route session mode: $err');
+        }
+      }
       applyMix();
       notifyListeners(); // update an open mix sheet even while paused
     }

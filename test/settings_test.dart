@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yintrace/src/app/atomic_file.dart';
 import 'package:yintrace/src/app/settings.dart';
 import 'package:yintrace/src/import/vocal_acceleration.dart';
-import 'package:yintrace_audio/yintrace_audio.dart' show PracticeEngine;
+import 'package:yintrace_audio/yintrace_audio.dart' show OutputRoute, PracticeEngine;
 
 void main() {
   late Directory tmp;
@@ -56,6 +56,38 @@ void main() {
     expect([loaded.latencyOffsetMs, loaded.octaveTolerant], [180, false]);
     // No file (tests, previews): nothing to do, nothing thrown.
     await AppSettings(null).update((x) => x.toleranceCents = 30);
+  });
+
+  test('latency settings keep the old fallback and save offsets by route and mode', () async {
+    final file = File('${tmp.path}/settings.json')..writeAsStringSync('{"latencyOffsetMs": 123}');
+    final s = await AppSettings.load(file);
+    for (final route in OutputRoute.values) {
+      expect(s.latencyOffsetFor(route, measurement: false), 123);
+      expect(s.latencyOffsetFor(route, measurement: true), 123);
+    }
+
+    const offsets = {
+      OutputRoute.speaker: -8,
+      OutputRoute.wired: 4,
+      OutputRoute.usb: 9,
+      OutputRoute.bluetooth: 407,
+      OutputRoute.airPlay: 685,
+    };
+    await s.update((s) {
+      for (final entry in offsets.entries) {
+        s.setLatencyOffset(entry.key, entry.value, measurement: false);
+      }
+      s.setLatencyOffset(OutputRoute.wired, -12, measurement: true);
+    });
+
+    final loaded = await AppSettings.load(file);
+    expect(loaded.latencyOffsetMs, 123);
+    expect(loaded.latencyOffsetFor(OutputRoute.unknown, measurement: false), 123);
+    for (final entry in offsets.entries) {
+      expect(loaded.latencyOffsetFor(entry.key, measurement: false), entry.value);
+    }
+    expect(loaded.latencyOffsetFor(OutputRoute.wired, measurement: true), -12);
+    expect(loaded.latencyOffsetFor(OutputRoute.bluetooth, measurement: true), 123);
   });
 
   test('a writer writes the newest state once, not every state in between', () async {

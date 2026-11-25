@@ -28,6 +28,7 @@ import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/models/model_manager.dart';
 import 'package:yintrace/src/models/model_catalog.dart';
 import 'package:yintrace/src/ui/model_setup.dart';
+import 'package:yintrace/src/practice/latency_calibration.dart';
 import 'package:yintrace/src/practice/live_pitch.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
 import 'package:yintrace/src/practice/scoring.dart';
@@ -41,6 +42,7 @@ import 'package:yintrace/src/ui/export_page.dart';
 import 'package:yintrace/src/ui/import_page.dart';
 import 'package:yintrace/src/ui/import_queue_page.dart';
 import 'package:yintrace/src/ui/library_page.dart';
+import 'package:yintrace/src/ui/latency_calibration_dialog.dart';
 import 'package:yintrace/src/ui/pitch_editor_page.dart';
 import 'package:yintrace/src/ui/pitch_graph.dart';
 import 'package:yintrace/src/ui/settings_page.dart';
@@ -119,6 +121,28 @@ Widget host(AppServices services, Widget home) => AppScope(
     child: MaterialApp(debugShowCheckedModeBanner: false, theme: YinTraceApp.theme(Brightness.light), home: home),
   ),
 );
+
+class _FakeLatencyMeasurer implements LatencyMeasurer {
+  _FakeLatencyMeasurer(this.outputRoute, this.results);
+
+  @override
+  OutputRoute outputRoute;
+  final List<LatencyCalibrationResult> results;
+  final calls = <(LatencyCalibrationMethod, bool)>[];
+  void Function()? onMeasure;
+
+  @override
+  Future<LatencyCalibrationResult> measure(
+    LatencyCalibrationMethod method, {
+    required bool measurement,
+    required LatencyCalibrationControl control,
+    required void Function(LatencyCalibrationProgress) onProgress,
+  }) async {
+    calls.add((method, measurement));
+    onMeasure?.call();
+    return results.removeAt(0);
+  }
+}
 
 void main() {
   late Directory tmp;
@@ -1201,6 +1225,73 @@ void main() {
     await screenshot(tester, '7_model_download');
   });
 
+  testWidgets('settings measure, retry and cancel before saving only the current route', (tester) async {
+    phone(tester);
+    const result = LatencyCalibrationReading(
+      route: OutputRoute.bluetooth,
+      measurement: false,
+      totalSeconds: 0.186,
+      systemSeconds: 0.142,
+    );
+    const longResult = LatencyCalibrationReading(
+      route: OutputRoute.bluetooth,
+      measurement: false,
+      totalSeconds: 0.657,
+      systemSeconds: 0.142,
+    );
+    final measurer = _FakeLatencyMeasurer(OutputRoute.bluetooth, [result, longResult, longResult]);
+    final settings = AppSettings(null)..latencyOffsetMs = 25;
+    final app = AppServices(settings: settings, songs: services.songs, models: services.models, latencyMeasurer: measurer);
+    await tester.pumpWidget(host(app, const SettingsPage()));
+    final entry = find.widgetWithText(ListTile, '测量延迟');
+    await tester.scrollUntilVisible(entry, 200);
+    expect(find.text('当前线路：蓝牙耳机'), findsOneWidget);
+
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(find.text('自动测'), findsOneWidget);
+    expect(find.text('跟拍测'), findsOneWidget);
+    await tester.tap(find.text('自动测'));
+    await tester.tap(find.text('开始测量'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('测得总延迟 186 ms（系统报告 142 ms）'), findsOneWidget);
+    expect(find.textContaining('设为 +44 ms'), findsOneWidget);
+    expect(settings.latencyOffsetFor(OutputRoute.bluetooth, measurement: false), 25);
+    await tester.tap(find.text('再测一次'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('设为 +515 ms'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(settings.latencyOffsetFor(OutputRoute.bluetooth, measurement: false), 25);
+
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('开始测量'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('使用'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(measurer.calls, [
+      (LatencyCalibrationMethod.automatic, false),
+      (LatencyCalibrationMethod.automatic, false),
+      (LatencyCalibrationMethod.tapAlong, false),
+    ]);
+    expect(settings.latencyOffsetFor(OutputRoute.bluetooth, measurement: false), 515);
+    final slider = find.descendant(of: find.byType(LatencyCompensationSlider), matching: find.byType(Slider));
+    expect(tester.widget<Slider>(slider).value, 515);
+    expect(tester.widget<Slider>(slider).max, greaterThanOrEqualTo(515));
+
+    measurer.outputRoute = OutputRoute.speaker;
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('当前线路：外放'), findsOneWidget);
+    expect(tester.widget<Slider>(slider).value, 25);
+    tester.widget<Slider>(slider).onChanged!(-40);
+    await tester.pump();
+    expect(settings.latencyOffsetFor(OutputRoute.speaker, measurement: false), -40);
+    expect(settings.latencyOffsetFor(OutputRoute.bluetooth, measurement: false), 515);
+    expect(settings.latencyOffsetMs, 25);
+  });
+
   testWidgets('about page credits the models and opens the licenses', (tester) async {
     phone(tester);
     await tester.pumpWidget(host(services, const AboutPage()));
@@ -1245,6 +1336,99 @@ void main() {
   }
 
   final lib = Platform.environment['YINTRACE_AUDIO_LIB'];
+
+  testWidgets('the practice entry pauses the song, shows failures and applies the confirmed offset', (tester) async {
+    phone(tester);
+    final ref = (await tester.runAsync(() => services.songs.loadReference(song.id)))!;
+    final measurer = _FakeLatencyMeasurer(OutputRoute.wired, [
+      LatencyCalibrationFailure.noTestSound,
+      LatencyCalibrationFailure.routeChanged,
+      const LatencyCalibrationReading(
+        route: OutputRoute.wired,
+        measurement: true,
+        totalSeconds: 0.094,
+        systemSeconds: 0.060,
+      ),
+    ]);
+    final settings = AppSettings(null);
+    final app = AppServices(settings: settings, songs: services.songs, models: services.models, latencyMeasurer: measurer);
+    late PracticeSession session;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpWidget(
+      host(
+        app,
+        PracticePage(
+          meta: song,
+          reference: ref,
+          sessionFactory: (_) => session = PracticeSession(
+            meta: song,
+            reference: ref,
+            repository: app.songs,
+            settings: settings,
+            engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+            readOutputRoute: () => measurer.outputRoute,
+            decodeInBackground: false,
+          ),
+          backgroundWork: false,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(session.started, isTrue);
+    session.setMonitorEnabled(true);
+    session.play();
+    final engine = session.engine!;
+    engine.render(512, input: Float32List(512));
+    final position = engine.positionFrame;
+    var playingDuringMeasurement = true;
+    var capturingDuringMeasurement = true;
+    measurer.onMeasure = () {
+      playingDuringMeasurement = session.isPlaying;
+      engine.render(512, input: Float32List(512));
+      capturingDuringMeasurement = engine.readCapture().isNotEmpty;
+    };
+    await tester.tap(find.byTooltip('练习设置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final entry = find.widgetWithText(TextButton, '测量延迟');
+    await tester.ensureVisible(entry);
+    await tester.pump();
+    expect(find.text('当前线路：有线耳机（测量模式）'), findsOneWidget);
+    await tester.tap(entry);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('自动测'));
+    await tester.tap(find.text('开始测量'));
+    await tester.pump();
+    expect(playingDuringMeasurement, isFalse);
+    expect(capturingDuringMeasurement, isFalse);
+    expect(find.textContaining('没听到测试音'), findsOneWidget);
+    expect(find.textContaining('测得总延迟'), findsNothing);
+    expect(find.text('使用'), findsNothing);
+    await tester.tap(find.text('再测一次'));
+    await tester.pump();
+    expect(find.textContaining('音频线路变了'), findsOneWidget);
+    expect(settings.latencyOffsetFor(OutputRoute.wired, measurement: true), 0);
+
+    await tester.tap(find.text('再测一次'));
+    await tester.pump();
+    expect(find.textContaining('设为 +34 ms'), findsOneWidget);
+    expect(settings.latencyOffsetFor(OutputRoute.wired, measurement: true), 0);
+    await tester.tap(find.text('使用'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(session.isPlaying, isFalse);
+    expect(session.monitorEnabled, isTrue);
+    expect(engine.positionFrame, position);
+    expect(settings.latencyOffsetFor(OutputRoute.wired, measurement: true), 34);
+    expect(session.latency - session.systemLatency, closeTo(0.034, 1e-9));
+    expect(find.text('+34 ms'), findsOneWidget);
+    expect(measurer.calls, [
+      (LatencyCalibrationMethod.automatic, true),
+      (LatencyCalibrationMethod.automatic, true),
+      (LatencyCalibrationMethod.automatic, true),
+    ]);
+  }, skip: lib == null || lib.isEmpty);
 
   testWidgets('free practice monitors the mic without tracks and disarms when headphones are lost', (tester) async {
     phone(tester);
