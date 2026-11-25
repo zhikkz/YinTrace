@@ -140,7 +140,7 @@ final _resultThenLe = RegExp(r'[着著](?:[我你他她它]们?)?了');
 final _zheLexeme = RegExp(r'[着著][火凉急迷魔陆落力色墨眼手笔重装衣床书作名称述实录有文者]');
 final _liaoLexeme = RegExp(r'了(?:解|结|却|然|当|事|断|如指掌|不起|得)');
 final _diLexeme = RegExp(r'(?<=[湿营土大平空场原遍各满高荒沙旱草腹盆一])地');
-final _zheObject = RegExp(r'[着著](?:凉气|火[苗光把焰炉]|衣[角袖领襟]|[书文](?!名|学|刊))');
+final _zheObject = RegExp(r'[着著](?:凉气|火[苗光把焰炉]|衣[角袖领襟]|[书文](?!名|学|刊)|脸)');
 // A subject or a modal adverb followed by 得 and an action (我得走了、还得悄悄地离开).
 final _deiLeft = RegExp(r'(?<=[我你他她咱仍还也就总都可必该非偏才只再真])得|(?<=[我你他她咱]们)得');
 final _deiRight = RegExp(
@@ -279,4 +279,5 @@ final _diWord = RegExp(r'(?<=[标中])的|(?<=目)的地|(?<=[有无])的放矢'
 final _destination = RegExp(r'(?<=(?<!无)目的)地');
 final _queWord = RegExp(r'的确(?:认(?!为|识|得)|切(?!开|断)|定|凿|立|实)');
 final _neverEnding = RegExp(r'(?<=没完没|不了了|一了百)了');
-final _attire = RegExp(r'(?<=[身的]穿)[着著]');
+// 她的穿着、穿着打扮 and 沉着冷静 keep the dictionary reading; 沉着脸 is aspect.
+final _attire = RegExp(r'(?<=[身的]穿)[着著]|(?<=穿)[着著](?=打扮)|(?<=沉)[着著](?!脸)');
