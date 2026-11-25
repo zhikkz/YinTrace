@@ -12,9 +12,12 @@ import 'scoring.dart';
 /// seek, or in a line loop) overwrites the earlier take of that passage.
 /// Allocates sample blocks only for the passages that reach the recorder.
 class TakeRecorder {
-  TakeRecorder({required this.sampleRate, required this.lengthFrames});
+  TakeRecorder({required this.sampleRate, required this.lengthFrames, this.transpose = 0});
 
   final int sampleRate;
+
+  /// The key heard while recording, in semitones relative to the original.
+  final int transpose;
 
   /// Length of the song; the take covers at most this.
   final int lengthFrames;

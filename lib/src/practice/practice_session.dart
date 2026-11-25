@@ -8,6 +8,7 @@ import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../app/settings.dart';
 import '../audio/playback_scrub.dart';
+import '../audio/shifted_track.dart';
 import '../library/song.dart';
 import '../library/song_repository.dart';
 import 'live_pitch.dart';
@@ -32,7 +33,15 @@ enum ListenKind {
   original,
 }
 
-/// Drives one practice run: audio engine, live pitch tracking and scoring.
+/// Loads a stem into the practice engine. The progress callback is 0..1.
+typedef LoadPracticeTrack = Future<void> Function(
+  PracticeEngine engine,
+  int slot,
+  ShiftedTrack track,
+  void Function(double)? onProgress,
+);
+
+/// Drives practice runs: audio engine, live pitch tracking and scoring.
 class PracticeSession extends ChangeNotifier {
   PracticeSession({
     required this.meta,
@@ -43,9 +52,11 @@ class PracticeSession extends ChangeNotifier {
     this.loopLine,
     PracticeEngine Function()? engineFactory,
     OutputRoute Function()? readOutputRoute,
+    this.loadTrack,
     this.decodeInBackground = true,
   }) : _engineFactory = engineFactory ?? (() => PracticeEngine.create(mode: EngineMode.duplex)),
-       _readOutputRoute = readOutputRoute ?? (() => NativeAudio.outputRoute) {
+       _readOutputRoute = readOutputRoute ?? (() => NativeAudio.outputRoute),
+       _transpose = meta.transpose {
     scorer = PracticeScorer(reference, options: _scoringOptions())..onlyLine = loopLine;
   }
 
@@ -56,6 +67,7 @@ class PracticeSession extends ChangeNotifier {
   final PitchTrack? contour;
   final PracticeEngine Function() _engineFactory;
   final OutputRoute Function() _readOutputRoute;
+  final LoadPracticeTrack? loadTrack;
 
   /// Decode the tracks in a background isolate (keeps the UI responsive).
   final bool decodeInBackground;
@@ -84,10 +96,20 @@ class PracticeSession extends ChangeNotifier {
   String? error;
   bool finished = false;
   bool started = false;
+  bool _starting = false;
   bool _disposed = false;
   bool _suspended = false;
   bool _calibrating = false;
   String? pauseReason;
+
+  int _transpose;
+  int get transpose => _transpose;
+  int? _requestedTranspose;
+  int get selectedTranspose => _requestedTranspose ?? _transpose;
+  double? _keyShiftProgress;
+  double? get keyShiftProgress => _keyShiftProgress;
+  bool get changingKey => _keyShiftProgress != null;
+  String? keyShiftNotice;
 
   /// What the singer sang in this session (null until the audio started).
   TakeRecorder? take;
@@ -205,11 +227,13 @@ class PracticeSession extends ChangeNotifier {
     greatCents: settings.toleranceCents.toDouble(),
     okCents: settings.toleranceCents * 2.0,
     octaveTolerant: settings.octaveTolerant,
+    transpose: _transpose,
   );
 
   /// Opens the audio device and loads the tracks.
   Future<void> start() async {
-    if (started) return;
+    if (started || _starting || _disposed) return;
+    _starting = true;
     try {
       final perm = await NativeAudio.requestMicPermission();
       if (_disposed) return;
@@ -221,26 +245,16 @@ class PracticeSession extends ChangeNotifier {
       NativeAudio.configureSession(record: true, measurement: settings.measurementMode);
       final e = _engineFactory();
       _engine = e;
-      final acc = meta.accompanimentFile ?? meta.originalFile;
-      final tracks = <int, String>{
-        if (acc != null) TrackSlot.accompaniment: repository.pathFor(meta.id, acc),
-        TrackSlot.guideVocal: repository.pathFor(meta.id, meta.vocalsFile),
-      };
-      for (final entry in tracks.entries) {
-        if (decodeInBackground) {
-          final path = entry.value;
-          final rate = e.sampleRate;
-          final audio = await Isolate.run(() => NativeAudio.decodeFile(path, sampleRate: rate));
-          if (_engine != e) return; // disposed while loading
-          e.loadTrackPcm(entry.key, audio.samples, audio.channels);
-        } else {
-          e.loadTrackFile(entry.key, entry.value);
-        }
-      }
-      take = TakeRecorder(
-        sampleRate: e.sampleRate,
-        lengthFrames: math.max(e.lengthFrames, (meta.duration * e.sampleRate).ceil()),
-      );
+      final target = _transpose;
+      if (target != 0) _beginKeyShift(target);
+      _transpose = await _loadKey(e, target);
+      if (_disposed) return;
+      await _rememberKey();
+      if (_disposed) return;
+      _finishKeyShift();
+      take = _newTake(e);
+      // applyMix() below, once the device runs, sets the scoring key and
+      // the latency for the current output route.
       _endCount = e.endCount;
       if (_suspended || pauseReason != null) {
         // Backgrounding and returning while decode is still in flight must
@@ -262,14 +276,160 @@ class PracticeSession extends ChangeNotifier {
       notifyListeners();
     } catch (err) {
       if (_disposed) return;
+      _finishKeyShift();
       error = '无法启动音频：$err';
+      _engine?.dispose();
+      _engine = null;
       notifyListeners();
+    } finally {
+      _starting = false;
+    }
+  }
+
+  TakeRecorder _newTake(PracticeEngine e) => TakeRecorder(
+    sampleRate: e.sampleRate,
+    lengthFrames: math.max(e.lengthFrames, (meta.duration * e.sampleRate).ceil()),
+    transpose: _transpose,
+  );
+
+  void _beginKeyShift(int target) {
+    _requestedTranspose = target;
+    _keyShiftProgress = 0;
+    keyShiftNotice = null;
+    notifyListeners();
+  }
+
+  void _finishKeyShift() {
+    _requestedTranspose = null;
+    _keyShiftProgress = null;
+  }
+
+  Future<void> _loadTracks(PracticeEngine e, int key) async {
+    final cache = key == 0 ? null : await repository.prepareKeyShiftCache(meta.id);
+    if (_disposed) return;
+    final tracks = {
+      TrackSlot.accompaniment: ?meta.practiceAccompaniment,
+      TrackSlot.guideVocal: meta.vocalsFile,
+    };
+    var index = 0;
+    for (final entry in tracks.entries) {
+      final track = ShiftedTrack(
+        repository.pathFor(meta.id, entry.value),
+        key,
+        cacheDirectory: cache,
+        sampleRate: e.sampleRate,
+      );
+      void progress(double fraction) {
+        final previous = _keyShiftProgress;
+        if (_disposed || previous == null || key != _requestedTranspose) return;
+        final next = (index + fraction.clamp(0.0, 1.0)) / tracks.length;
+        if ((next * 100).floor() <= (previous * 100).floor()) return;
+        _keyShiftProgress = next;
+        notifyListeners();
+      }
+
+      final loader = loadTrack;
+      if (loader != null) {
+        await loader(e, entry.key, track, progress);
+      } else if (decodeInBackground) {
+        await _loadInBackground(e, entry.key, track, key == 0 ? null : progress);
+      } else if (key == 0) {
+        e.loadTrackFile(entry.key, track.path);
+      } else {
+        final audio = track.decode(onProgress: progress);
+        e.loadTrackPcm(entry.key, audio.samples, audio.channels);
+      }
+      if (_disposed) return;
+      progress(1);
+      index++;
+    }
+  }
+
+  /// Playback stays paused until both stems use the same key.
+  Future<int> _loadKey(PracticeEngine e, int target) async {
+    try {
+      await _loadTracks(e, target);
+      return target;
+    } catch (err) {
+      if (_disposed || target == 0) rethrow;
+      _log('key shift $target failed: $err');
+      await _loadTracks(e, 0);
+      keyShiftNotice = '变调失败，已回到原调';
+      return 0;
+    }
+  }
+
+  Future<void> _rememberKey() async {
+    if (meta.transpose == _transpose) return;
+    meta.transpose = _transpose;
+    try {
+      await repository.saveTranspose(meta.id, _transpose);
+    } catch (err) {
+      _log('save key: $err');
+      keyShiftNotice = keyShiftNotice == null
+          ? '已切换调，没能记住这首歌的调'
+          : '$keyShiftNotice。没能记住这次设置';
+    }
+  }
+
+  /// Ends the old run at the key boundary and resumes at the same song frame.
+  Future<void> setTranspose(int target, {bool resumeAfterSaving = false}) async {
+    RangeError.checkValueInInterval(target, minTranspose, maxTranspose, 'transpose');
+    final e = _engine;
+    if (e == null || !started || _disposed || _calibrating || changingKey || error != null || target == _transpose) {
+      return;
+    }
+    final resumePlayback = !reviewing && (isPlaying || resumeAfterSaving);
+    if (reviewing) stopListening();
+    _scrub.cancel(e, resume: false);
+    e.pause();
+    tick(); // Drain the last playing blocks against the old key.
+    final frame = e.positionFrame;
+    _beginKeyShift(target);
+    try {
+      final loaded = await _loadKey(e, target);
+      if (_disposed) return;
+      e.seekFrame(frame);
+      e.flushCapture();
+      _tracker?.reset();
+      _endCount = e.endCount;
+      if (loaded != _transpose) {
+        _endRun();
+        _transpose = loaded;
+        scorer = PracticeScorer(reference, options: _scoringOptions())
+          ..onlyLine = loopLine
+          ..startPass(position, fromLine: _aimLine ?? 0);
+        take = _newTake(e);
+        // Keep the singer's trace at the MIDI pitches they sang. The
+        // colours of those points belonged to the previous key.
+        for (final (i, point) in points.indexed) {
+          points[i] = UserPoint(point.time, point.midi, PitchVerdict.noReference);
+        }
+        lastSample = null;
+        lastVoiced = null;
+        finished = false;
+      }
+      applyMix();
+      await _rememberKey();
+    } catch (err) {
+      if (!_disposed) error = '无法载入原调音频：$err';
+    } finally {
+      if (!_disposed) {
+        // A route event may have arrived since the last UI frame.
+        tick();
+        _finishKeyShift();
+        if (resumePlayback && !_suspended && pauseReason == null && error == null && frame < e.lengthFrames) {
+          _play(restartAtEnd: false);
+        } else {
+          notifyListeners();
+        }
+      }
     }
   }
 
   /// Whether the song has an accompaniment to practise with. Without one,
   /// the original singer always plays (there would be nothing else to hear).
-  bool get hasAccompaniment => meta.accompanimentFile != null || meta.originalFile != null;
+  bool get hasAccompaniment => meta.practiceAccompaniment != null;
 
   /// Re-applies volumes and scoring settings (after the user changed them).
   void applyMix() {
@@ -314,9 +474,11 @@ class PracticeSession extends ChangeNotifier {
     } catch (_) {}
   }
 
-  void play() {
+  void play() => _play();
+
+  void _play({bool restartAtEnd = true}) {
     final e = _engine;
-    if (e == null || _suspended || _disposed || _calibrating) return;
+    if (e == null || !started || _suspended || _disposed || _calibrating || changingKey || error != null) return;
     _scrub.cancel(e, resume: false);
     _log('play at ${position.toStringAsFixed(1)} s');
     try {
@@ -349,7 +511,7 @@ class PracticeSession extends ChangeNotifier {
       if (position >= review.$2 - 0.05 || e.positionSeconds >= e.lengthSeconds - 0.05) {
         _seekEngine(review.$1);
       }
-    } else if (finished || e.positionSeconds >= e.lengthSeconds - 0.05) {
+    } else if (restartAtEnd && (finished || e.positionSeconds >= e.lengthSeconds - 0.05)) {
       finished = false;
       // From the top again: another run through the song.
       if (loopLine == null) _endRun();
@@ -364,7 +526,7 @@ class PracticeSession extends ChangeNotifier {
   void listenBack({int? line}) {
     final e = _engine;
     final t = take;
-    if (e == null || t == null || !canListenBack(line: line) || _suspended) return;
+    if (e == null || t == null || changingKey || !canListenBack(line: line) || _suspended) return;
     e.pause();
     final (a, b) = line != null ? _loopRange(line) : (math.max(0.0, t.startSeconds - 0.5), t.endSeconds + 0.3);
     final range = (a, math.min(b, math.max(a, duration)));
@@ -399,7 +561,7 @@ class PracticeSession extends ChangeNotifier {
   void listenOriginal({int? line}) {
     final e = _engine;
     final li = line ?? currentLine;
-    if (e == null || _suspended || li < 0 || li >= reference.lines.length) return;
+    if (e == null || _suspended || changingKey || li < 0 || li >= reference.lines.length) return;
     if (listening == ListenKind.take) stopListening();
     e.pause();
     final (a, b) = _loopRange(li);
@@ -476,6 +638,8 @@ class PracticeSession extends ChangeNotifier {
   /// Give calibration exclusive use of the microphone and output. The song
   /// stays paused afterwards, at the same position with the same take.
   Future<T> withAudioPausedForCalibration<T>(Future<T> Function() measure) async {
+    // The stems are being replaced: the engine is not the practice path yet.
+    if (changingKey) throw StateError('正在变调，变调完成后再测量延迟');
     _calibrating = true;
     pauseReason = '练习已暂停，点播放继续';
     try {
@@ -513,7 +677,7 @@ class PracticeSession extends ChangeNotifier {
 
   void togglePlay() => isPlaying ? pause() : play();
 
-  bool beginScrub() => !_suspended && _scrub.begin(_engine);
+  bool beginScrub() => !_suspended && !changingKey && _scrub.begin(_engine);
 
   void updateScrub(double seconds) {
     if (!_scrub.active) return;
@@ -544,7 +708,7 @@ class PracticeSession extends ChangeNotifier {
   /// nothing is recorded until the line's own part begins.
   void _seek(double seconds, {int? toLine}) {
     final e = _engine;
-    if (e == null) return;
+    if (e == null || changingKey) return;
     if (reviewing) {
       _seekEngine(seconds);
       notifyListeners();
@@ -603,6 +767,7 @@ class PracticeSession extends ChangeNotifier {
 
   /// Loops one line (null = play the whole song).
   void setLoopLine(int? line) {
+    if (changingKey) return;
     // Looping a line, another line, or the whole song again: a new run.
     if (line != loopLine) _endRun();
     loopLine = line;
@@ -629,6 +794,7 @@ class PracticeSession extends ChangeNotifier {
 
   /// 从头再唱: the whole song again from the top, as a new run.
   void restart() {
+    if (changingKey) return;
     if (reviewing) stopListening();
     if (loopLine != null) {
       setLoopLine(null); // ends the loop's run
@@ -706,7 +872,7 @@ class PracticeSession extends ChangeNotifier {
       applyMix();
       notifyListeners(); // update an open mix sheet even while paused
     }
-    if (_scrub.active) {
+    if (changingKey || _scrub.active) {
       e.flushCapture();
       return;
     }
@@ -821,6 +987,7 @@ class PracticeSession extends ChangeNotifier {
       score: scorer.overallScore(sung),
       lineScores: {for (final i in lines) i: results[i].score},
       loopLine: loopLine,
+      transpose: _transpose,
       durationSeconds: _runSeconds,
       coverage: total > 0 ? (seconds / total).clamp(0.0, 1.0).toDouble() : 0,
     );
@@ -868,3 +1035,26 @@ class PracticeSession extends ChangeNotifier {
     super.dispose();
   }
 }
+
+
+Future<void> _loadInBackground(
+  PracticeEngine e,
+  int slot,
+  ShiftedTrack track,
+  void Function(double)? onProgress,
+) async {
+  if (onProgress == null) {
+    await e.loadTrackPcmInBackground(slot, track.decode);
+    return;
+  }
+  final progress = ReceivePort()..listen((value) => onProgress(value as double));
+  try {
+    await e.loadTrackPcmInBackground(slot, _decodeWithProgress(track, progress.sendPort));
+  } finally {
+    progress.close();
+  }
+}
+
+// Capture only sendable values in the closure that goes to the worker.
+DecodedAudio Function() _decodeWithProgress(ShiftedTrack track, SendPort progress) =>
+    () => track.decode(onProgress: progress.send);

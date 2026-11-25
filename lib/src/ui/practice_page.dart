@@ -113,7 +113,7 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
   }
 
   void _onSession() {
-    if (_session.finished && !_shownResults) {
+    if (_session.finished && !_session.changingKey && !_shownResults) {
       _shownResults = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _showResults(saveRecord: true));
     }
@@ -138,6 +138,10 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
   }
 
   Future<void> _showResults({bool saveRecord = false}) async {
+    if (!mounted || !_session.started || _session.changingKey || _session.error != null) {
+      _shownResults = false;
+      return;
+    }
     _session.pause();
     PracticeRecord? record;
     if (saveRecord) {
@@ -258,24 +262,43 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
     return take.voicedSeconds() >= math.min(20.0, widget.meta.duration / 4);
   }
 
-  /// Leaving with a recording that would be lost: keep it, or leave
-  /// without it. Dismissing the question stays on the page.
-  Future<void> _confirmLeave() async {
-    _session.pause();
+  Future<bool> _confirmKeepTake({required bool changingKey}) async {
     final keep = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('保存刚才唱的录音？'),
-        content: const Text('录音只在这次练习里，离开就没有了。保存后在歌曲页的“我的录音”里，随时可以做成成品。'),
+        content: Text(changingKey
+            ? '换调会开始录新的一遍。保存后可以在歌曲页的“我的录音”里回听刚才这一遍。'
+            : '录音只在这次练习里，离开就没有了。保存后在歌曲页的“我的录音”里，随时可以做成成品。'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('不保存')),
           TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('保存')),
         ],
       ),
     );
-    if (keep == null || !mounted) return;
-    if (keep && await _keepTake() == null) return; // not kept: stay
-    if (mounted) Navigator.of(context).pop();
+    return mounted && keep != null && (!keep || await _keepTake() != null);
+  }
+
+  /// Leaving with a recording that would be lost: keep it, or leave
+  /// without it. Dismissing the question stays on the page.
+  Future<void> _confirmLeave() async {
+    _session.pause();
+    if (await _confirmKeepTake(changingKey: false) && mounted) Navigator.of(context).pop();
+  }
+
+  Future<void> _changeKey(int transpose) async {
+    final oldTake = _session.take;
+    var resume = false;
+    if (_takeAtRisk) {
+      resume = _session.isPlaying && !_session.reviewing;
+      _session.pause();
+      if (!await _confirmKeepTake(changingKey: true) || !mounted) {
+        if (mounted && resume && _session.pauseReason == null) _session.play();
+        return;
+      }
+    }
+    await _session.setTranspose(transpose, resumeAfterSaving: resume);
+    if (!identical(oldTake, _session.take)) _kept = null;
   }
 
   @override
@@ -318,7 +341,11 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
               context: context,
               isScrollControlled: true,
               useSafeArea: true,
-              builder: (_) => _MixSheet(session: _session, latencyMeasurer: services.latencyMeasurer),
+              builder: (_) => _MixSheet(
+                session: _session,
+                latencyMeasurer: services.latencyMeasurer,
+                onChangeKey: _changeKey,
+              ),
             ),
           ),
           Tooltip(
@@ -341,7 +368,9 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
               child: Text(_session.error!, style: context.type.bodyLarge),
             );
           }
+          final progress = _session.keyShiftProgress;
           if (!_session.started) {
+            if (progress != null) return Center(child: _KeyShiftProgress(progress));
             return Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -355,6 +384,9 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
           }
           return Column(
             children: [
+              if (progress != null) _KeyShiftProgress(progress),
+              if (_session.keyShiftNotice case final notice?)
+                _Notice(icon: Icons.info_outline_rounded, text: notice),
               if (_session.reviewing) _ReviewBar(session: _session),
               if (_session.pauseReason case final reason?)
                 _Notice(icon: Icons.pause_circle_outline_rounded, text: reason)
@@ -370,13 +402,36 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
                 child: _Stage(session: _session, contour: widget.contour),
               ),
               _Lyrics(session: _session),
-              _Transport(session: _session),
+              IgnorePointer(ignoring: _session.changingKey, child: _Transport(session: _session)),
             ],
           );
         },
       ),
     );
   }
+}
+
+class _KeyShiftProgress extends StatelessWidget {
+  const _KeyShiftProgress(this.progress);
+
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Semantics(
+          liveRegion: true,
+          child: Text('正在变调… ${(progress * 100).floor()}%', style: context.type.bodySmall),
+        ),
+        const SizedBox(height: 6),
+        LinearProgressIndicator(value: progress),
+      ],
+    ),
+  );
 }
 
 /// A short notice at the top: why practice paused, or a tip.
@@ -476,7 +531,7 @@ class _LiveMeter extends StatelessWidget {
             children: [
               _NoteReadout(
                 label: current != null || target == null ? '原唱' : '下一个',
-                value: noteLabel(target?.midi),
+                value: noteLabel(target == null ? null : target.midi + session.transpose),
                 style: current == null ? big.copyWith(color: p.inkFaint) : big,
               ),
               const Spacer(),
@@ -563,6 +618,8 @@ class _StageState extends State<_Stage> {
       lo = r.$1;
       hi = r.$2;
     }
+    lo += session.transpose;
+    hi += session.transpose;
     final user = session.displayPoints;
     // Keep both voices on the same axis, and let recent pitches keep their
     // space for a few seconds after the trail scrolls off the graph.
@@ -589,6 +646,7 @@ class _StageState extends State<_Stage> {
         painter: PitchGraphPainter(
           reference: session.reference,
           contour: contour,
+          transpose: session.transpose,
           t0: t0,
           t1: t1,
           midiLo: range.$1,
@@ -1036,9 +1094,10 @@ class _TimelinePainter extends CustomPainter {
 }
 
 class _MixSheet extends StatefulWidget {
-  const _MixSheet({required this.session, required this.latencyMeasurer});
+  const _MixSheet({required this.session, required this.latencyMeasurer, required this.onChangeKey});
   final PracticeSession session;
   final LatencyMeasurer latencyMeasurer;
+  final ValueChanged<int> onChangeKey;
 
   @override
   State<_MixSheet> createState() => _MixSheetState();
@@ -1065,9 +1124,11 @@ class _MixSheetState extends State<_MixSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final s = widget.session.settings;
-    final route = widget.session.outputRoute;
-    final measurement = widget.session.usesMeasurementMode;
+    final session = widget.session;
+    final s = session.settings;
+    final progress = session.keyShiftProgress;
+    final route = session.outputRoute;
+    final measurement = session.usesMeasurementMode;
     Future<void> set(void Function() change) async {
       await s.update((_) => change());
       if (!mounted) return;
@@ -1108,6 +1169,25 @@ class _MixSheetState extends State<_MixSheet> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Row(
+              children: [
+                Expanded(child: Text('升降调', style: context.type.bodyLarge)),
+                DropdownButton<int>(
+                  value: session.selectedTranspose,
+                  onChanged: session.started && !session.changingKey && session.error == null
+                      ? (value) {
+                          if (value != null && value != session.transpose) widget.onChangeKey(value);
+                        }
+                      : null,
+                  items: [
+                    for (var key = minTranspose; key <= maxTranspose; key++)
+                      DropdownMenuItem(value: key, child: Text(_keyLabel(key))),
+                  ],
+                ),
+              ],
+            ),
+            if (progress != null) _KeyShiftProgress(progress),
+            if (session.keyShiftNotice case final notice?) Text(notice, style: context.type.bodySmall),
             slider(
               '伴奏',
               '${(s.accompanimentVolume * 100).round()}%',
@@ -1176,7 +1256,7 @@ class _MixSheetState extends State<_MixSheet> {
               children: [
                 Expanded(child: Text('当前线路：${latencyRouteLabel(route, measurement: measurement)}')),
                 TextButton(
-                  onPressed: widget.session.started
+                  onPressed: session.started && !session.changingKey
                       ? () async {
                           await showLatencyCalibration(
                             context,
@@ -1239,6 +1319,10 @@ class _MixSheetState extends State<_MixSheet> {
     );
   }
 }
+
+String _keyLabel(int transpose) => transpose == 0
+    ? '原调'
+    : '${transpose > 0 ? '升' : '降'} ${transpose.abs()} 个半音';
 
 String _audioLog() {
   try {

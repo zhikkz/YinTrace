@@ -326,6 +326,7 @@ void main() {
   testWidgets('pitch editor moves a character, leaves it out of the score and restores it', (tester) async {
     phone(tester);
     final editorServices = newEditorServices();
+    await tester.runAsync(() => editorServices.songs.saveTranspose(song.id, 2));
     late SegmentPlayer player;
     try {
       await tester.pumpWidget(

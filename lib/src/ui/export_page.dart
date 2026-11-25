@@ -34,18 +34,29 @@ class PreviewAudio {
   final Float32List wet;
 }
 
-PreviewAudio preparePreview(String voicePath, String? accompanimentPath) {
+PreviewAudio preparePreview(
+  String voicePath,
+  String? accompanimentPath, {
+  int transpose = 0,
+  String? cacheDirectory,
+}) {
   const audio = NativeAudioBackend();
   final voice = audio.decode(voicePath, sampleRate: 44100, channels: 1).samples;
   final acc = accompanimentPath == null
       ? null
-      : audio.decode(accompanimentPath, sampleRate: 44100, channels: 2).samples;
+      : decodeMixAccompaniment(accompanimentPath, transpose, cacheDirectory: cacheDirectory);
   return PreviewAudio(acc, voice, renderReverb(voice));
 }
 
-/// Top level, so the isolate's closure captures only the two paths.
-Future<PreviewAudio> preparePreviewInBackground(String voicePath, String? accompanimentPath) =>
-    Isolate.run(() => preparePreview(voicePath, accompanimentPath));
+/// Top level, so the isolate's closure captures only sendable arguments.
+Future<PreviewAudio> preparePreviewInBackground(
+  String voicePath,
+  String? accompanimentPath, {
+  int transpose = 0,
+  String? cacheDirectory,
+}) => Isolate.run(
+  () => preparePreview(voicePath, accompanimentPath, transpose: transpose, cacheDirectory: cacheDirectory),
+);
 
 /// Turns a kept recording into a finished track: the singer's voice with a
 /// little reverb over the accompaniment, previewed live, exported as m4a to
@@ -148,12 +159,14 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
         _meta = meta;
         _rec = rec;
       });
-      final accFile = meta.accompanimentFile;
+      final accFile = meta.practiceAccompaniment;
       final voicePath = _songs.recordingPath(widget.songId, rec);
       final accPath = accFile == null ? null : _songs.pathFor(widget.songId, accFile);
+      final cache = rec.transpose == 0 || accPath == null ? null : await _songs.prepareKeyShiftCache(widget.songId);
+      if (!mounted) return;
       final audio = widget.background
-          ? await preparePreviewInBackground(voicePath, accPath)
-          : preparePreview(voicePath, accPath);
+          ? await preparePreviewInBackground(voicePath, accPath, transpose: rec.transpose, cacheDirectory: cache)
+          : preparePreview(voicePath, accPath, transpose: rec.transpose, cacheDirectory: cache);
       if (!mounted) return;
       final e = _engine = widget.engineFactory?.call() ?? PracticeEngine.create(mode: EngineMode.playback);
       if (audio.accompaniment != null) e.loadTrackPcm(_acc, audio.accompaniment!, 2);
@@ -276,12 +289,16 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
       for (var n = 2; File('$base.m4a').existsSync() || File('$base.wav').existsSync(); n++) {
         base = '${dir.path}/${exportName(meta.title, DateTime.now())} ($n)';
       }
+      final accFile = meta.practiceAccompaniment;
+      final cache = rec.transpose == 0 || rec.mix.vocalOnly || accFile == null
+          ? null
+          : await _songs.prepareKeyShiftCache(widget.songId);
+      if (!mounted) return;
       final job = ExportJob(
         voicePath: _songs.recordingPath(widget.songId, rec),
         voiceStart: rec.start,
-        accompanimentPath: meta.accompanimentFile == null
-            ? null
-            : _songs.pathFor(widget.songId, meta.accompanimentFile!),
+        accompanimentPath: accFile == null ? null : _songs.pathFor(widget.songId, accFile),
+        keyShiftCacheDirectory: cache,
         songDuration: meta.duration,
         settings: rec.mix.copy(),
         outputBase: base,
@@ -384,7 +401,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
     final playing = _scrub.isPlaying(e);
     final length = math.max(meta.duration, e?.lengthSeconds ?? 0);
     final pos = (_scrub.position ?? e?.positionSeconds ?? 0).clamp(0.0, length > 0 ? length : 1.0);
-    final hasAcc = meta.accompanimentFile != null;
+    final hasAcc = meta.practiceAccompaniment != null;
     Widget slider(String title, String value, String? hint, Slider slider) => Padding(
       padding: const EdgeInsets.only(top: 10),
       child: Column(
@@ -409,7 +426,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
         const SizedBox(height: 4),
         Text(
           '${_dateLabel(rec.createdAt)} 录的，${clock(rec.duration)}'
-          '${rec.score == null ? '' : '，${rec.score!.round()} 分'}',
+          '${transposeSuffix(rec.transpose)}${rec.score == null ? '' : '，${rec.score!.round()} 分'}',
           style: context.type.bodySmall?.copyWith(fontFeatures: tabular),
         ),
         const SizedBox(height: 18),
