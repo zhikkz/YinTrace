@@ -119,7 +119,7 @@ flutter test test/real_import_test.dart
    与 `android/release-cert-sha256.txt` 一致，然后在这个提交上创建 tag `v1.1.0` 和 Release，
    附上安装包和 `SHA256SUMS.txt`。
 
-安卓发布密钥存在仓库的 Actions secrets 里：`ANDROID_KEYSTORE_BASE64`（keystore 文件的 base64）、
+安卓发布密钥存在仓库的 Actions secrets 里（也可以放在名为 `release` 的环境的 secrets 里：Settings → Environments → release）：`ANDROID_KEYSTORE_BASE64`（keystore 文件的 base64）、
 `ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。每个版本都必须用这把密钥签名，
 用户才能覆盖安装、保留曲库；密钥和密码要另外备份，丢失后就无法再发布可以覆盖安装的更新。
 本地构建和 CI 没有 `android/key.properties`，release 包仍用调试密钥签名，只能自己测试用。

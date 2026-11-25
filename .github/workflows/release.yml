@@ -50,6 +50,9 @@ jobs:
     name: Android APKs (release key)
     needs: check
     runs-on: ubuntu-latest
+    # The ANDROID_* secrets can be repository secrets or secrets of this
+    # environment (Settings → Environments → release).
+    environment: release
     steps:
       - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
