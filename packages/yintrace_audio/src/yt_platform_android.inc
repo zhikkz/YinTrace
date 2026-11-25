@@ -20,16 +20,21 @@
 #define YT_PCM_24BIT_PACKED 21
 #define YT_PCM_32BIT 22
 
+#define YT_CONTAINER_OTHER 0
+#define YT_CONTAINER_MP4 1
+#define YT_CONTAINER_ADTS 2
+
 // MP4/M4A/3GP (an "ftyp" box first) and ADTS AAC go to the platform first:
 // miniaudio could take frames of them for MP3.
-static int yt_android_prefers_platform(const char* path) {
+static int yt_android_container(const char* path) {
   unsigned char h[8] = {0};
   FILE* f = fopen(path, "rb");
-  if (f == NULL) return 0;
+  if (f == NULL) return YT_CONTAINER_OTHER;
   size_t n = fread(h, 1, sizeof h, f);
   fclose(f);
-  if (n >= 8 && memcmp(h + 4, "ftyp", 4) == 0) return 1;
-  return n >= 2 && h[0] == 0xFF && (h[1] & 0xF6) == 0xF0;  // ADTS: sync, layer 0
+  if (n >= 8 && memcmp(h + 4, "ftyp", 4) == 0) return YT_CONTAINER_MP4;
+  if (n >= 2 && h[0] == 0xFF && (h[1] & 0xF6) == 0xF0) return YT_CONTAINER_ADTS;  // sync, layer 0
+  return YT_CONTAINER_OTHER;
 }
 
 static int yt_pcm_width(int32_t encoding) {
@@ -127,7 +132,7 @@ static int yt_fbuf_resample(yt_fbuf* b, int32_t in_rate, int32_t out_rate) {
   return 1;
 }
 
-static float* yt_android_decode(const char* path, int32_t sample_rate, int32_t channels,
+static float* yt_android_decode(const char* path, int container, int32_t sample_rate, int32_t channels,
                                 int64_t* out_frames, char* err, int32_t err_len) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
@@ -142,6 +147,7 @@ static float* yt_android_decode(const char* path, int32_t sample_rate, int32_t c
   size_t tmp_len = 0;
   yt_fbuf b = {NULL, 0, 0, channels};
   const char* fail = NULL;
+  const char* track_mime = NULL;  // owned by fmt
   struct stat st;
   int32_t in_rate = 0, in_channels = 0, encoding = YT_PCM_16BIT;
   int64_t duration_us = 0;
@@ -163,6 +169,7 @@ static float* yt_android_decode(const char* path, int32_t sample_rate, int32_t c
       if (codec != NULL && AMediaExtractor_selectTrack(ex, i) == AMEDIA_OK) {
         fmt = f;
         f = NULL;
+        track_mime = mime;
       }
     }
     if (f != NULL) AMediaFormat_delete(f);
@@ -249,6 +256,21 @@ static float* yt_android_decode(const char* path, int32_t sample_rate, int32_t c
     }
   }
 
+  // The decoder trims the encoder delay but can still hand out the padding
+  // after the end. An MP4 states the playable length (its edit list): cut to
+  // it, as Core Audio does, when only padding-sized excess is left over.
+  {
+    int64_t decoded = b.frames;
+    if (container == YT_CONTAINER_MP4 && duration_us > 0 && in_rate > 0) {
+      int64_t declared = (duration_us * in_rate + 500000) / 1000000;
+      if (declared > 0 && b.frames > declared && b.frames - declared <= 2048) b.frames = declared;
+    }
+    char line[YT_LOG_LINE];
+    snprintf(line, sizeof line, "decode: %s %d Hz x%d, %lld of %lld frames, %lld us declared",
+             track_mime != NULL ? track_mime : "?", (int)in_rate, (int)in_channels, (long long)b.frames,
+             (long long)decoded, (long long)duration_us);
+    yt_audio_log_add(line);
+  }
   if (b.frames == 0) {
     fail = "file contains no audio frames";
   } else if (!yt_fbuf_resample(&b, in_rate, sample_rate)) {

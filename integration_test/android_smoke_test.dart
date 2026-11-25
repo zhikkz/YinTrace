@@ -1,6 +1,6 @@
 // Android smoke test; run by CI on an emulator (see the android job in
-// .github/workflows/ci.yml). The runner taps "Allow" on the system microphone
-// prompt when this test logs [_askingMarker].
+// .github/workflows/ci.yml), where tools/ci_android_allow_microphone.py taps
+// "Allow" on the system microphone prompt this test raises.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -12,8 +12,6 @@ import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
 import 'android_fixtures.dart';
-
-const _askingMarker = 'ANDROID_SMOKE: asking for the microphone';
 
 /// The first frame of channel 0 louder than the silence before the tone.
 int _onset(DecodedAudio audio) {
@@ -49,8 +47,10 @@ void main() {
       final stereo = NativeAudio.decodeFile(m4a.path, sampleRate: 44100, channels: 2);
       // ignore: avoid_print
       print('Android m4a 44.1 kHz stereo: ${stereo.frames} frames, onset at frame ${_onset(stereo)}');
-      // 1.5 s: the edit list's 1024 priming frames are not decoded audio.
-      expect(stereo.frames, inInclusiveRange(66150 - 64, 66150 + 2048));
+      // ignore: avoid_print
+      print(NativeAudio.audioEventLog.join('\n'));
+      // 1.5 s as the edit list says: no priming before, no padding after.
+      expect(stereo.frames, inInclusiveRange(66150 - 2, 66150 + 2));
       expect(_onset(stereo) / 44100, closeTo(0.5, 0.01));
       expect(_frequency(stereo, 0.6, 1.4), closeTo(440, 5));
       for (var i = 0; i < stereo.frames; i += 997) {
@@ -59,7 +59,7 @@ void main() {
 
       // Resampled and mixed down by the same path as practice and import.
       final mono = NativeAudio.decodeFile(m4a.path, sampleRate: 48000, channels: 1);
-      expect(mono.frames, inInclusiveRange(72000 - 96, 72000 + 2300));
+      expect(mono.frames, inInclusiveRange(72000 - 2, 72000 + 2));
       expect(_onset(mono) / 48000, closeTo(0.5, 0.01));
       expect(_frequency(mono, 0.6, 1.4), closeTo(440, 5));
 
@@ -93,8 +93,6 @@ void main() {
     expect(() => NativeAudio.micPermission, throwsUnsupportedError);
     // A fresh install has not been asked yet.
     expect(await NativeAudio.checkMicPermission(), MicPermission.undetermined);
-    // ignore: avoid_print
-    print(_askingMarker);
     final answer = await NativeAudio.requestMicPermission(timeout: const Duration(minutes: 2));
     expect(answer, MicPermission.granted);
     expect(await NativeAudio.checkMicPermission(), MicPermission.granted);
