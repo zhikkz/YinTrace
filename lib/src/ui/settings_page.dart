@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:yintrace_audio/yintrace_audio.dart' show OutputRoute;
 
+import '../app/licenses.dart' show appVersion;
 import '../app/services.dart';
 import '../app/settings.dart';
 import '../app/test_build.dart';
@@ -13,6 +14,7 @@ import 'about_page.dart';
 import 'benchmark_page.dart';
 import 'latency_calibration_dialog.dart';
 import 'model_setup.dart';
+import 'settings_group.dart';
 import 'theme.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -79,8 +81,8 @@ class _SettingsPageState extends State<SettingsPage> {
           const SliverAppBar.large(title: Text('设置')),
           SliverList.list(
             children: [
-              const _Section('分离模型'),
-              _Group(
+              const SettingsSection('分离模型'),
+              SettingsGroup(
                 children: [
                   ListenableBuilder(
                     listenable: Listenable.merge([services.models, services.importQueue, services.pitchCorrections]),
@@ -101,13 +103,13 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                 ],
               ),
-              const _Footnote(
+              const SettingsFootnote(
                 '导入整首歌时，用 UVR 的人声分离模型在手机上提取人声。'
                 '默认不去和声，只有在导入页打开“去和声”时才会使用去和声模型。'
                 '删除模型不影响已经导入的歌。',
               ),
-              const _Section('练习'),
-              _Group(
+              const SettingsSection('练习'),
+              SettingsGroup(
                 children: [
                   _SliderRow(
                     title: '音准容差',
@@ -141,8 +143,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
-              const _Section('麦克风与延迟'),
-              _Group(
+              const SettingsSection('麦克风与延迟'),
+              SettingsGroup(
                 children: [
                   _SliderRow(
                     title: '延迟补偿',
@@ -181,15 +183,15 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
-              _Footnote(
+              SettingsFootnote(
                 '延迟补偿按线路保存。你的音高线总比原唱靠右时，可以把补偿调大。'
                 '练习时会自动跟着房间里的噪音调整：电器的嗡嗡声、敲击和打字声不会当成你在唱，'
                 '你唱过以后，比你小声很多的电视和说话声也大多会被挡掉；仍然乱跳时再把麦克风门限调高。',
               ),
               // Test builds only (isTestBuild): not compiled into releases.
               if (isTestBuild) ...[
-                const _Section('测试版'),
-                _Group(
+                const SettingsSection('测试版'),
+                SettingsGroup(
                   children: [
                     ListTile(
                       title: const Text('性能测试'),
@@ -221,15 +223,31 @@ class _SettingsPageState extends State<SettingsPage> {
                   ],
                 ),
               ],
-              const _Section('关于'),
-              _Group(
+              const SettingsSection('关于'),
+              SettingsGroup(
                 children: [
-                  ListTile(
-                    title: const Text('致谢与开源许可'),
-                    trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
-                    onTap: () =>
-                        Navigator.of(context)
-                            .push(MaterialPageRoute<void>(builder: (_) => const AboutPage())),
+                  ListenableBuilder(
+                    listenable: services.updates,
+                    builder: (context, _) {
+                      final updates = services.updates;
+                      return ListTile(
+                        title: const Text('关于音迹'),
+                        subtitle: Text(
+                          updates.updateAvailable
+                              ? '有新版本 ${updates.latest!.version}'
+                              : '版本 $appVersion · 检查更新、源代码、致谢与开源许可',
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (updates.hasUnseenUpdate) const UpdateDot(),
+                            Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+                          ],
+                        ),
+                        onTap: () =>
+                            Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AboutPage())),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -269,56 +287,6 @@ Future<void> _redownloadFromBackup(BuildContext context, ModelManager models) as
   await models.deleteAll(requiredModels: separationModels);
   models.backupOnly = true;
   if (context.mounted) await ensureModels(context);
-}
-
-class _Section extends StatelessWidget {
-  const _Section(this.title);
-  final String title;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 28, 20, 8),
-    child: Text(title, style: context.type.titleSmall?.copyWith(color: context.yt.inkSoft)),
-  );
-}
-
-class _Footnote extends StatelessWidget {
-  const _Footnote(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-    child: Text(text, style: context.type.bodySmall),
-  );
-}
-
-/// An inset group of rows on a white surface, separated by hairlines.
-class _Group extends StatelessWidget {
-  const _Group({required this.children});
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.yt;
-    final rows = <Widget>[];
-    for (var i = 0; i < children.length; i++) {
-      if (i > 0) rows.add(const Divider(indent: 16));
-      rows.add(children[i]);
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Material(
-        color: p.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: p.hairline),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(children: rows),
-      ),
-    );
-  }
 }
 
 class _SliderRow extends StatelessWidget {

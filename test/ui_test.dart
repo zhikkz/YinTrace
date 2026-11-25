@@ -18,8 +18,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yintrace/src/analysis/manual_timing.dart';
 import 'package:yintrace/src/analysis/reference.dart';
 import 'package:yintrace/src/app/screen_awake.dart';
+import 'package:yintrace/src/app/licenses.dart' show appSourceUrl;
 import 'package:yintrace/src/app/services.dart';
 import 'package:yintrace/src/app/settings.dart';
+import 'package:yintrace/src/app/update_check.dart';
 import 'package:yintrace/src/audio/audio_backend.dart';
 import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace/src/import/import_pipeline.dart';
@@ -1296,13 +1298,170 @@ void main() {
     phone(tester);
     await tester.pumpWidget(host(services, const AboutPage()));
     await tester.pump();
-    expect(find.textContaining('Anjok07 和 aufr33'), findsOneWidget);
-    expect(find.textContaining('hf-mirror'), findsNothing);
-    // Further down the app states its own license and where the source is.
-    await tester.scrollUntilVisible(find.text('许可全文与开源组件'), 300, scrollable: find.byType(Scrollable).first);
-    expect(find.textContaining('AGPL-3.0'), findsOneWidget);
+    expect(find.text('检查更新'), findsOneWidget);
+    expect(find.text('还没有检查过'), findsOneWidget);
     expect(find.textContaining('github.com/zhikkz/YinTrace'), findsOneWidget);
     await screenshot(tester, '8_about');
+    final scrollable = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(find.textContaining('Anjok07 和 aufr33'), 300, scrollable: scrollable);
+    expect(find.textContaining('hf-mirror'), findsNothing);
+    // Further down the app states its own license and where the source is.
+    await tester.scrollUntilVisible(find.text('许可全文与开源组件'), 300, scrollable: scrollable);
+    expect(find.textContaining('AGPL-3.0'), findsWidgets);
+    expect(find.text('第三方声明'), findsOneWidget);
+    await tester.tap(find.text('许可全文与开源组件'));
+    await tester.pumpAndSettle();
+    expect(find.text('音迹'), findsWidgets);
+  });
+
+  LatestRelease release(String tag) => LatestRelease.fromJson({
+    'tag_name': tag,
+    'html_url': '$appSourceUrl/releases/tag/$tag',
+    'name': '',
+    'published_at': '2026-12-01T08:00:00Z',
+  });
+
+  testWidgets('about page checks on request, shows a newer version with a dot and opens or copies links', (
+    tester,
+  ) async {
+    phone(tester);
+    final opened = <Uri>[];
+    var canOpen = true;
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    var fetches = 0;
+    final updates = UpdateChecker(fetch: () async {
+      fetches++;
+      return release('v9.9.0');
+    });
+    final app = AppServices(settings: AppSettings(null), songs: services.songs, models: services.models, updates: updates);
+    await tester.pumpWidget(host(app, AboutPage(openUrl: (url) async {
+      opened.add(url);
+      return canOpen;
+    })));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('update-dot')), findsNothing);
+    await tester.tap(find.text('检查更新'));
+    await tester.pump();
+    await tester.pump();
+    expect(fetches, 1);
+    expect(find.text('有新版本 9.9.0'), findsOneWidget);
+    expect(find.textContaining('2026 年 12 月 1 日发布 · 前往下载页'), findsOneWidget);
+    expect(find.byKey(const ValueKey('update-dot')), findsOneWidget);
+    // Only the dot: no dialog, no snack bar.
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.byType(SnackBar), findsNothing);
+    // Found while the page is open, it is already seen.
+    expect(updates.hasUnseenUpdate, isFalse);
+    await screenshot(tester, '8b_about_update');
+
+    await tester.tap(find.text('有新版本 9.9.0'));
+    await tester.pump();
+    expect(opened.last, Uri.parse('$appSourceUrl/releases/tag/v9.9.0'));
+    await tester.tap(find.text('GitHub 仓库'));
+    await tester.pump();
+    expect(opened.last, Uri.parse(appSourceUrl));
+    await tester.tap(find.byTooltip('复制仓库地址'));
+    await tester.pump();
+    expect(copied, appSourceUrl);
+    expect(find.text('已复制到剪贴板'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text('github.com/zhikkz/YinTrace'), findsOneWidget);
+    // Without a browser the address is copied instead.
+    canOpen = false;
+    copied = null;
+    await tester.tap(find.text('有新版本 9.9.0'));
+    await tester.pump();
+    await tester.pump();
+    expect(copied, '$appSourceUrl/releases/tag/v9.9.0');
+    expect(find.text('打不开浏览器，已复制地址'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 4));
+  });
+
+  testWidgets('turning automatic checks on checks, and a check asked for says why it failed', (tester) async {
+    phone(tester);
+    final answers = <Future<LatestRelease?> Function()>[
+      () async => null,
+      () async => throw UpdateCheckException('连不上 GitHub'),
+    ];
+    var fetches = 0;
+    final updates = UpdateChecker(fetch: () {
+      fetches++;
+      return answers.removeAt(0)();
+    });
+    final settings = AppSettings(null);
+    final app = AppServices(settings: settings, songs: services.songs, models: services.models, updates: updates);
+    await tester.pumpWidget(host(app, const AboutPage()));
+    await tester.pump();
+    final toggle = find.widgetWithText(SwitchListTile, '自动检查更新');
+    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(settings.autoCheckUpdates, isFalse);
+    expect(fetches, 0);
+    await tester.tap(toggle);
+    await tester.pump();
+    await tester.pump();
+    expect(settings.autoCheckUpdates, isTrue);
+    // Never answered before: the automatic check asks right away. No
+    // release published yet is no news.
+    expect(fetches, 1);
+    expect(find.textContaining('已是最新版本 · 今天'), findsOneWidget);
+
+    await tester.tap(find.text('检查更新'));
+    await tester.pump();
+    await tester.pump();
+    expect(fetches, 2);
+    expect(find.text('没能检查：连不上 GitHub'), findsOneWidget);
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.byKey(const ValueKey('update-dot')), findsNothing);
+  });
+
+  testWidgets('a newer version is a red dot on the settings button and in settings until About is opened', (
+    tester,
+  ) async {
+    phone(tester);
+    final updates = UpdateChecker(fetch: () async => release('v9.9.0'));
+    await updates.check();
+    final app = AppServices(
+      settings: AppSettings(null),
+      songs: services.songs,
+      models: services.models,
+      latencyMeasurer: _FakeLatencyMeasurer(OutputRoute.speaker, []),
+      updates: updates,
+    );
+    await tester.pumpWidget(host(app, const LibraryPage()));
+    await settleIo(tester);
+    expect(find.byTooltip('设置，有新版本'), findsOneWidget);
+    expect(tester.widget<Badge>(find.ancestor(of: find.byIcon(Icons.settings_outlined), matching: find.byType(Badge))).isLabelVisible,
+        isTrue);
+    await screenshot(tester, '1b_library_update_dot');
+
+    await tester.tap(find.byTooltip('设置，有新版本'));
+    await tester.pumpAndSettle();
+    final about = find.widgetWithText(ListTile, '关于音迹');
+    await tester.scrollUntilVisible(about, 300, scrollable: find.byType(Scrollable).first);
+    expect(find.text('有新版本 9.9.0'), findsOneWidget);
+    expect(find.descendant(of: about, matching: find.byKey(const ValueKey('update-dot'))), findsOneWidget);
+    expect(find.byType(Dialog), findsNothing);
+
+    await tester.tap(about);
+    await tester.pumpAndSettle();
+    expect(find.text('有新版本 9.9.0'), findsOneWidget);
+    expect(updates.hasUnseenUpdate, isFalse);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    // Still says there is one, without the dot.
+    expect(find.text('有新版本 9.9.0'), findsOneWidget);
+    expect(find.descendant(of: about, matching: find.byKey(const ValueKey('update-dot'))), findsNothing);
+    await tester.pageBack();
+    await settleIo(tester);
+    expect(find.byTooltip('设置'), findsOneWidget);
+    expect(find.byTooltip('设置，有新版本'), findsNothing);
   });
 
   testWidgets('benchmark page (test builds) shows the last report', (tester) async {

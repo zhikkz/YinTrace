@@ -102,10 +102,17 @@ class _LibraryPageState extends State<LibraryPage> {
                   icon: const Icon(Icons.graphic_eq_rounded),
                   onPressed: () => _open(const TunerPage()),
                 ),
-                IconButton(
-                  tooltip: '设置',
-                  icon: const Icon(Icons.settings_outlined),
-                  onPressed: () => _open(const SettingsPage()),
+                ListenableBuilder(
+                  listenable: services.updates,
+                  builder: (context, _) {
+                    final news = services.updates.hasUnseenUpdate;
+                    return IconButton(
+                      tooltip: news ? '设置，有新版本' : '设置',
+                      // A newer version is only ever a dot here, never a dialog.
+                      icon: Badge(isLabelVisible: news, child: const Icon(Icons.settings_outlined)),
+                      onPressed: () => _open(const SettingsPage()),
+                    );
+                  },
                 ),
                 const SizedBox(width: 8),
               ],

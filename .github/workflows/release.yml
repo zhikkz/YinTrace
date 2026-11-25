@@ -1,0 +1,174 @@
+name: Release
+
+# Publishes a version on GitHub Releases: Android APKs signed with the release
+# key and an unsigned iOS .ipa, with the notes in docs/releases/v<version>.md.
+# Run it from Actions → Release → Run workflow on main; see
+# docs/development.md (发布新版本). The tag v<version> is created on the
+# commit it runs on.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish, as in pubspec.yaml (for example 1.0.0)'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: '3.47.9'
+  CI: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  check:
+    name: Check the version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: The version is the app's, has notes, and is not published yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::Run the release on main."; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::The version looks like 1.0.0."; exit 1; }
+          grep -Eq "^version: ${VERSION//./\\.}\+[0-9]+$" pubspec.yaml || { echo "::error::pubspec.yaml is not at $VERSION."; exit 1; }
+          grep -q "const appVersion = '$VERSION';" lib/src/app/licenses.dart || { echo "::error::appVersion is not $VERSION."; exit 1; }
+          test -s "docs/releases/v$VERSION.md" || { echo "::error::Write docs/releases/v$VERSION.md first."; exit 1; }
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::v$VERSION is already published."
+            exit 1
+          fi
+
+  android:
+    name: Android APKs (release key)
+    needs: check
+    runs-on: ubuntu-latest
+    # The ANDROID_* secrets can be repository secrets or secrets of this
+    # environment (Settings → Environments → release).
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Disable Flutter and Dart analytics
+        run: |
+          flutter config --no-analytics
+          dart --disable-analytics
+      - run: flutter pub get
+      # Every version is signed with the same key, so that it installs over
+      # the last one and keeps the library.
+      - name: Release signing key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::Add the ANDROID_* repository secrets first (docs/development.md)."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE" | base64 -d > android/release.jks
+          printf 'storeFile=release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/key.properties
+      - run: flutter build apk --release --split-per-abi
+      - name: Signed with the release key, named for the release
+        run: |
+          set -euo pipefail
+          rm -f android/key.properties android/release.jks
+          expected=$(tr -d '[:space:]' < android/release-cert-sha256.txt)
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
+          mkdir -p dist
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
+            digest=$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+            if [ "$digest" != "$expected" ]; then
+              echo "::error::$apk is signed with $digest, not the release key $expected."
+              exit 1
+            fi
+            cp "$apk" "dist/YinTrace-$VERSION-android-$abi.apk"
+          done
+          ls -l dist
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-android
+          path: dist/
+          if-no-files-found: error
+
+  ios:
+    name: iOS app (unsigned .ipa)
+    needs: check
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Disable Flutter and Dart analytics
+        run: |
+          flutter config --no-analytics
+          dart --disable-analytics
+      - run: flutter pub get
+      # The released app, without the test build's extras. Installers sign
+      # it with their own Apple ID (docs/phone-testing.md).
+      - run: flutter build ipa --release --no-codesign
+      - name: Package as an unsigned .ipa
+        run: |
+          set -euo pipefail
+          rm -rf build/release-ipa && mkdir -p build/release-ipa/Payload dist
+          cp -R build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app build/release-ipa/Payload/
+          shown=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/release-ipa/Payload/Runner.app/Info.plist)
+          [ "$shown" = "$VERSION" ] || { echo "::error::The app says $shown, not $VERSION."; exit 1; }
+          (cd build/release-ipa && zip -qry "$GITHUB_WORKSPACE/dist/YinTrace-$VERSION-ios-unsigned.ipa" Payload)
+          ls -l dist
+      - name: Verify third-party notices inside the IPA
+        run: python3 tools/check_ipa_notices.py "dist/YinTrace-$VERSION-ios-unsigned.ipa"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-ios
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: [android, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Collect the builds and their checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir artifacts
+          mkdir -p dist
+          cp artifacts/release-android/* artifacts/release-ios/* dist/
+          (cd dist && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          {
+            cat "docs/releases/v$VERSION.md"
+            printf '\n## SHA-256\n\n```\n'
+            cat dist/SHA256SUMS.txt
+            printf '```\n'
+          } > notes.md
+      - name: Create v${{ inputs.version }} on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "音迹 $VERSION" --notes-file notes.md --latest

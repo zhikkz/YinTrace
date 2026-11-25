@@ -108,6 +108,27 @@ flutter test test/real_import_test.dart
 提供 `REAL_IMPORT_REFERENCE=/path/to/uvr_lead.wav` 时还与 UVR 主唱生成的图比较；
 `REAL_IMPORT_OUT` 可保留本地曲库输出。CI 使用原创示例歌词和合成音频验证此路径。
 
+## 发布新版本
+
+正式版发布在 GitHub Releases，目前包括安卓 APK（按架构分包，用发布密钥签名）和未签名的 iOS `.ipa`。
+
+1. 同时改 `pubspec.yaml` 的 `version`（例如 `1.1.0+2`）和 `lib/src/app/licenses.dart` 的 `appVersion`
+   （`1.1.0`，有测试保证两者一致），写好发布说明 `docs/releases/v1.1.0.md`，合入 `main`。
+2. 在 GitHub 的 Actions → Release → Run workflow 里选 `main`，填版本号 `1.1.0`。
+   `.github/workflows/release.yml` 检查版本号和发布说明，构建安卓和 iOS 安装包，核对 APK 的签名证书
+   与 `android/release-cert-sha256.txt` 一致，然后在这个提交上创建 tag `v1.1.0` 和 Release，
+   附上安装包和 `SHA256SUMS.txt`。
+
+安卓发布密钥存在仓库的 Actions secrets 里（也可以放在名为 `release` 的环境的 secrets 里：Settings → Environments → release）：`ANDROID_KEYSTORE_BASE64`（keystore 文件的 base64）、
+`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。每个版本都必须用这把密钥签名，
+用户才能覆盖安装、保留曲库；密钥和密码要另外备份，丢失后就无法再发布可以覆盖安装的更新。
+本地构建和 CI 没有 `android/key.properties`，release 包仍用调试密钥签名，只能自己测试用。
+
+App 的“检查更新”读取最新的 Release（`api.github.com/repos/zhikkz/YinTrace/releases/latest`，
+不含草稿和预发布），把它的 tag 和 App 自己的版本比较。已装的 App 每天最多自动查一次（关于页可关），
+发现更高的版本时，只在曲库的设置按钮、设置里的“关于音迹”和关于页显示红点，不弹窗；
+打开关于页后前两处的红点消失，关于页里提供该 Release 页面的链接。
+
 ## 移植到其他平台
 
 代码按“与平台无关的 Dart + 可移植的 C 核心”组织，iOS 以外的平台需要补的东西：

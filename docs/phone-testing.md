@@ -9,7 +9,8 @@ CI 每次构建都会产出测试版安装包 `YinTrace-test-unsigned.ipa`（Git
 Artifacts 里的 `YinTrace-test-ipa`，下载后是一个 zip，在“文件”App 里点一下就能解压出 .ipa）。
 它和正式版是同一份代码，只是打开了 `--dart-define=YINTRACE_TEST_BUILD=true`：设置里多了
 “测试版”一组（性能测试、只用备用线路重新下载模型），下载模型时还会显示用的是哪条线路。
-正式版没有这些，下载线路在后台自动切换，用户不用管。
+正式版没有这些，下载线路在后台自动切换，用户不用管。正式版的安装包 `YinTrace-<版本>-ios-unsigned.ipa`
+在 [Releases](https://github.com/zhikkz/YinTrace/releases/latest) 下载，签名和安装方法与测试版相同。
 
 安装包**没有签名**，需要你用自己的 Apple ID 签名后安装（免费 Apple ID 就行，用你平时用的
 签名工具）。App 没有用到任何需要付费开发者账号的权限，免费账号可以签。注意：

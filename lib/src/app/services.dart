@@ -19,6 +19,7 @@ import '../practice/latency_calibration.dart';
 import 'pitch_corrections.dart';
 import 'settings.dart';
 import 'test_build.dart';
+import 'update_check.dart';
 
 /// Long-lived app objects.
 class AppServices {
@@ -29,9 +30,11 @@ class AppServices {
     VocalAcceleration? acceleration,
     ImportQueue? importQueue,
     LatencyMeasurer? latencyMeasurer,
+    UpdateChecker? updates,
     this.pitchModelPath,
   }) : acceleration = acceleration ?? VocalAcceleration.unavailable(),
-       latencyMeasurer = latencyMeasurer ?? PracticeLatencyMeasurer() {
+       latencyMeasurer = latencyMeasurer ?? PracticeLatencyMeasurer(),
+       updates = updates ?? UpdateChecker() {
     this.importQueue = importQueue ?? ImportQueue(songs.root.path, this.acceleration);
   }
 
@@ -41,6 +44,9 @@ class AppServices {
   final LatencyMeasurer latencyMeasurer;
   late final ImportQueue importQueue;
   final pitchCorrections = PitchCorrections();
+
+  /// Whether a newer version has been published (the About page).
+  final UpdateChecker updates;
 
   /// Whether the vocal model runs with Core ML here, and how fast this
   /// device separated songs before.
@@ -89,11 +95,14 @@ class AppServices {
     } catch (_) {
       // Imports measure the pitch with YIN instead.
     }
+    final updates = await UpdateChecker.load(File('${support.path}/update_check.json'));
+    updates.startAutomaticChecks(() => settings.autoCheckUpdates);
     return AppServices(
       settings: settings,
       songs: songs,
       models: models,
       acceleration: acceleration,
+      updates: updates,
       pitchModelPath: pitchModel,
     );
   }
