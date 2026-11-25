@@ -52,7 +52,7 @@ def read_unihan(path):
     return readings, simplified
 
 
-def read_cedict(path, characters):
+def read_cedict(path, characters, simplified):
     by_word = defaultdict(set)
     with ZipFile(path) as archive:
         lines = archive.read('cedict_ts.u8').decode('utf-8-sig').splitlines()
@@ -61,26 +61,47 @@ def read_cedict(path, characters):
         entry = ENTRY.match(line)
         if entry is None:
             continue
-        traditional, simplified, pinyin = entry.groups()
+        traditional, simplified_word, pinyin = entry.groups()
         reading = tuple(syllable(value) for value in pinyin.split())
-        if not all(SYLLABLE.fullmatch(value) for value in reading):
+        # "xx" marks entries with no Mandarin pronunciation (such as 働).
+        if not all(SYLLABLE.fullmatch(value) and value != 'xx' for value in reading):
             continue
-        for word in {traditional, simplified}:
+        for word in {traditional, simplified_word}:
             if len(word) == len(reading) and IDEOGRAPH.fullmatch(word):
-                by_word[word].add(reading)
+                # YinTrace keeps 儿/兒 as a timed token even in erhua.
+                by_word[word].add(tuple(
+                    'er' if char in '儿兒' and value == 'r' else value
+                    for char, value in zip(word, reading)
+                ))
 
     rows = []
+    words = set()
     for word, candidates in sorted(by_word.items()):
         if len(word) == 1:
             additional = sorted({reading[0] for reading in candidates} - set(characters.get(word, ())))
             if additional:
                 rows.append(f'{word}\t{" ".join(additional)}')
-        elif len(candidates) == 1:
-            reading, = candidates
+        else:
             defaults = tuple(next(iter(characters.get(char, ())), '') for char in word)
-            if reading != defaults:
-                rows.append(f'{word}\t{" ".join(reading)}')
-    return date, rows
+            # Preserve the boundary even if readings disagree. Only apply a
+            # dictionary reading at positions on which all entries agree.
+            overrides = [
+                options[0] if len(set(options)) == 1 and options[0] != default else '-'
+                for default, options in zip(defaults, zip(*candidates))
+            ]
+            if all(value == '-' for value in overrides):
+                words.add(word)
+            else:
+                rows.append(f'{word}\t{" ".join(overrides)}')
+
+    # Exact reading entries keep both spellings. A segmentation-only word
+    # can use its simplified spelling when both have the same boundary only.
+    words = [
+        word for word in sorted(words)
+        if (simple := ''.join(simplified.get(char, char) for char in word)) == word
+        or simple not in words
+    ]
+    return date, rows, words
 
 
 def write_unihan(readings, simplified):
@@ -97,16 +118,29 @@ def write_unihan(readings, simplified):
     (DESTINATION / 'unihan-readings.tsv').write_text('\n'.join(rows) + '\n', encoding='utf-8', newline='\n')
 
 
-def write_cedict(date, sha256, rows):
+def write_cedict(date, sha256, rows, words):
     notice = f'''# Adapted from CC-CEDICT contributors, published by MDBG, snapshot {date}.
 # Referenced work: CEDICT, Copyright (C) 1997, 1998 Paul Andrew Denisowski.
 # Source: https://www.mdbg.net/chinese/dictionary?page=cedict
 # Source ZIP SHA-256: {sha256}
-# Changes: extracted Chinese headwords and pronunciations, removed tones and definitions,
-# retained additional single-character readings and unambiguous phrases requiring context.
 # CC BY-SA 4.0 International: https://creativecommons.org/licenses/by-sa/4.0/
 '''
-    (DESTINATION / 'cc-cedict-readings.tsv').write_text(notice + '\n'.join(rows) + '\n', encoding='utf-8', newline='\n')
+    changes = '''# Changes: extracted Chinese headwords, removed definitions and tones, omitted non-Mandarin
+# placeholders, and wrote er for separately timed 儿/兒 where the source uses r.
+'''
+    readings_header = '''# Additional single-character readings and positions with an agreed non-default
+# reading within a phrase (a hyphen means keep the character default).
+'''
+    words_header = '''# Headwords used for segmentation only, including words with multiple pronunciations
+# and no agreed non-default syllable. Omitted redundant Unihan-simplified spellings.
+'''
+    for filename, header, values in [
+        ('cc-cedict-readings.tsv', readings_header, rows),
+        ('cc-cedict-words.tsv', words_header, words),
+    ]:
+        (DESTINATION / filename).write_text(
+            notice + changes + header + '\n'.join(values) + '\n', encoding='utf-8', newline='\n',
+        )
 
 
 def write_onsets(readings):
@@ -142,10 +176,10 @@ def main():
     parser.add_argument('cedict')
     args = parser.parse_args()
     readings, simplified = read_unihan(args.unihan)
-    date, cedict = read_cedict(args.cedict, readings)
+    date, cedict, words = read_cedict(args.cedict, readings, simplified)
     write_unihan(readings, simplified)
     with open(args.cedict, 'rb') as archive:
-        write_cedict(date, file_digest(archive, 'sha256').hexdigest(), cedict)
+        write_cedict(date, file_digest(archive, 'sha256').hexdigest(), cedict, words)
     write_onsets(readings)
 
 

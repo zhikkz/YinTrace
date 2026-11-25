@@ -109,7 +109,7 @@ void main() {
     expect(() => lexicon.phones(lines[0], LyricsLanguage.chinese, {1: 'bad'}), throwsFormatException);
   });
 
-  test('the alignment worker can read both bundled Mandarin tables', () async {
+  test('the alignment worker can read all bundled Mandarin tables', () async {
     final token = RootIsolateToken.instance!;
     final tables = await MandarinReadings.bundledTables();
     final pinyin = await Isolate.run(() async {
