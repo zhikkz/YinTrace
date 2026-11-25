@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
+import '../app/microphone.dart';
 import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../app/settings.dart';
@@ -64,7 +65,7 @@ class _TunerPageState extends State<TunerPage> with SingleTickerProviderStateMix
       final permission = await NativeAudio.requestMicPermission();
       if (!mounted) return;
       if (permission != MicPermission.granted) {
-        setState(() => _error = '没有麦克风权限。到 系统设置 → 隐私与安全性 → 麦克风，打开音迹。');
+        setState(() => _error = microphoneDeniedMessage);
         return;
       }
       NativeAudio.configureSession(record: true, measurement: _settings.measurementMode);

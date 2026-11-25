@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io' show Platform;
 import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 
 import 'bindings.dart';
 
@@ -165,10 +167,30 @@ class NativeAudio {
     });
   }
 
-  static MicPermission get micPermission => MicPermission.values[_b.micPermissionStatus().clamp(0, 2)];
+  /// Android's runtime permission lives in YintraceAudioPlugin.java.
+  static const _microphone = MethodChannel('yintrace_audio/microphone');
+
+  /// The microphone permission where the platform answers at once: Apple
+  /// platforms, and granted on desktops. On Android use [checkMicPermission].
+  static MicPermission get micPermission {
+    if (Platform.isAndroid) throw UnsupportedError('NativeAudio.micPermission: use checkMicPermission() on Android');
+    return _micPermission(_b.micPermissionStatus());
+  }
+
+  /// The microphone permission, without asking for it.
+  static Future<MicPermission> checkMicPermission() async =>
+      Platform.isAndroid ? _micPermission(await _microphone.invokeMethod<int>('status')) : micPermission;
+
+  static MicPermission _micPermission(int? value) => MicPermission.values[(value ?? 0).clamp(0, 2)];
 
   /// Shows the system microphone prompt if needed and waits for the answer.
   static Future<MicPermission> requestMicPermission({Duration timeout = const Duration(minutes: 2)}) async {
+    if (Platform.isAndroid) {
+      // The plugin answers once the user has answered the system prompt. The
+      // next call shows the prompt again for as long as Android still does.
+      final status = await _microphone.invokeMethod<int>('request').timeout(timeout, onTimeout: () => 0);
+      return _micPermission(status);
+    }
     var status = micPermission;
     if (status != MicPermission.undetermined) return status;
     _b.requestMicPermission();

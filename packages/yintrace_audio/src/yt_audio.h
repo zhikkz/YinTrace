@@ -68,7 +68,8 @@ YT_EXPORT int32_t yt_exclude_from_backup(const char* path);
 YT_EXPORT int32_t yt_share_file(const char* path);
 
 // ---------------------------------------------------------------------------
-// Audio session / permissions (meaningful on iOS and macOS, no-ops elsewhere)
+// Audio session / permissions (meaningful on iOS and macOS, no-ops elsewhere;
+// Android asks for the microphone in YintraceAudioPlugin.java)
 // ---------------------------------------------------------------------------
 
 // 0 = not determined yet, 1 = granted, 2 = denied.

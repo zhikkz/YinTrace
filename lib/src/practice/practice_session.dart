@@ -6,6 +6,7 @@ import 'package:yintrace_audio/yintrace_audio.dart';
 
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
+import '../app/microphone.dart';
 import '../app/settings.dart';
 import '../audio/playback_scrub.dart';
 import '../audio/shifted_track.dart';
@@ -238,7 +239,7 @@ class PracticeSession extends ChangeNotifier {
       final perm = await NativeAudio.requestMicPermission();
       if (_disposed) return;
       if (perm != MicPermission.granted) {
-        error = '没有麦克风权限：请在 系统设置 → 隐私与安全性 → 麦克风 中允许音迹';
+        error = microphoneDeniedMessage;
         notifyListeners();
         return;
       }

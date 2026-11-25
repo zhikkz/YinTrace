@@ -90,6 +90,10 @@ LIVE_MODEL_DOWNLOAD=1 flutter test test/models_test.dart
 iPhone 模拟器真实插件冒烟（两个真实模型、AAC 往返、AGPL 全文和进程峰值），
 并测试 Core Audio 解码与 AAC 编码；不再构建未适配的 macOS App。
 模拟器不替代真机，见 [iOS 验收清单](ios-validation.md)。
+Linux 上还构建 Android release APK（构建产物 `yintrace-android-apk`，调试密钥签名），
+并在 Android 14 模拟器上跑 `integration_test/android_smoke_test.dart`：m4a 与 ADTS 的 AAC 解码
+（含编码器延迟的裁剪）、运行时麦克风授权（`tools/ci_android_allow_microphone.py` 代按“允许”）。
+测试音频由 `tools/make_android_fixtures.sh` 生成。
 
 可选的整曲端到端测试（音频和歌词仅保存在本地，不要提交）：
 
@@ -111,7 +115,7 @@ flutter test test/real_import_test.dart
 | 平台 | 已经可用 | 还需要 |
 |---|---|---|
 | macOS | 原生核心（Core Audio、权限）、权限声明 | 实机测试 |
-| Android | 原生核心（AAudio/OpenSL，CMake 构建）、ONNX Runtime 插件、录音权限声明 | 运行时申请麦克风权限；m4a/AAC 解码（目前 Android 只能解码 wav/mp3/flac） |
+| Android | 原生核心（AAudio/OpenSL，CMake 构建）、ONNX Runtime 插件、运行时申请麦克风权限、m4a/AAC 解码（NDK MediaCodec；wav/mp3/flac 仍走 miniaudio） | 实机测试；aiff/caf 解码；AAC 编码（目前分离结果存 WAV） |
 | Windows | 原生核心（WASAPI，CMake 构建）、ONNX Runtime 插件 | m4a 解码（Media Foundation）；实机测试 |
 
 非 Apple 平台没有 AAC 编码器时，分离结果会自动保存为 WAV。

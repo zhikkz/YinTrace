@@ -243,6 +243,13 @@ static float* yt_decode_miniaudio(const char* path, int32_t sample_rate, int32_t
   return b.data;
 }
 
+#if defined(__ANDROID__)
+#define YT_HAS_ANDROID_DECODER 1
+#include "yt_platform_android.inc"
+#else
+#define YT_HAS_ANDROID_DECODER 0
+#endif
+
 float* yt_decode_file(const char* path, int32_t sample_rate, int32_t channels,
                       int64_t* out_frames, char* err, int32_t err_len) {
   if (out_frames) *out_frames = 0;
@@ -256,7 +263,21 @@ float* yt_decode_file(const char* path, int32_t sample_rate, int32_t channels,
     if (p != NULL) return p;
   }
 #endif
+#if YT_HAS_ANDROID_DECODER
+  if (yt_android_prefers_platform(path)) {
+    return yt_android_decode(path, sample_rate, channels, out_frames, err, err_len);
+  }
+  {
+    float* p = yt_decode_miniaudio(path, sample_rate, channels, out_frames, err, err_len);
+    if (p != NULL) return p;
+    // Ogg, AMR and the other formats only the platform reads. Keep
+    // miniaudio's message if the platform cannot read the file either.
+    char platform_err[8];
+    return yt_android_decode(path, sample_rate, channels, out_frames, platform_err, (int32_t)sizeof platform_err);
+  }
+#else
   return yt_decode_miniaudio(path, sample_rate, channels, out_frames, err, err_len);
+#endif
 }
 
 // ---------------------------------------------------------------------------

@@ -3,9 +3,12 @@
 YinTrace's native audio core, used through `dart:ffi`.
 
 - **Decoding** (`NativeAudio.decodeFile`): Core Audio `ExtAudioFile` on iOS/macOS
-  (mp3, aac/m4a, alac, wav, aiff, caf, flac), miniaudio elsewhere (wav, mp3, flac).
+  (mp3, aac/m4a, alac, wav, aiff, caf, flac); on Android miniaudio (wav, mp3, flac) and
+  the NDK's `AMediaExtractor`/`AMediaCodec` (aac/m4a, ogg and the other formats the
+  device decodes); miniaudio elsewhere (wav, mp3, flac).
 - **AAC encoding** (`NativeAudio.encodeM4a`): Apple platforms; returns `false` elsewhere.
-- **Audio session / microphone permission** on iOS and macOS.
+- **Audio session / microphone permission** on iOS and macOS; the microphone
+  permission on Android (`YintraceAudioPlugin`, a method channel).
 - **`PracticeEngine`**: a full-duplex engine on miniaudio that plays up to four
   in-memory tracks (stored as int16) with per-track gains, seeking and A–B looping,
   and captures the microphone. Every captured block is tagged with the song frame

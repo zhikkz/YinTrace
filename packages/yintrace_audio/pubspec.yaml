@@ -21,6 +21,8 @@ flutter:
   plugin:
     platforms:
       android:
+        package: io.github.zhikkz.yintrace_audio
+        pluginClass: YintraceAudioPlugin
         ffiPlugin: true
       ios:
         pluginClass: YintraceAudioPlugin
