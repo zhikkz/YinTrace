@@ -24,6 +24,7 @@ void main() {
   late SongRepository repo;
   late PracticeSession session;
   late Float32List voice;
+  late OutputRoute outputRoute;
 
   setUp(() async {
     tmp = Directory.systemTemp.createTempSync('yt_listen');
@@ -47,12 +48,14 @@ void main() {
             vocalsOnly: true,
           ),
         );
+    outputRoute = OutputRoute.speaker;
     session = PracticeSession(
       meta: meta,
       reference: await repo.loadReference(meta.id),
       repository: repo,
       settings: AppSettings(null),
       engineFactory: () => PracticeEngine.create(mode: EngineMode.offline),
+      readOutputRoute: () => outputRoute,
       decodeInBackground: false,
     );
     await session.start();
@@ -166,6 +169,41 @@ void main() {
     session.settings.monitorLevel = 0;
     session.applyMix();
     expect(monitorLevel(), 0);
+  }, skip: lib == null);
+
+  test('practice uses the offset for its route and mode after audio events', () {
+    session.settings
+      ..latencyOffsetMs = 47
+      ..setLatencyOffset(OutputRoute.speaker, 20, measurement: false)
+      ..setLatencyOffset(OutputRoute.bluetooth, 185, measurement: false)
+      ..setLatencyOffset(OutputRoute.wired, 12, measurement: false)
+      ..setLatencyOffset(OutputRoute.wired, 30, measurement: true);
+    session.play();
+    expect(session.outputRoute, OutputRoute.speaker);
+    expect(session.latency - session.systemLatency, closeTo(0.020, 1e-9));
+
+    void routeChange(OutputRoute route, int events) {
+      outputRoute = route;
+      session.engine!.signalAudioEvent(events);
+      session.tick();
+      expect(session.outputRoute, route);
+    }
+
+    routeChange(OutputRoute.bluetooth, AudioEvents.routeChanged);
+    expect(session.isPlaying, isTrue);
+    expect(session.latency - session.systemLatency, closeTo(0.185, 1e-9));
+    routeChange(OutputRoute.usb, AudioEvents.routeChanged);
+    expect(session.latency - session.systemLatency, closeTo(0.047, 1e-9));
+    routeChange(OutputRoute.wired, AudioEvents.routeChanged);
+    expect(session.latency - session.systemLatency, closeTo(0.012, 1e-9));
+    session.setMonitorEnabled(true);
+    expect(session.usesMeasurementMode, isTrue);
+    expect(session.latency - session.systemLatency, closeTo(0.030, 1e-9));
+
+    routeChange(OutputRoute.speaker, AudioEvents.routeChanged | AudioEvents.deviceLost);
+    expect(session.monitorEnabled, isFalse);
+    expect(session.isPlaying, isFalse);
+    expect(session.latency - session.systemLatency, closeTo(0.020, 1e-9));
   }, skip: lib == null);
 
   test('monitoring is silenced on backgrounding and disarmed when headphones are lost', () {

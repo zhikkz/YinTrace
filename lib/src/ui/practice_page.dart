@@ -13,8 +13,10 @@ import '../app/services.dart';
 import '../app/test_build.dart';
 import '../export/recordings.dart';
 import '../library/song.dart';
+import '../practice/latency_calibration.dart';
 import '../practice/practice_session.dart';
 import 'export_page.dart';
+import 'latency_calibration_dialog.dart';
 import 'lyrics_style.dart';
 import 'pitch_graph.dart';
 import 'results_sheet.dart';
@@ -303,7 +305,8 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
   }
 
   Widget _scaffold(BuildContext context) {
-    final settings = AppScope.of(context).settings;
+    final services = AppScope.of(context);
+    final settings = services.settings;
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.meta.title, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -315,7 +318,7 @@ class _PracticePageState extends State<PracticePage> with SingleTickerProviderSt
               context: context,
               isScrollControlled: true,
               useSafeArea: true,
-              builder: (_) => _MixSheet(session: _session),
+              builder: (_) => _MixSheet(session: _session, latencyMeasurer: services.latencyMeasurer),
             ),
           ),
           Tooltip(
@@ -1033,8 +1036,9 @@ class _TimelinePainter extends CustomPainter {
 }
 
 class _MixSheet extends StatefulWidget {
-  const _MixSheet({required this.session});
+  const _MixSheet({required this.session, required this.latencyMeasurer});
   final PracticeSession session;
+  final LatencyMeasurer latencyMeasurer;
 
   @override
   State<_MixSheet> createState() => _MixSheetState();
@@ -1062,6 +1066,8 @@ class _MixSheetState extends State<_MixSheet> {
   @override
   Widget build(BuildContext context) {
     final s = widget.session.settings;
+    final route = widget.session.outputRoute;
+    final measurement = widget.session.usesMeasurementMode;
     Future<void> set(void Function() change) async {
       await s.update((_) => change());
       if (!mounted) return;
@@ -1159,18 +1165,34 @@ class _MixSheetState extends State<_MixSheet> {
             ),
             slider(
               '延迟补偿',
-              '${s.latencyOffsetMs >= 0 ? '+' : ''}${s.latencyOffsetMs} ms',
-              Slider(
-                value: s.latencyOffsetMs.toDouble(),
-                min: -300,
-                max: 300,
-                divisions: 60,
-                onChanged: (v) => drag(() => s.latencyOffsetMs = v.round()),
+              signedMilliseconds(widget.session.latencyOffsetMs),
+              LatencyCompensationSlider(
+                offsetMs: widget.session.latencyOffsetMs,
+                onChanged: (v) => drag(() => s.setLatencyOffset(route, v.round(), measurement: measurement)),
                 onChangeEnd: dragEnd,
               ),
             ),
+            Row(
+              children: [
+                Expanded(child: Text('当前线路：${latencyRouteLabel(route, measurement: measurement)}')),
+                TextButton(
+                  onPressed: widget.session.started
+                      ? () async {
+                          await showLatencyCalibration(
+                            context,
+                            settings: s,
+                            measurer: widget.latencyMeasurer,
+                            practice: widget.session,
+                          );
+                          if (mounted) setState(() {});
+                        }
+                      : null,
+                  child: const Text('测量延迟'),
+                ),
+              ],
+            ),
             Text(
-              '系统测得的延迟 ${(widget.session.latency * 1000 - s.latencyOffsetMs).round()} ms，加上补偿共 ${(widget.session.latency * 1000).round()} ms。'
+              '系统报告的延迟 ${(widget.session.systemLatency * 1000).round()} ms，加上补偿共 ${(widget.session.latency * 1000).round()} ms。'
               '你的音高线总比原唱靠右时，把补偿调大。',
               style: context.type.bodySmall,
             ),

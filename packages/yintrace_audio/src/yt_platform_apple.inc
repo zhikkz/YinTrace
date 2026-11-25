@@ -15,6 +15,18 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
+#if TARGET_OS_IOS
+// AVAudioSession has no getter for activation. Track the activation owned
+// by this app so a temporary recording session can give it back if needed.
+static volatile ma_uint32 yt_session_active;
+static NSString* yt_saved_category;
+static NSString* yt_saved_mode;
+static AVAudioSessionCategoryOptions yt_saved_options;
+static double yt_saved_rate;
+static NSTimeInterval yt_saved_io_buffer;
+static ma_uint32 yt_saved_active;
+#endif
+
 int32_t yt_mic_permission_status(void) {
 #if TARGET_OS_IOS
   switch ([[AVAudioSession sharedInstance] recordPermission]) {
@@ -85,6 +97,7 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
       [session setPreferredIOBufferDuration:io_buffer error:nil];
     }
     if (![session setActive:YES error:&error]) return -3;
+    ma_atomic_store_32(&yt_session_active, 1);
     return 0;
   }
 #else
@@ -92,6 +105,75 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
   (void)measurement;
   return 0;
 #endif
+}
+
+int32_t yt_begin_latency_calibration(int32_t measurement) {
+#if TARGET_OS_IOS
+  @autoreleasepool {
+    if (yt_saved_category != nil) return -1;
+    AVAudioSession* session = [AVAudioSession sharedInstance];
+    yt_saved_category = session.category;
+    yt_saved_mode = session.mode;
+    yt_saved_options = session.categoryOptions;
+    yt_saved_rate = session.preferredSampleRate;
+    yt_saved_io_buffer = session.preferredIOBufferDuration;
+    yt_saved_active = ma_atomic_load_32(&yt_session_active);
+    int32_t result = yt_configure_session(1, measurement);
+    if (result != 0) yt_end_latency_calibration();
+    return result;
+  }
+#else
+  return yt_configure_session(1, measurement);
+#endif
+}
+
+int32_t yt_end_latency_calibration(void) {
+#if TARGET_OS_IOS
+  @autoreleasepool {
+    if (yt_saved_category == nil) return -1;
+    AVAudioSession* session = [AVAudioSession sharedInstance];
+    int32_t result = 0;
+    // Never reactivate a session which the system interrupted during the test.
+    if (!yt_saved_active && ma_atomic_load_32(&yt_session_active)) {
+      if ([session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil]) {
+        ma_atomic_store_32(&yt_session_active, 0);
+      } else {
+        result = -3;
+      }
+    }
+    if (![session.category isEqualToString:yt_saved_category] || ![session.mode isEqualToString:yt_saved_mode] ||
+        session.categoryOptions != yt_saved_options) {
+      if (![session setCategory:yt_saved_category mode:yt_saved_mode options:yt_saved_options error:nil]) result = -2;
+    }
+    if (session.preferredSampleRate != yt_saved_rate) [session setPreferredSampleRate:yt_saved_rate error:nil];
+    if (session.preferredIOBufferDuration != yt_saved_io_buffer) {
+      [session setPreferredIOBufferDuration:yt_saved_io_buffer error:nil];
+    }
+    yt_saved_category = nil;
+    yt_saved_mode = nil;
+    return result;
+  }
+#else
+  return 0;
+#endif
+}
+
+int32_t yt_output_route(void) {
+#if TARGET_OS_IOS
+  @autoreleasepool {
+    AVAudioSessionPort type = [AVAudioSession sharedInstance].currentRoute.outputs.firstObject.portType;
+    if ([type isEqualToString:AVAudioSessionPortBuiltInSpeaker] ||
+        [type isEqualToString:AVAudioSessionPortBuiltInReceiver]) return YT_OUTPUT_SPEAKER;
+    if ([type isEqualToString:AVAudioSessionPortHeadphones] ||
+        [type isEqualToString:AVAudioSessionPortLineOut]) return YT_OUTPUT_WIRED;
+    if ([type isEqualToString:AVAudioSessionPortUSBAudio]) return YT_OUTPUT_USB;
+    if ([type isEqualToString:AVAudioSessionPortBluetoothA2DP] ||
+        [type isEqualToString:AVAudioSessionPortBluetoothHFP] ||
+        [type isEqualToString:AVAudioSessionPortBluetoothLE]) return YT_OUTPUT_BLUETOOTH;
+    if ([type isEqualToString:AVAudioSessionPortAirPlay]) return YT_OUTPUT_AIRPLAY;
+  }
+#endif
+  return YT_OUTPUT_UNKNOWN;
 }
 
 // Route changes. iOS posts AVAudioSessionRouteChangeNotification for many
@@ -140,6 +222,19 @@ static BOOL yt_lost_private_output(AVAudioSessionRouteDescription* previous,
   return NO;
 }
 
+static BOOL yt_same_ports(NSArray<AVAudioSessionPortDescription*>* previous,
+                         NSArray<AVAudioSessionPortDescription*>* current) {
+  if (previous.count != current.count) return NO;
+  for (AVAudioSessionPortDescription* old in previous) {
+    BOOL found = NO;
+    for (AVAudioSessionPortDescription* now in current) {
+      if ([old.UID isEqualToString:now.UID] && [old.portType isEqualToString:now.portType]) found = YES;
+    }
+    if (!found) return NO;
+  }
+  return YES;
+}
+
 static const char* yt_route_reason_name(NSInteger reason) {
   switch (reason) {
     case AVAudioSessionRouteChangeReasonNewDeviceAvailable: return "NewDeviceAvailable";
@@ -166,13 +261,19 @@ static void yt_route_changed(NSNotification* note) {
   NSInteger reason = [note.userInfo[AVAudioSessionRouteChangeReasonKey] integerValue];
   int32_t events = YT_EVENT_ROUTE_CHANGED;
   AVAudioSessionRouteDescription* current = [[AVAudioSession sharedInstance] currentRoute];
-  if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) {
-    id previous = note.userInfo[AVAudioSessionRouteChangePreviousRouteKey];
-    if ([previous isKindOfClass:[AVAudioSessionRouteDescription class]] &&
-        yt_lost_private_output(previous, current)) {
+  AVAudioSessionRouteDescription* previous = note.userInfo[AVAudioSessionRouteChangePreviousRouteKey];
+  if ([previous isKindOfClass:[AVAudioSessionRouteDescription class]]) {
+    // Starting I/O can populate an empty list of inputs on the same route.
+    BOOL changed_input = previous.inputs.count > 0 && current.inputs.count > 0 &&
+                         !yt_same_ports(previous.inputs, current.inputs);
+    if (!yt_same_ports(previous.outputs, current.outputs) || changed_input) {
+      events |= YT_EVENT_ROUTE_PORTS_CHANGED;
+    }
+    if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable && yt_lost_private_output(previous, current)) {
       events |= YT_EVENT_DEVICE_LOST;
     }
-  } else if (reason == AVAudioSessionRouteChangeReasonNoSuitableRouteForCategory) {
+  }
+  if (reason == AVAudioSessionRouteChangeReasonNoSuitableRouteForCategory) {
     events |= YT_EVENT_STOPPED;
   }
   NSMutableArray<NSString*>* outputs = [NSMutableArray array];
@@ -214,6 +315,7 @@ static void yt_platform_watch_routes(yt_engine* e) {
                   NSInteger type = [note.userInfo[AVAudioSessionInterruptionTypeKey] integerValue];
                   BOOL suspended = [note.userInfo[AVAudioSessionInterruptionWasSuspendedKey] boolValue];
                   BOOL began = type == AVAudioSessionInterruptionTypeBegan;
+                  if (began) ma_atomic_store_32(&yt_session_active, 0);
                   yt_log_with_time([NSString stringWithFormat:@"interruption %s%s", began ? "began" : "ended",
                                                               suspended ? " (app was suspended)" : ""]);
                   os_unfair_lock_lock(&yt_route_lock);
@@ -230,6 +332,7 @@ static void yt_platform_watch_routes(yt_engine* e) {
                      queue:nil
                 usingBlock:^(NSNotification* note) {
                   (void)note;
+                  ma_atomic_store_32(&yt_session_active, 0);
                   yt_log_with_time(@"media services were reset");
                   os_unfair_lock_lock(&yt_route_lock);
                   for (int i = 0; i < YT_ROUTE_WATCH_SLOTS; i++) {

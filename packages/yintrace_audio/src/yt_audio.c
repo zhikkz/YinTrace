@@ -164,7 +164,10 @@ int32_t yt_configure_session(int32_t record, int32_t measurement) {
   (void)measurement;
   return 0;
 }
+int32_t yt_begin_latency_calibration(int32_t measurement) { return yt_configure_session(1, measurement); }
+int32_t yt_end_latency_calibration(void) { return 0; }
 double yt_session_latency(void) { return 0.0; }
+int32_t yt_output_route(void) { return YT_OUTPUT_UNKNOWN; }
 int64_t yt_available_memory(void) { return -1; }
 int32_t yt_device_model(char* buf, int32_t len) {
   if (buf != NULL && len > 0) buf[0] = '\0';

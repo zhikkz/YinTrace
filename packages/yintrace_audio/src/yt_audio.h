@@ -78,8 +78,22 @@ YT_EXPORT void yt_request_mic_permission(void);
 // Configures the shared audio session. `record` selects play-and-record,
 // `measurement` disables system voice processing (AGC etc.) where possible.
 YT_EXPORT int32_t yt_configure_session(int32_t record, int32_t measurement);
-// Hardware input + output latency reported by the OS, in seconds (0 if unknown).
+// Temporarily uses the recording session for calibration. Close the
+// calibration device before ending the scope and restoring the session.
+YT_EXPORT int32_t yt_begin_latency_calibration(int32_t measurement);
+YT_EXPORT int32_t yt_end_latency_calibration(void);
+// OS-reported input latency, output latency and I/O buffer, in seconds.
 YT_EXPORT double yt_session_latency(void);
+// The active output port type. Targets without a route query return UNKNOWN.
+typedef enum yt_output_route_type {
+  YT_OUTPUT_UNKNOWN = 0,
+  YT_OUTPUT_SPEAKER = 1,
+  YT_OUTPUT_WIRED = 2,
+  YT_OUTPUT_USB = 3,
+  YT_OUTPUT_BLUETOOTH = 4,
+  YT_OUTPUT_AIRPLAY = 5,
+} yt_output_route_type;
+YT_EXPORT int32_t yt_output_route(void);
 // Bytes this process can still allocate before the system terminates it
 // (iOS: os_proc_available_memory). -1 where there is no such limit or it is
 // unknown (other platforms, the simulator).
@@ -181,6 +195,9 @@ YT_EXPORT void yt_engine_flush_capture(yt_engine* engine);
 //   YT_EVENT_DEVICE_LOST: headphones, a Bluetooth/USB device or AirPlay went
 //     away, so the sound would now come from the phone. Playback and capture
 //     are silenced at once.
+//   YT_EVENT_ROUTE_PORTS_CHANGED: the active input or output ports differ.
+//     On platforms that report port identities, distinguishes a new route
+//     from a reconfiguration of the same ports at audio-device startup.
 // signal() is for platform adapters; it atomically silences playback/capture
 // for STOPPED and DEVICE_LOST. take() clears pending events. Restart only from
 // the control thread, never a notification callback. After a silencing event,
@@ -189,6 +206,7 @@ YT_EXPORT void yt_engine_flush_capture(yt_engine* engine);
 #define YT_EVENT_INTERRUPTION_ENDED 2
 #define YT_EVENT_ROUTE_CHANGED 4
 #define YT_EVENT_DEVICE_LOST 8
+#define YT_EVENT_ROUTE_PORTS_CHANGED 16
 #define YT_EVENTS_SILENCING (YT_EVENT_STOPPED | YT_EVENT_DEVICE_LOST)
 YT_EXPORT void yt_engine_signal_audio_event(yt_engine* engine, int32_t events);
 // Diagnostics: the last few audio-session events (iOS route changes with
