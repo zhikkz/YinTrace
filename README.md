@@ -6,7 +6,7 @@
 测出每一句、每一个字的音高，画成逐字音高图；练习时实时画出你唱的音高，唱完告诉你
 哪个字唱高了、唱低了、没唱出来。
 
-用 Flutter 编写，当前只适配 **iOS**，代码结构为 Windows / macOS / Android 保留了可移植性。
+用 Flutter 编写，支持 **iOS** 和 **Android**（安卓是第一次发布，还没在各种真机上全面验证），代码结构为 Windows / macOS 保留了可移植性。
 
 ## 功能
 
@@ -50,8 +50,12 @@
 
 ## 安装
 
-- **只有 iPhone**：安装 CI 产出的测试版安装包，用自己的 Apple ID 签名，步骤见
-  [只用 iPhone 测试](docs/phone-testing.md)。
+从 [Releases](https://github.com/zhikkz/YinTrace/releases/latest) 下载正式版：
+
+- **安卓**（Android 7.0 及以上）：下载 `YinTrace-<版本>-android-arm64-v8a.apk`（较老的 32 位手机用 armeabi-v7a），
+  打开安装。新版本可以直接覆盖安装，曲库会保留。
+- **iPhone**（iOS 16 及以上）：下载 `YinTrace-<版本>-ios-unsigned.ipa`，用自己的 Apple ID 签名后安装，
+  步骤见 [只用 iPhone 测试](docs/phone-testing.md#安装包)（那里说的测试版安装包也一样装）。
 - **有 Mac**：从源码构建，见下面。
 
 ### 从源码构建
