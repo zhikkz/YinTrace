@@ -92,9 +92,13 @@ jobs:
           mkdir -p dist
           for abi in arm64-v8a armeabi-v7a x86_64; do
             apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
-            digest=$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-            if [ "$digest" != "$expected" ]; then
-              echo "::error::$apk is signed with $digest, not the release key $expected."
+            "$apksigner" verify --print-certs "$apk" | tee certs.txt
+            # "Signer #1 certificate SHA-256 digest: …" up to build-tools 36,
+            # "V2 Signer: certificate SHA-256 digest: …" from 37: every signer
+            # must be the release key.
+            digests=$(sed -n 's/.*certificate SHA-256 digest: \([0-9a-f]*\)$/\1/p' certs.txt | sort -u)
+            if [ "$digests" != "$expected" ]; then
+              echo "::error::$apk is signed with ${digests:-no certificate}, not the release key $expected."
               exit 1
             fi
             cp "$apk" "dist/YinTrace-$VERSION-android-$abi.apk"
