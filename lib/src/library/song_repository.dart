@@ -22,9 +22,11 @@ import 'song.dart';
 /// songs/<id>/takes/<take>.m4a  recordings the singer kept (+ <take>.json)
 /// ```
 class SongRepository {
-  SongRepository(this.root);
+  SongRepository(this.root, {Directory? keyShiftRoot})
+    : keyShiftRoot = keyShiftRoot ?? Directory('${root.path}/.key-shifts');
 
   final Directory root;
+  final Directory keyShiftRoot;
 
   static const songFile = 'song.json';
   static const referenceFile = 'reference.json';
@@ -104,7 +106,7 @@ class SongRepository {
     final data = meta.toJson();
     if (File(path).existsSync()) {
       final current = (await _readSong(meta.id)).toJson();
-      for (final field in const ['practiceCount', 'bestScore', 'lastScore', 'lastPracticedAt']) {
+      for (final field in const ['practiceCount', 'bestScore', 'bestScoreTranspose', 'lastScore', 'lastPracticedAt', 'transpose']) {
         data.remove(field);
         if (current.containsKey(field)) data[field] = current[field];
       }
@@ -121,6 +123,30 @@ class SongRepository {
     final meta = SongMeta.fromJson(data);
     await writeFileAtomic(pathFor(id, songFile), jsonEncode(data));
     return meta;
+  });
+
+  Future<void> saveTranspose(String id, int transpose) => _withSong(id, () async {
+    RangeError.checkValueInInterval(transpose, minTranspose, maxTranspose, 'transpose');
+    final data = await _readSongData(id);
+    if (transpose == 0) {
+      data.remove('transpose');
+    } else {
+      data['transpose'] = transpose;
+    }
+    await writeFileAtomic(pathFor(id, songFile), jsonEncode(data));
+  });
+
+  Directory keyShiftDir(String id) => Directory('${keyShiftRoot.path}/$id');
+
+  /// Created before dispatching workers, so a worker cannot recreate the
+  /// directory after the song was deleted.
+  Future<String?> prepareKeyShiftCache(String id) => _withSong(id, () async {
+    if (!await dirFor(id).exists()) return null;
+    try {
+      return (await keyShiftDir(id).create(recursive: true)).path;
+    } on FileSystemException {
+      return null;
+    }
   });
 
   /// Updates the metadata produced by re-aligning a song's lyrics.
@@ -232,14 +258,17 @@ class SongRepository {
       final last = meta.lastPracticedAt;
       if (last == null || record.at.isAfter(last)) meta.lastPracticedAt = record.at;
     }
-    final whole = [
-      for (final r in history)
-        if (r.wholeSong && !r.score.isNaN) r.score,
-    ];
-    if (whole.isNotEmpty) meta.lastScore = whole.last;
-    final best = whole.isEmpty ? null : whole.reduce(math.max);
+    PracticeRecord? best;
+    for (final r in history) {
+      if (!r.wholeSong || r.score.isNaN) continue;
+      meta.lastScore = r.score;
+      if (best == null || r.score > best.score) best = r;
+    }
     final before = meta.bestScore;
-    meta.bestScore = complete || before == null || (best != null && best > before) ? best : before;
+    if (complete || before == null || (best != null && best.score > before)) {
+      meta.bestScore = best?.score;
+      meta.bestScoreTranspose = best?.transpose ?? 0;
+    }
     final pending = {'history': [for (final r in history) r.toJson()], 'song': meta.toJson()};
     await writeFileAtomic(pathFor(id, _practiceJournal), jsonEncode(pending));
     await _finishPractice(id, pending);
@@ -305,6 +334,8 @@ class SongRepository {
     _melodyCache.remove(id);
     final d = dirFor(id);
     if (d.existsSync()) await d.delete(recursive: true);
+    final cache = keyShiftDir(id);
+    if (await cache.exists()) await cache.delete(recursive: true);
   }, recover: false);
 }
 

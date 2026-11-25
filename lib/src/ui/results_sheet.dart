@@ -109,7 +109,8 @@ class ResultsSheet extends StatelessWidget {
               const SizedBox(width: 6),
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: Text('分', style: context.type.titleMedium?.copyWith(color: p.inkSoft)),
+                child: Text('分${transposeSuffix(scorer.options.transpose)}',
+                    style: context.type.titleMedium?.copyWith(color: p.inkSoft)),
               ),
               const Spacer(),
               Padding(
@@ -242,6 +243,7 @@ class ResultsSheet extends StatelessWidget {
               _LineResultRow(
                 result: r,
                 reference: scorer.reference,
+                transpose: scorer.options.transpose,
                 contour: contour,
                 canListen: canListen?.call(r.line.index) ?? false,
               ),
@@ -369,9 +371,16 @@ class _Legend extends StatelessWidget {
 }
 
 class _LineResultRow extends StatelessWidget {
-  const _LineResultRow({required this.result, required this.reference, this.contour, this.canListen = false});
+  const _LineResultRow({
+    required this.result,
+    required this.reference,
+    required this.transpose,
+    this.contour,
+    this.canListen = false,
+  });
   final LineResult result;
   final SongReference reference;
+  final int transpose;
   final PitchTrack? contour;
   final bool canListen;
 
@@ -428,7 +437,14 @@ class _LineResultRow extends StatelessWidget {
               style: context.type.bodySmall,
             ),
             const SizedBox(height: 6),
-            LinePitchGraph(reference: reference, line: result.line, contour: contour, tokenScores: scores, height: 76),
+            LinePitchGraph(
+              reference: reference,
+              line: result.line,
+              contour: contour,
+              tokenScores: scores,
+              transpose: transpose,
+              height: 76,
+            ),
           ],
         ),
       ),

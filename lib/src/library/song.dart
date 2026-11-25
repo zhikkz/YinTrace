@@ -1,3 +1,14 @@
+const minTranspose = -6;
+const maxTranspose = 6;
+
+int readTranspose(Object? value) =>
+    value is int && value >= minTranspose && value <= maxTranspose ? value : 0;
+
+/// A signed half-step label appended to a score or recording.
+String transposeMark(int semitones) => '${semitones > 0 ? '+' : ''}$semitones';
+
+String transposeSuffix(int semitones) => semitones == 0 ? '' : '（${transposeMark(semitones)}）';
+
 /// Metadata of a song in the local practice library.
 class SongMeta {
   SongMeta({
@@ -12,7 +23,9 @@ class SongMeta {
     this.originalFile,
     this.separated = true,
     this.modelInfo = const {},
+    this.transpose = 0,
     this.bestScore,
+    this.bestScoreTranspose = 0,
     this.lastScore,
     this.practiceCount = 0,
     this.lastPracticedAt,
@@ -34,13 +47,19 @@ class SongMeta {
   final String? accompanimentFile;
   final String? originalFile;
 
+  String? get practiceAccompaniment => accompanimentFile ?? originalFile;
+
   /// Whether the vocals were separated in the app (vs. imported as is).
   final bool separated;
 
   /// Names and diagnostics of the models used to prepare the song.
   final Map<String, String> modelInfo;
 
+  /// Practice key, in semitones relative to the song's original key.
+  int transpose;
+
   double? bestScore;
+  int bestScoreTranspose;
   double? lastScore;
   int practiceCount;
   DateTime? lastPracticedAt;
@@ -59,7 +78,9 @@ class SongMeta {
         if (originalFile != null) 'originalFile': originalFile,
         'separated': separated,
         'modelInfo': modelInfo,
+        if (transpose != 0) 'transpose': transpose,
         if (bestScore != null) 'bestScore': bestScore,
+        if (bestScoreTranspose != 0) 'bestScoreTranspose': bestScoreTranspose,
         if (lastScore != null) 'lastScore': lastScore,
         'practiceCount': practiceCount,
         if (lastPracticedAt != null) 'lastPracticedAt': lastPracticedAt!.toIso8601String(),
@@ -77,7 +98,9 @@ class SongMeta {
         originalFile: j['originalFile'] as String?,
         separated: j['separated'] as bool? ?? true,
         modelInfo: (j['modelInfo'] as Map?)?.map((k, v) => MapEntry('$k', '$v')) ?? {},
+        transpose: readTranspose(j['transpose']),
         bestScore: (j['bestScore'] as num?)?.toDouble(),
+        bestScoreTranspose: readTranspose(j['bestScoreTranspose']),
         lastScore: (j['lastScore'] as num?)?.toDouble(),
         practiceCount: (j['practiceCount'] as num?)?.toInt() ?? 0,
         lastPracticedAt: DateTime.tryParse(j['lastPracticedAt'] as String? ?? ''),
@@ -93,6 +116,7 @@ class PracticeRecord {
     required this.score,
     required this.lineScores,
     this.loopLine,
+    this.transpose = 0,
     this.durationSeconds = 0,
     this.coverage,
   });
@@ -106,6 +130,7 @@ class PracticeRecord {
 
   /// Set when the run looped a single line.
   final int? loopLine;
+  final int transpose;
   final double durationSeconds;
 
   /// How much of the song was sung, 0..1 (by the time of its scored notes).
@@ -129,6 +154,7 @@ class PracticeRecord {
         'score': score,
         'lines': lineScores.map((k, v) => MapEntry('$k', (v * 10).round() / 10)),
         if (loopLine != null) 'loop': loopLine,
+        if (transpose != 0) 'transpose': transpose,
         'dur': durationSeconds,
         if (coverage != null) 'cov': (coverage! * 1000).round() / 1000,
       };
@@ -138,6 +164,7 @@ class PracticeRecord {
         score: (j['score'] as num).toDouble(),
         lineScores: (j['lines'] as Map).map((k, v) => MapEntry(int.parse('$k'), (v as num).toDouble())),
         loopLine: (j['loop'] as num?)?.toInt(),
+        transpose: readTranspose(j['transpose']),
         durationSeconds: (j['dur'] as num?)?.toDouble() ?? 0,
         coverage: (j['cov'] as num?)?.toDouble(),
       );
@@ -154,6 +181,7 @@ class PracticeRecord {
       score: score,
       lineScores: {for (final e in lineScores.entries) ?lineMap[e.key]: e.value},
       loopLine: loop == null ? null : lineMap[loop],
+      transpose: transpose,
       durationSeconds: durationSeconds,
       coverage: coverage,
     );

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -49,6 +50,9 @@ class DecodedAudio {
 
 enum MicPermission { undetermined, granted, denied }
 
+/// The active system output (YT_OUTPUT_* in yt_audio.h).
+enum OutputRoute { unknown, speaker, wired, usb, bluetooth, airPlay }
+
 /// The system's thermal state (Apple's NSProcessInfo.thermalState).
 enum ThermalState { nominal, fair, serious, critical }
 
@@ -70,6 +74,9 @@ abstract final class AudioEvents {
   /// Headphones, a Bluetooth/USB device or AirPlay went away, so the sound
   /// would now come from the phone. Playback and capture are silenced.
   static const deviceLost = 8;
+
+  /// The active input or output ports changed, even within the same type.
+  static const routePortsChanged = 16;
 
   /// Events after which the user has to resume playback.
   static const silencing = stopped | deviceLost;
@@ -178,7 +185,21 @@ class NativeAudio {
   static int configureSession({required bool record, bool measurement = false}) =>
       _b.configureSession(record ? 1 : 0, measurement ? 1 : 0);
 
-  /// Input + output hardware latency reported by the OS, in seconds.
+  /// Opens the same recording session as practice and saves the previous
+  /// configuration. Returns 0 on success.
+  static int beginLatencyCalibration({required bool measurement}) =>
+      _b.beginLatencyCalibration(measurement ? 1 : 0);
+
+  /// Restores the shared session after the calibration device was closed.
+  static int endLatencyCalibration() => _b.endLatencyCalibration();
+
+  /// The active system output, or unknown where the platform cannot report it.
+  static OutputRoute get outputRoute {
+    final value = _b.outputRoute();
+    return value >= 0 && value < OutputRoute.values.length ? OutputRoute.values[value] : OutputRoute.unknown;
+  }
+
+  /// OS-reported input latency, output latency and I/O buffer, in seconds.
   static double get sessionLatency => _b.sessionLatency();
 
   /// Bytes the app can still allocate before iOS terminates it, or null
@@ -285,6 +306,7 @@ class PracticeEngine {
   final Pointer<Int64> _clock;
   final Pointer<Int32> _flags;
   bool _disposed = false;
+  int _trackLoads = 0;
 
   static YtBindings get _b => YtBindings.instance;
 
@@ -331,7 +353,13 @@ class PracticeEngine {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _b.engineDestroy(_ptr);
+    if (_trackLoads == 0) {
+      _b.engineDestroy(_ptr);
+    } else {
+      // A worker still holds the native handle. Stop the device now and
+      // release the handle after its last load returns.
+      _b.engineStop(_ptr);
+    }
     malloc.free(_capBuf);
     malloc.free(_song);
     malloc.free(_clock);
@@ -341,12 +369,36 @@ class PracticeEngine {
   /// Device period in engine frames (0 when unknown/offline).
   int get periodFrames => _b.enginePeriodFrames(_ptr);
 
+  /// The practice round-trip estimate before any user compensation.
+  double get systemLatencySeconds => NativeAudio.sessionLatency + periodFrames / sampleRate;
+
   void loadTrackPcm(int slot, Float32List interleaved, int channels) {
     _check();
+    _installPcm(_ptr, slot, interleaved, channels);
+  }
+
+  /// Prepares and installs a track on a worker. [prepare] must be sendable
+  /// to an isolate. The engine's track lock protects the swap during render.
+  Future<void> loadTrackPcmInBackground(int slot, DecodedAudio Function() prepare) async {
+    _check();
+    _trackLoads++;
+    try {
+      await _prepareTrack(_ptr.address, slot, prepare);
+    } finally {
+      if (--_trackLoads == 0 && _disposed) _b.engineDestroy(_ptr);
+    }
+  }
+
+  static Future<void> _prepareTrack(int address, int slot, DecodedAudio Function() prepare) => Isolate.run(() {
+    final audio = prepare();
+    _installPcm(Pointer<YtEngine>.fromAddress(address), slot, audio.samples, audio.channels);
+  });
+
+  static void _installPcm(Pointer<YtEngine> engine, int slot, Float32List interleaved, int channels) {
     using((arena) {
       final data = arena<Float>(interleaved.length);
       data.asTypedList(interleaved.length).setAll(0, interleaved);
-      final r = _b.engineLoadTrackPcm(_ptr, slot, data, interleaved.length ~/ channels, channels);
+      final r = _b.engineLoadTrackPcm(engine, slot, data, interleaved.length ~/ channels, channels);
       if (r != 0) throw NativeAudioException('load track failed ($r)');
     });
   }

@@ -795,6 +795,27 @@ static void test_audio_log(void) {
   CHECK(strlen(buf) <= 11);
 }
 
+static void test_calibration_session(void) {
+  // The host test runs on Linux/macOS, where there is no AVAudioSession
+  // route or session to change. The API is also callable on these targets.
+#if !defined(TARGET_OS_IOS) || !TARGET_OS_IOS
+  CHECK(yt_output_route() == YT_OUTPUT_UNKNOWN);
+  CHECK(yt_begin_latency_calibration(0) == 0);
+  CHECK(yt_end_latency_calibration() == 0);
+  CHECK(yt_begin_latency_calibration(1) == 0);
+  CHECK(yt_end_latency_calibration() == 0);
+#endif
+  char err[128];
+  yt_engine* e = yt_engine_create(44100, YT_MODE_OFFLINE, 0, err, sizeof err);
+  CHECK(e != NULL);
+  if (e == NULL) return;
+  const int32_t route_event = YT_EVENT_ROUTE_CHANGED | YT_EVENT_ROUTE_PORTS_CHANGED;
+  yt_engine_signal_audio_event(e, route_event);
+  CHECK(yt_engine_take_audio_events(e) == route_event);
+  CHECK(yt_engine_take_audio_events(e) == 0);
+  yt_engine_destroy(e);
+}
+
 int main(int argc, char** argv) {
   CHECK(yt_api_version() == YT_API_VERSION);
   test_mix_seek_loop();
@@ -807,6 +828,7 @@ int main(int argc, char** argv) {
   test_rate_bridge();
   test_audio_log();
   test_track_offset();
+  test_calibration_session();
   for (int i = 1; i + 1 < argc; i += 2) test_decode(argv[i], atoi(argv[i + 1]));
 #ifdef __APPLE__
   test_aac_roundtrip(getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");

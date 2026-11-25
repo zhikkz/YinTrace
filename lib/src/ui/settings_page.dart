@@ -1,12 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:yintrace_audio/yintrace_audio.dart' show OutputRoute;
 
 import '../app/services.dart';
 import '../app/settings.dart';
 import '../app/test_build.dart';
 import '../models/model_catalog.dart';
 import '../models/model_manager.dart';
+import '../practice/latency_calibration.dart';
 import 'about_page.dart';
 import 'benchmark_page.dart';
+import 'latency_calibration_dialog.dart';
 import 'model_setup.dart';
 import 'theme.dart';
 
@@ -19,9 +24,28 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   AppSettings? _settings;
+  LatencyMeasurer? _measurer;
+  Timer? _routeTimer;
+  OutputRoute _route = OutputRoute.unknown;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final measurer = AppScope.of(context).latencyMeasurer;
+    if (_measurer == measurer) return;
+    _measurer = measurer;
+    _route = measurer.outputRoute;
+    _routeTimer?.cancel();
+    // Settings has no running practice engine to receive route events.
+    _routeTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      final route = measurer.outputRoute;
+      if (route != _route) setState(() => _route = route);
+    });
+  }
 
   @override
   void dispose() {
+    _routeTimer?.cancel();
     // A slider that was still being dragged when the page closed.
     _settings?.save();
     super.dispose();
@@ -32,6 +56,9 @@ class _SettingsPageState extends State<SettingsPage> {
     final services = AppScope.of(context);
     final s = _settings = services.settings;
     final p = context.yt;
+    final route = _route;
+    final measurement = s.measurementMode;
+    final offset = s.latencyOffsetFor(route, measurement: measurement);
     Future<void> set(void Function() change) async {
       await s.update((_) => change());
       setState(() {});
@@ -119,15 +146,21 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   _SliderRow(
                     title: '延迟补偿',
-                    value: '${s.latencyOffsetMs >= 0 ? '+' : ''}${s.latencyOffsetMs} ms',
-                    slider: Slider(
-                      value: s.latencyOffsetMs.toDouble(),
-                      min: -300,
-                      max: 300,
-                      divisions: 60,
-                      onChanged: (v) => drag(() => s.latencyOffsetMs = v.round()),
+                    value: signedMilliseconds(offset),
+                    slider: LatencyCompensationSlider(
+                      offsetMs: offset,
+                      onChanged: (v) => drag(() => s.setLatencyOffset(route, v.round(), measurement: measurement)),
                       onChangeEnd: dragEnd,
                     ),
+                  ),
+                  ListTile(
+                    title: const Text('测量延迟'),
+                    subtitle: Text('当前线路：${latencyRouteLabel(route, measurement: measurement)}'),
+                    trailing: Icon(Icons.chevron_right_rounded, color: p.inkFaint),
+                    onTap: () async {
+                      await showLatencyCalibration(context, settings: s, measurer: services.latencyMeasurer);
+                      if (mounted) setState(() => _route = services.latencyMeasurer.outputRoute);
+                    },
                   ),
                   _SliderRow(
                     title: '麦克风门限',
@@ -149,7 +182,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
               _Footnote(
-                '你的音高线总比原唱靠右，就把延迟补偿调大；蓝牙耳机通常要 +150 到 +250 ms。'
+                '延迟补偿按线路保存。你的音高线总比原唱靠右时，可以把补偿调大。'
                 '练习时会自动跟着房间里的噪音调整：电器的嗡嗡声、敲击和打字声不会当成你在唱，'
                 '你唱过以后，比你小声很多的电视和说话声也大多会被挡掉；仍然乱跳时再把麦克风门限调高。',
               ),

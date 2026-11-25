@@ -38,7 +38,7 @@ Future<Recording> keepTake(
     score: score,
     // Sang most of the song: a finished track of all of it; a few lines:
     // just those.
-    mix: MixSettings(wholeSong: part.length >= 0.5 * take.lengthFrames),
+    mix: MixSettings(wholeSong: part.length >= 0.5 * take.lengthFrames, transpose: take.transpose),
   );
   await repo.saveRecording(songId, recording);
   return recording;

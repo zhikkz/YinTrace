@@ -13,6 +13,7 @@ import '../models/model_manager.dart';
 import '../models/model_catalog.dart';
 import '../models/model_recipe.dart';
 import '../models/pitch_model.dart';
+import '../practice/latency_calibration.dart';
 import 'pitch_corrections.dart';
 import 'settings.dart';
 import 'test_build.dart';
@@ -25,14 +26,17 @@ class AppServices {
     required this.models,
     VocalAcceleration? acceleration,
     ImportQueue? importQueue,
+    LatencyMeasurer? latencyMeasurer,
     this.pitchModelPath,
-  }) : acceleration = acceleration ?? VocalAcceleration.unavailable() {
+  }) : acceleration = acceleration ?? VocalAcceleration.unavailable(),
+       latencyMeasurer = latencyMeasurer ?? PracticeLatencyMeasurer() {
     this.importQueue = importQueue ?? ImportQueue(songs.root.path, this.acceleration);
   }
 
   final AppSettings settings;
   final SongRepository songs;
   final ModelManager models;
+  final LatencyMeasurer latencyMeasurer;
   late final ImportQueue importQueue;
   final pitchCorrections = PitchCorrections();
 
@@ -52,7 +56,11 @@ class AppServices {
 
   static Future<AppServices> init() async {
     final support = await getApplicationSupportDirectory();
-    final songs = SongRepository(Directory('${support.path}/songs'));
+    final cache = await getApplicationCacheDirectory();
+    final songs = SongRepository(
+      Directory('${support.path}/songs'),
+      keyShiftRoot: Directory('${cache.path}/key-shifts'),
+    );
     await songs.root.create(recursive: true);
     void excludeFromBackup(String path) {
       try {

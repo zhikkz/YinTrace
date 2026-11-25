@@ -110,7 +110,10 @@ void main() {
     ref.lines[0].tokens[2].transpose(-12);
     ref.lines[0].tokens[4].skip = true;
     await mine.saveReference(song.id, ref);
-    await mine.addPractice(song.id, PracticeRecord(at: DateTime(2026, 11, 1), score: 91, lineScores: {0: 93, 1: 89}));
+    await mine.saveTranspose(song.id, 2);
+    await mine.addPractice(
+      song.id, PracticeRecord(at: DateTime(2026, 11, 1), score: 91, lineScores: {0: 93, 1: 89}, transpose: 2),
+    );
     final take = TakeRecorder(sampleRate: sr, lengthFrames: 10 * sr)..addAudio(Float32List(2 * sr), sr, 0);
     await keepTake(mine, song.id, take, score: 91, audio: const WavAudioBackend(), background: false);
     // How fast the sender's phone separates is nobody else's business.
@@ -123,6 +126,7 @@ void main() {
     await mine.save(SongMeta.fromJson(stored));
     final sent = await mine.load(song.id);
     expect(sent.bestScore, 91);
+    expect(sent.transpose, 2);
     expect(await mine.loadRecordings(song.id), hasLength(1));
 
     exportSongPackageSync(mine.root.path, song.id, file);
@@ -135,7 +139,7 @@ void main() {
     expect((manifest['song'] as Map).keys.toSet(), {'title', 'artist', 'duration', 'lyrics', 'separated', 'modelInfo'});
     expect(manifest['song']['modelInfo'], {'mdx': 'UVR-MDX-NET-Voc_FT'});
     final text = latin1.decode(File(file).readAsBytesSync());
-    for (final private in ['bestScore', 'lastScore', 'practiceCount', 'lastPracticedAt', 'take-', sent.id]) {
+    for (final private in ['transpose', 'bestScore', 'lastScore', 'practiceCount', 'lastPracticedAt', 'take-', sent.id]) {
       expect(text, isNot(contains(private)), reason: private);
     }
     expect(File('$file.tmp').existsSync(), isFalse);
@@ -153,6 +157,7 @@ void main() {
     expect(listed.createdAt.isAfter(sent.createdAt), isTrue);
     // A song that was never practised.
     expect(listed.bestScore, isNull);
+    expect(listed.transpose, 0);
     expect(listed.lastScore, isNull);
     expect(listed.practiceCount, 0);
     expect(listed.lastPracticedAt, isNull);
