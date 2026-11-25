@@ -3,6 +3,7 @@
 // user audio/lyrics are bundled with this test.
 import 'dart:io';
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -12,6 +13,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:yintrace/src/analysis/pitch_track.dart';
 import 'package:yintrace/src/app/licenses.dart';
 import 'package:yintrace/src/app/services.dart';
+import 'package:yintrace/src/audio/key_shift_cache.dart';
 import 'package:yintrace/src/dsp/pitch.dart';
 import 'package:yintrace/src/dsp/resampler.dart';
 import 'package:yintrace/src/dsp/swift_f0.dart';
@@ -24,6 +26,15 @@ import 'package:yintrace/src/separation/model_config.dart';
 import 'package:yintrace/src/separation/onnx_model.dart';
 import 'package:yintrace/src/ui/app.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
+
+Future<bool> _storeInWorker(KeyShiftCacheEntry entry, int value) => Isolate.run(() {
+  var wrote = false;
+  entry.store(16, (file) {
+    wrote = true;
+    file.writeAsBytesSync(List.filled(16, value));
+  }, isCurrent: () => true);
+  return wrote;
+});
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -49,6 +60,17 @@ void main() {
       expect(NativeAudio.encodeM4a(path, samples, 44100, 1), isTrue);
       final decoded = NativeAudio.decodeFile(path, channels: 1);
       expect(decoded.duration, closeTo(1, 0.1));
+
+      // The key-shift cache lock is flock through dart:ffi here. Two workers
+      // fill one entry, one copy is published, and a trim removes it.
+      final shiftCache = KeyShiftCache('${tmp.path}/key-shifts', 'song', maxBytes: 64);
+      shiftCache.directory.createSync(recursive: true);
+      final entry = shiftCache.entry('acc.wav', 'hash', 44100, 2);
+      final published = await Future.wait([_storeInWorker(entry, 1), _storeInWorker(entry, 2)]);
+      expect(published.where((wrote) => wrote), hasLength(1));
+      expect(entry.read((file) => file.readAsBytesSync(), isCurrent: () => true), hasLength(16));
+      await KeyShiftCache.trimInBackground(shiftCache.rootPath, maxBytes: 0);
+      expect(shiftCache.directory.listSync(), isEmpty);
 
       // TestWidgetsFlutterBinding intentionally omits ServicesBinding's
       // automatic license loader. Read the same on-device asset that the

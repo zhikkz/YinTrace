@@ -64,7 +64,8 @@ class AppServices {
       keyShiftRoot: Directory('${cache.path}/key-shifts'),
     );
     await songs.root.create(recursive: true);
-    unawaited(KeyShiftCache.trimInBackground(songs.keyShiftRoot.path));
+    // Best effort: the next cache write trims again.
+    unawaited(KeyShiftCache.trimInBackground(songs.keyShiftRoot.path).catchError((_) {}));
     void excludeFromBackup(String path) {
       try {
         NativeAudio.excludeFromBackup(path);

@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Live pitch detection. Android support is not finished yet: the
-         runtime permission request still has to be added (see docs/development.md). -->
+    <!-- Live pitch detection. The app asks for it at run time
+         (YintraceAudioPlugin in packages/yintrace_audio). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <application

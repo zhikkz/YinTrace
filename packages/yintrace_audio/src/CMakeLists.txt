@@ -23,7 +23,8 @@ endif()
 if (ANDROID)
   # Support Android 15 16k page size
   target_link_options(yintrace_audio PRIVATE "-Wl,-z,max-page-size=16384")
-  target_link_libraries(yintrace_audio PRIVATE m dl log)
+  # mediandk: AAC (m4a) and other formats miniaudio does not decode.
+  target_link_libraries(yintrace_audio PRIVATE m dl log mediandk)
 elseif (UNIX AND NOT APPLE)
   find_package(Threads REQUIRED)
   target_link_libraries(yintrace_audio PRIVATE m dl Threads::Threads)

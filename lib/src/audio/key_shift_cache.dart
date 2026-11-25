@@ -152,10 +152,30 @@ typedef _Open = Int Function(Pointer<Utf8>, Int);
 typedef _Flock = Int Function(Int, Int);
 typedef _Close = Int Function(Int);
 
-final _libc = DynamicLibrary.process();
-final _open = _libc.lookupFunction<_Open, int Function(Pointer<Utf8>, int)>('open');
-final _flock = _libc.lookupFunction<_Flock, int Function(int, int)>('flock');
-final _close = _libc.lookupFunction<_Close, int Function(int)>('close');
+final class _Posix {
+  _Posix(DynamicLibrary libc)
+    : open = libc.lookupFunction<_Open, int Function(Pointer<Utf8>, int)>('open'),
+      flock = libc.lookupFunction<_Flock, int Function(int, int)>('flock'),
+      close = libc.lookupFunction<_Close, int Function(int)>('close');
+
+  final int Function(Pointer<Utf8>, int) open;
+  final int Function(int, int) flock;
+  final int Function(int) close;
+
+  static const readOnly = 0, exclusive = 2;
+
+  // Keep a process that is spawned while the lock is held from inheriting it.
+  static final closeOnExec = Platform.isMacOS || Platform.isIOS ? 0x1000000 : 0x80000;
+}
+
+// Without these symbols the cache is skipped, and key shifts still play.
+final _Posix? _posix = () {
+  try {
+    return _Posix(DynamicLibrary.process());
+  } on Object {
+    return null;
+  }
+}();
 
 T? _withCacheLock<T>(String rootPath, T Function() operation) {
   try {
@@ -170,13 +190,21 @@ T? _withCacheLock<T>(String rootPath, T Function() operation) {
         handle.closeSync();
       }
     }
-    const readOnly = 0, exclusive = 2;
-    final fd = using((arena) => _open(lock.path.toNativeUtf8(allocator: arena), readOnly));
+    final posix = _posix;
+    if (posix == null) return null;
+    final fd = using(
+      (arena) => posix.open(lock.path.toNativeUtf8(allocator: arena), _Posix.readOnly | _Posix.closeOnExec),
+    );
     if (fd < 0) return null;
     try {
-      return _flock(fd, exclusive) == 0 ? operation() : null;
+      // A signal can interrupt the wait (EINTR). errno is not reliable across
+      // FFI calls, so retry a few times before using the source instead.
+      for (var attempt = 0; attempt < 5; attempt++) {
+        if (posix.flock(fd, _Posix.exclusive) == 0) return operation();
+      }
+      return null;
     } finally {
-      _close(fd);
+      posix.close(fd);
     }
   } on FileSystemException {
     // The system may remove the cache, or the disk may be full. Callers can
