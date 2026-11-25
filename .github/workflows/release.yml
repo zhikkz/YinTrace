@@ -104,6 +104,8 @@ jobs:
             cp "$apk" "dist/YinTrace-$VERSION-android-$abi.apk"
           done
           ls -l dist
+      - name: The APKs ask for the network and the microphone
+        run: tools/check_android_permissions.sh dist/*.apk
       - uses: actions/upload-artifact@v6
         with:
           name: release-android

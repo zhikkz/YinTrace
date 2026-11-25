@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Model downloads and the update check. Only the debug manifest has it
+         otherwise; tools/check_android_permissions.sh checks release APKs. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Live pitch detection. The app asks for it at run time
          (YintraceAudioPlugin in packages/yintrace_audio). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
