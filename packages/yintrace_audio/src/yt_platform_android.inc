@@ -3,7 +3,9 @@
 // MP4/M4A or ADTS and the other formats the platform's extractors know.
 //
 // The extractor's track format is handed to the decoder unchanged, so the
-// platform trims the encoder delay and padding it describes.
+// platform trims the encoder delay an MP4 states (its edit list). It keeps
+// the padding after the end: up to about two AAC frames of silence, which
+// Core Audio leaves out. The extractor does not report the playable length.
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -132,7 +134,7 @@ static int yt_fbuf_resample(yt_fbuf* b, int32_t in_rate, int32_t out_rate) {
   return 1;
 }
 
-static float* yt_android_decode(const char* path, int container, int32_t sample_rate, int32_t channels,
+static float* yt_android_decode(const char* path, int32_t sample_rate, int32_t channels,
                                 int64_t* out_frames, char* err, int32_t err_len) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
@@ -256,19 +258,11 @@ static float* yt_android_decode(const char* path, int container, int32_t sample_
     }
   }
 
-  // The decoder trims the encoder delay but can still hand out the padding
-  // after the end. An MP4 states the playable length (its edit list): cut to
-  // it, as Core Audio does, when only padding-sized excess is left over.
   {
-    int64_t decoded = b.frames;
-    if (container == YT_CONTAINER_MP4 && duration_us > 0 && in_rate > 0) {
-      int64_t declared = (duration_us * in_rate + 500000) / 1000000;
-      if (declared > 0 && b.frames > declared && b.frames - declared <= 2048) b.frames = declared;
-    }
     char line[YT_LOG_LINE];
-    snprintf(line, sizeof line, "decode: %s %d Hz x%d, %lld of %lld frames, %lld us declared",
+    snprintf(line, sizeof line, "decode: %s %d Hz x%d, %lld frames, %lld us declared",
              track_mime != NULL ? track_mime : "?", (int)in_rate, (int)in_channels, (long long)b.frames,
-             (long long)decoded, (long long)duration_us);
+             (long long)duration_us);
     yt_audio_log_add(line);
   }
   if (b.frames == 0) {

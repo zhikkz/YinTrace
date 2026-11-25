@@ -49,8 +49,9 @@ void main() {
       print('Android m4a 44.1 kHz stereo: ${stereo.frames} frames, onset at frame ${_onset(stereo)}');
       // ignore: avoid_print
       print(NativeAudio.audioEventLog.join('\n'));
-      // 1.5 s as the edit list says: no priming before, no padding after.
-      expect(stereo.frames, inInclusiveRange(66150 - 2, 66150 + 2));
+      // 1.5 s: the edit list's 1024 priming frames are left out. Android keeps
+      // the padding after the end (66560 frames on the API 34 emulator).
+      expect(stereo.frames, inInclusiveRange(66150, 66150 + 2048));
       expect(_onset(stereo) / 44100, closeTo(0.5, 0.01));
       expect(_frequency(stereo, 0.6, 1.4), closeTo(440, 5));
       for (var i = 0; i < stereo.frames; i += 997) {
@@ -59,7 +60,7 @@ void main() {
 
       // Resampled and mixed down by the same path as practice and import.
       final mono = NativeAudio.decodeFile(m4a.path, sampleRate: 48000, channels: 1);
-      expect(mono.frames, inInclusiveRange(72000 - 2, 72000 + 2));
+      expect(mono.frames, inInclusiveRange(72000, 72000 + 2230));
       expect(_onset(mono) / 48000, closeTo(0.5, 0.01));
       expect(_frequency(mono, 0.6, 1.4), closeTo(440, 5));
 
