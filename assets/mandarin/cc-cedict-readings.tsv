@@ -1,6 +1,7 @@
-# Adapted from CC-CEDICT contributors, published by MDBG, snapshot 2026-11-22T09:11:05Z.
+# Adapted from CC-CEDICT contributors, published by MDBG, snapshot 2026-11-24T00:04:08Z.
 # Referenced work: CEDICT, Copyright (C) 1997, 1998 Paul Andrew Denisowski.
 # Source: https://www.mdbg.net/chinese/dictionary?page=cedict
+# Source ZIP SHA-256: f26840577f87708bc8aec11fddacd8a5d85a1defcced19865d158d320d05e10c
 # Changes: extracted Chinese headwords and pronunciations, removed tones and definitions,
 # retained additional single-character readings and unambiguous phrases requiring context.
 # CC BY-SA 4.0 International: https://creativecommons.org/licenses/by-sa/4.0/
@@ -426,6 +427,7 @@
 乾粉	gan fen
 乾糧	gan liang
 乾糧袋	gan liang dai
+乾股	gan gu
 乾脆	gan cui
 乾脆利索	gan cui li suo
 乾脆利落	gan cui li luo
@@ -1349,6 +1351,7 @@
 勞什子	lao shi zi
 勢單力薄	shi dan li bo
 勤則不匱	qin ze bu kui
+勤行	qin hang
 勦	jiao
 勸降	quan xiang
 勻稱	yun chen
@@ -7711,8 +7714,6 @@
 起小儿	qi xiao r
 起小兒	qi xiao r
 起徵點	qi zheng dian
-起重葫芦	qi chong hu lu
-起重葫蘆	qi chong hu lu
 起飛彈射	qi fei tan she
 起飞弹射	qi fei tan she
 趁早儿	chen zao r
@@ -8236,6 +8237,7 @@
 重庆市	chong qing shi
 重建	chong jian
 重开	chong kai
+重归于好	chong gui yu hao
 重影	chong ying
 重慶	chong qing
 重慶大學	chong qing da xue
@@ -8277,6 +8279,7 @@
 重樣	chong yang
 重正化	chong zheng hua
 重歷舊遊	chong li jiu you
+重歸於好	chong gui yu hao
 重沓	chong ta
 重洋	chong yang
 重活儿	zhong huo r

@@ -9,6 +9,7 @@ import argparse
 import re
 import unicodedata
 from collections import defaultdict
+from hashlib import file_digest
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -96,10 +97,11 @@ def write_unihan(readings, simplified):
     (DESTINATION / 'unihan-readings.tsv').write_text('\n'.join(rows) + '\n', encoding='utf-8', newline='\n')
 
 
-def write_cedict(date, rows):
+def write_cedict(date, sha256, rows):
     notice = f'''# Adapted from CC-CEDICT contributors, published by MDBG, snapshot {date}.
 # Referenced work: CEDICT, Copyright (C) 1997, 1998 Paul Andrew Denisowski.
 # Source: https://www.mdbg.net/chinese/dictionary?page=cedict
+# Source ZIP SHA-256: {sha256}
 # Changes: extracted Chinese headwords and pronunciations, removed tones and definitions,
 # retained additional single-character readings and unambiguous phrases requiring context.
 # CC BY-SA 4.0 International: https://creativecommons.org/licenses/by-sa/4.0/
@@ -142,7 +144,8 @@ def main():
     readings, simplified = read_unihan(args.unihan)
     date, cedict = read_cedict(args.cedict, readings)
     write_unihan(readings, simplified)
-    write_cedict(date, cedict)
+    with open(args.cedict, 'rb') as archive:
+        write_cedict(date, file_digest(archive, 'sha256').hexdigest(), cedict)
     write_onsets(readings)
 
 

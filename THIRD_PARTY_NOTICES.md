@@ -186,12 +186,12 @@ is bundled. Source ZIP SHA-256 `f7a48b2b545acfaa77b2d607ae28747404ce02baefee1639
 **CC-CEDICT.** CC-CEDICT contributors, published by MDBG. The source credits
 CEDICT (Copyright (C) 1997, 1998 Paul Andrew Denisowski). YinTrace extracted
 Chinese headwords and readings from the [MDBG 1.0 UTF-8 snapshot](https://www.mdbg.net/chinese/dictionary?page=cedict)
-dated 2026-11-22T09:11:05Z, removed definitions and tones, and retained supplementary
+dated 2026-11-24T00:04:08Z, removed definitions and tones, and retained supplementary
 single-character readings and unambiguous phrases requiring context. The
 [resulting TSV](assets/mandarin/cc-cedict-readings.tsv) is distributed as a separate
 data file under [CC BY-SA 4.0 International](assets/licenses/CC-BY-SA-4.0.txt). You
 can obtain and redistribute that file under the same license. Source ZIP SHA-256
-`426d7ed1d6e2bd2391be03bfee6ee36be6a5ae6f5e7c6fca17dde7f95171cd60`.
+`f26840577f87708bc8aec11fddacd8a5d85a1defcced19865d158d320d05e10c`.
 Rebuild both tables with [build_mandarin_readings.py](tools/reference/build_mandarin_readings.py).
 
 **Earlier distributions.** `pinyin` 3.3.0 (BSD 2-Clause for the Dart package) shipped
