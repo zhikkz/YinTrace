@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../audio/audio_backend.dart';
+import '../audio/key_shift_cache.dart';
 import '../audio/shifted_track.dart';
 import '../dsp/reverb.dart';
 import '../library/song.dart';
@@ -207,7 +208,7 @@ class ExportJob {
     required this.songDuration,
     required this.settings,
     required this.outputBase,
-    this.keyShiftCacheDirectory,
+    this.keyShiftCache,
   });
 
   final String voicePath;
@@ -215,7 +216,7 @@ class ExportJob {
   final String? accompanimentPath;
   final double songDuration;
   final MixSettings settings;
-  final String? keyShiftCacheDirectory;
+  final KeyShiftCache? keyShiftCache;
 
   /// Output path without extension (.m4a where AAC is available, else .wav).
   final String outputBase;
@@ -224,7 +225,7 @@ class ExportJob {
     'voice': voicePath,
     'start': voiceStart,
     'acc': accompanimentPath,
-    'keyShiftCache': keyShiftCacheDirectory,
+    'keyShiftCache': keyShiftCache,
     'duration': songDuration,
     'settings': settings.toJson(),
     'out': outputBase,
@@ -272,11 +273,11 @@ class ExportException implements Exception {
 Float32List decodeMixAccompaniment(
   String path,
   int transpose, {
-  String? cacheDirectory,
+  KeyShiftCache? cache,
   void Function(double)? onProgress,
 }) {
   if (transpose == 0) return const NativeAudioBackend().decode(path).samples;
-  return ShiftedTrack(path, transpose, cacheDirectory: cacheDirectory).decode(onProgress: onProgress).samples;
+  return ShiftedTrack(path, transpose, cache: cache).decode(onProgress: onProgress).samples;
 }
 
 /// The mix of [job], done on the calling isolate (used by [runExport]).
@@ -292,7 +293,7 @@ String exportNow(Map<String, dynamic> job, {void Function(double)? onProgress}) 
       : decodeMixAccompaniment(
           accPath,
           settings.transpose,
-          cacheDirectory: job['keyShiftCache'] as String?,
+          cache: job['keyShiftCache'] as KeyShiftCache?,
           onProgress: (f) => onProgress?.call(0.05 + 0.1 * f),
         );
   onProgress?.call(0.15);

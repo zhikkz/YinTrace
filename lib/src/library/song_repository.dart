@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import '../analysis/pitch_track.dart';
 import '../analysis/reference.dart';
 import '../app/atomic_file.dart';
+import '../audio/key_shift_cache.dart';
 import 'recording.dart';
 import 'song.dart';
 
@@ -140,10 +141,12 @@ class SongRepository {
 
   /// Created before dispatching workers, so a worker cannot recreate the
   /// directory after the song was deleted.
-  Future<String?> prepareKeyShiftCache(String id) => _withSong(id, () async {
+  Future<KeyShiftCache?> prepareKeyShiftCache(String id) => _withSong(id, () async {
     if (!await dirFor(id).exists()) return null;
+    final cache = KeyShiftCache(keyShiftRoot.path, id);
     try {
-      return (await keyShiftDir(id).create(recursive: true)).path;
+      await cache.directory.create(recursive: true);
+      return cache;
     } on FileSystemException {
       return null;
     }
@@ -334,8 +337,7 @@ class SongRepository {
     _melodyCache.remove(id);
     final d = dirFor(id);
     if (d.existsSync()) await d.delete(recursive: true);
-    final cache = keyShiftDir(id);
-    if (await cache.exists()) await cache.delete(recursive: true);
+    if (await keyShiftDir(id).exists()) await KeyShiftCache(keyShiftRoot.path, id).deleteInBackground();
   }, recover: false);
 }
 

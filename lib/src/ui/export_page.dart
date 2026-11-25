@@ -11,6 +11,7 @@ import 'package:yintrace_audio/yintrace_audio.dart';
 import '../app/screen_awake.dart';
 import '../app/services.dart';
 import '../audio/audio_backend.dart';
+import '../audio/key_shift_cache.dart';
 import '../audio/playback_scrub.dart';
 import '../export/mixdown.dart';
 import '../export/recordings.dart';
@@ -38,13 +39,13 @@ PreviewAudio preparePreview(
   String voicePath,
   String? accompanimentPath, {
   int transpose = 0,
-  String? cacheDirectory,
+  KeyShiftCache? cache,
 }) {
   const audio = NativeAudioBackend();
   final voice = audio.decode(voicePath, sampleRate: 44100, channels: 1).samples;
   final acc = accompanimentPath == null
       ? null
-      : decodeMixAccompaniment(accompanimentPath, transpose, cacheDirectory: cacheDirectory);
+      : decodeMixAccompaniment(accompanimentPath, transpose, cache: cache);
   return PreviewAudio(acc, voice, renderReverb(voice));
 }
 
@@ -53,9 +54,9 @@ Future<PreviewAudio> preparePreviewInBackground(
   String voicePath,
   String? accompanimentPath, {
   int transpose = 0,
-  String? cacheDirectory,
+  KeyShiftCache? cache,
 }) => Isolate.run(
-  () => preparePreview(voicePath, accompanimentPath, transpose: transpose, cacheDirectory: cacheDirectory),
+  () => preparePreview(voicePath, accompanimentPath, transpose: transpose, cache: cache),
 );
 
 /// Turns a kept recording into a finished track: the singer's voice with a
@@ -165,8 +166,8 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
       final cache = rec.transpose == 0 || accPath == null ? null : await _songs.prepareKeyShiftCache(widget.songId);
       if (!mounted) return;
       final audio = widget.background
-          ? await preparePreviewInBackground(voicePath, accPath, transpose: rec.transpose, cacheDirectory: cache)
-          : preparePreview(voicePath, accPath, transpose: rec.transpose, cacheDirectory: cache);
+          ? await preparePreviewInBackground(voicePath, accPath, transpose: rec.transpose, cache: cache)
+          : preparePreview(voicePath, accPath, transpose: rec.transpose, cache: cache);
       if (!mounted) return;
       final e = _engine = widget.engineFactory?.call() ?? PracticeEngine.create(mode: EngineMode.playback);
       if (audio.accompaniment != null) e.loadTrackPcm(_acc, audio.accompaniment!, 2);
@@ -298,7 +299,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
         voicePath: _songs.recordingPath(widget.songId, rec),
         voiceStart: rec.start,
         accompanimentPath: accFile == null ? null : _songs.pathFor(widget.songId, accFile),
-        keyShiftCacheDirectory: cache,
+        keyShiftCache: cache,
         songDuration: meta.duration,
         settings: rec.mix.copy(),
         outputBase: base,

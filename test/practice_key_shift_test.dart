@@ -1,13 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yintrace/src/analysis/reference.dart';
 import 'package:yintrace/src/app/services.dart';
 import 'package:yintrace/src/app/settings.dart';
+import 'package:yintrace/src/audio/key_shift_cache.dart';
 import 'package:yintrace/src/audio/shifted_track.dart';
 import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace/src/dsp/pitch.dart';
@@ -17,6 +20,7 @@ import 'package:yintrace/src/library/recording.dart';
 import 'package:yintrace/src/library/song.dart';
 import 'package:yintrace/src/library/song_repository.dart';
 import 'package:yintrace/src/models/model_manager.dart';
+import 'package:yintrace/src/models/model_recipe.dart' show sha256OfFileSync;
 import 'package:yintrace/src/practice/live_pitch.dart';
 import 'package:yintrace/src/practice/practice_session.dart';
 import 'package:yintrace/src/practice/scoring.dart';
@@ -178,6 +182,8 @@ void main() {
     () async {
       final refFile = File(repo.pathFor(meta.id, SongRepository.referenceFile));
       final originalReference = refFile.readAsBytesSync();
+      final guidePath = repo.pathFor(meta.id, meta.vocalsFile);
+      final originals = [sha256OfFileSync(accPath), sha256OfFileSync(guidePath)];
       final session = makeSession();
       addTearDown(session.dispose);
       await session.start();
@@ -240,6 +246,10 @@ void main() {
       expect(recording.transpose, 2);
       final stored = (await repo.loadRecordings(meta.id)).single;
       expect(stored.mix.copy().transpose, 2);
+      final voicePath = repo.recordingPath(meta.id, stored);
+      final originalTake = sha256OfFileSync(voicePath);
+      await KeyShiftCache.trimInBackground(repo.keyShiftRoot.path, maxBytes: 0);
+      expect(repo.keyShiftDir(meta.id).listSync(), isEmpty);
       const auditionFrame = 2 * _sr;
       session.listenBack();
       expect(session.listening, ListenKind.take);
@@ -250,17 +260,18 @@ void main() {
       expect(_amplitudeAt(audition, _guideHz * ratio), greaterThan(0.35));
 
       await repo.saveTranspose(meta.id, -4); // the next practice picks a different key
-      final voicePath = repo.recordingPath(meta.id, stored);
-      final cache = repo.keyShiftDir(meta.id).path;
-      final preview = await preparePreviewInBackground(voicePath, accPath, transpose: stored.transpose, cacheDirectory: cache);
+      final cache = await repo.prepareKeyShiftCache(meta.id);
+      final preview = await preparePreviewInBackground(voicePath, accPath, transpose: stored.transpose, cache: cache);
       expect(preview.accompaniment!.length, e.lengthFrames * 2);
       expect(_amplitudeAt(preview.accompaniment!, _accHz * ratio), greaterThan(0.17));
+      expect(repo.keyShiftDir(meta.id).listSync().whereType<File>(), hasLength(1));
+      await KeyShiftCache.trimInBackground(repo.keyShiftRoot.path, maxBytes: 0);
       final path = await runExport(
         ExportJob(
           voicePath: voicePath,
           voiceStart: stored.start,
           accompanimentPath: accPath,
-          keyShiftCacheDirectory: cache,
+          keyShiftCache: cache,
           songDuration: meta.duration,
           settings: stored.mix.copy()..reverb = 0,
           outputBase: '${tmp.path}/mix',
@@ -270,22 +281,34 @@ void main() {
       expect(_amplitudeAt(mix, _accHz * ratio), greaterThan(0.10));
       expect(_amplitudeAt(mix, _guideHz * ratio), greaterThan(0.33));
       expect(_amplitudeAt(mix, _accHz), lessThan(0.005));
+      expect(repo.keyShiftDir(meta.id).listSync().whereType<File>(), hasLength(1));
+      expect([sha256OfFileSync(accPath), sha256OfFileSync(guidePath)], originals);
+      expect(sha256OfFileSync(voicePath), originalTake);
     },
     skip: !hasNative,
   );
 
   test('PCM cache hits skip processing, source edits and truncation regenerate it', () async {
     final cache = (await repo.prepareKeyShiftCache(meta.id))!;
-    final track = ShiftedTrack(accPath, -6, cacheDirectory: cache);
+    final track = ShiftedTrack(accPath, -6, cache: cache);
+    ShiftedTrack(accPath, 0, cache: cache).decode();
+    expect(cache.directory.listSync(), isEmpty);
     final progress = <double>[];
     final cold = track.decode(onProgress: progress.add);
     expect(progress.length, greaterThan(2));
-    final file = repo.keyShiftDir(meta.id).listSync().whereType<File>().single;
+    final file = cache.directory.listSync().whereType<File>().single;
+    expect(file.lengthSync(), 44 + cold.frames * 4);
+
+    // An existing v1 WAV with this key and source is still a hit.
+    final identity = sha256.convert(utf8.encode('acc.wav\n${sha256OfFileSync(accPath)}'));
+    final legacy = file.renameSync('${cache.directory.path}/v1-$_sr--6-$identity.wav');
     progress.clear();
     final hit = track.decode(onProgress: progress.add);
     expect(progress, [1]);
     expect(hit.frames, cold.frames);
     expect(hit.samples[2345], closeTo(cold.samples[2345], 0.00005));
+    expect(legacy.existsSync(), isFalse);
+    expect(file.existsSync(), isTrue);
 
     file.writeAsBytesSync([0, 1, 2]);
     final repaired = track.decode();
@@ -295,7 +318,8 @@ void main() {
     progress.clear();
     expect(track.decode(onProgress: progress.add).frames, cold.frames);
     expect(progress.length, greaterThan(2));
-    expect(repo.keyShiftDir(meta.id).listSync().whereType<File>(), hasLength(2));
+    expect(file.existsSync(), isFalse);
+    expect(cache.directory.listSync().whereType<File>(), hasLength(1));
 
     final reopened = makeSession(song: await repo.load(meta.id));
     await reopened.start();
@@ -303,6 +327,23 @@ void main() {
     reopened.dispose();
     await repo.delete(meta.id);
     expect(repo.keyShiftDir(meta.id).existsSync(), isFalse);
+  }, skip: !hasNative);
+
+  test('a cache directory removed during processing leaves playable audio and is rebuilt on next use', () async {
+    final cache = (await repo.prepareKeyShiftCache(meta.id))!;
+    final track = ShiftedTrack(accPath, 3, cache: cache);
+    final audio = track.decode(onProgress: (p) {
+      if (p == 0.05 && cache.directory.existsSync()) cache.directory.deleteSync(recursive: true);
+    });
+    expect(cache.directory.existsSync(), isFalse);
+    expect(_amplitudeAt(audio.samples, _accHz * midiToHz(72) / _guideHz), greaterThan(0.15));
+
+    await repo.prepareKeyShiftCache(meta.id);
+    expect(track.decode().frames, audio.frames);
+    expect(cache.directory.listSync().whereType<File>(), hasLength(1));
+    final progress = <double>[];
+    expect(track.decode(onProgress: progress.add).frames, audio.frames);
+    expect(progress, [1]);
   }, skip: !hasNative);
 
   test('the remembered key is loaded and a partially failed switch restores both original tracks', () async {
