@@ -184,15 +184,23 @@ and the GB2312 onset table. Copyright Unicode, Inc. The [Unicode License v3](ass
 is bundled. Source ZIP SHA-256 `f7a48b2b545acfaa77b2d607ae28747404ce02baefee16396c5d2d7a8ef34b5e`.
 
 **CC-CEDICT.** CC-CEDICT contributors, published by MDBG. The source credits
-CEDICT (Copyright (C) 1997, 1998 Paul Andrew Denisowski). YinTrace extracted
-Chinese headwords and readings from the [MDBG 1.0 UTF-8 snapshot](https://www.mdbg.net/chinese/dictionary?page=cedict)
-dated 2026-11-22T09:11:05Z, removed definitions and tones, and retained supplementary
-single-character readings and unambiguous phrases requiring context. The
-[resulting TSV](assets/mandarin/cc-cedict-readings.tsv) is distributed as a separate
-data file under [CC BY-SA 4.0 International](assets/licenses/CC-BY-SA-4.0.txt). You
-can obtain and redistribute that file under the same license. Source ZIP SHA-256
-`426d7ed1d6e2bd2391be03bfee6ee36be6a5ae6f5e7c6fca17dde7f95171cd60`.
-Rebuild both tables with [build_mandarin_readings.py](tools/reference/build_mandarin_readings.py).
+CEDICT (Copyright (C) 1997, 1998 Paul Andrew Denisowski). YinTrace uses the
+[MDBG 1.0 UTF-8 snapshot](https://www.mdbg.net/chinese/dictionary?page=cedict)
+dated 2026-11-24T00:04:08Z. Source ZIP SHA-256
+`f26840577f87708bc8aec11fddacd8a5d85a1defcced19865d158d320d05e10c`.
+
+**Changes.** YinTrace extracted Chinese headwords and pronunciations, removed
+definitions and tones, omitted non-Mandarin placeholders, and converted the
+erhua suffix `r` to `er` for independently timed 儿/兒. The
+[readings table](assets/mandarin/cc-cedict-readings.tsv) contains supplementary
+single-character readings and agreed non-default syllables within phrases.
+The [segmentation table](assets/mandarin/cc-cedict-words.tsv) contains headwords
+with no agreed non-default syllables, including multiply pronounced words.
+It omits redundant spellings already covered by Unihan simplification. Both
+tables are available separately under [CC BY-SA 4.0 International](assets/licenses/CC-BY-SA-4.0.txt).
+Rebuild the Mandarin tables with [build_mandarin_readings.py](tools/reference/build_mandarin_readings.py).
+The [original lyric rules and exceptions](lib/src/analysis/mandarin_lyric_rules.dart)
+are written for YinTrace.
 
 **Earlier distributions.** `pinyin` 3.3.0 (BSD 2-Clause for the Dart package) shipped
 the phrase table produced by its [generation script](https://github.com/sun-jiao/dart-pinyin/blob/cda5704260dba7df639a1756de78c24f0632414d/dev/data/phrase_generator.dart)

@@ -1,0 +1,507 @@
+# 音迹原创评测句。每行是歌词和按 token 顺序排列的无声调拼音，Tab 分隔。
+# 英文、假名和带日文读音的 token 对应 -，不参与音节计分。
+# 的：修饰语、目的、的确
+盲目的爱被折进一把旧扇	mang mu de ai bei zhe jin yi ba jiu shan
+我真的确定那封信在水底	wo zhen de que ding na feng xin zai shui di
+真的确定风会回头吗	zhen de que ding feng hui hui tou ma
+明亮的眼睛装进暮色	ming liang de yan jing zhuang jin mu se
+安静的椅子等一场雨	an jing de yi zi deng yi chang yu
+你的名字贴在窗边	ni de ming zi tie zai chuang bian
+透明的确切边界	tou ming de que qie bian jie
+我没有目的只沿水走	wo mei you mu di zhi yan shui zou
+不必问我此行的目的	bu bi wen wo ci xing de mu di
+你的确听见瓦片响了	ni di que ting jian wa pian xiang le
+的确有一双手拢住微光	di que you yi shuang shou long zhu wei guang
+有的放矢向黑夜开口	you di fang shi xiang hei ye kai kou
+# 地：状语、地面和其他名词
+白鸽真心地爱你窗上的云	bai ge zhen xin de ai ni chuang shang de yun
+借耳朵用心地听瓦缝吐芽	jie er duo yong xin de ting wa feng tu ya
+别失落地走让石阶说完	bie shi luo de zou rang shi jie shuo wan
+轻轻地把旧船推下水	qing qing de ba jiu chuan tui xia shui
+一板一眼地唱给灯听	yi ban yi yan de chang gei deng ting
+悄悄地穿过熄灯的楼道	qiao qiao de chuan guo xi deng de lou dao
+认真地等一趟空车	ren zhen de deng yi tang kong che
+心地柔软的人不怕雨	xin di rou ruan de ren bu pa yu
+雪落地时没有声响	xue luo di shi mei you sheng xiang
+地面留着鞋底的纹路	di mian liu zhe xie di de wen lu
+我在营地唱给篝火听	wo zai ying di chang gei gou huo ting
+大地醒了花影还睡着	da di xing le hua ying hai shui zhao
+从湿地走回潮湿的村庄	cong shi di zou hui chao shi de cun zhuang
+一片落地的松针画出秋天	yi pian luo di de song zhen hua chu qiu tian
+# 得：必须、补语、词义
+雨退了我得走了把纸伞留下	yu tui le wo dei zou le ba zhi san liu xia
+你得把星光收好	ni dei ba xing guang shou hao
+今夜还得等潮退	jin ye hai dei deng chao tui
+在天亮前我得写完这封信	zai tian liang qian wo dei xie wan zhe feng xin
+总得有人把小灯擦亮	zong dei you ren ba xiao deng ca liang
+我们得去听屋檐滴水	wo men dei qu ting wu yan di shui
+你唱得比湖水还轻	ni chang de bi hu shui hai qing
+我走得慢却没有停	wo zou de man que mei you ting
+听得见玻璃外的潮声	ting de jian bo li wai de chao sheng
+记得收起晒过的纸伞	ji de shou qi shai guo de zhi san
+你得到一颗糖我得到一片云	ni de dao yi ke tang wo de dao yi pian yun
+得奖那天口袋装满纸屑	de jiang na tian kou dai zhuang man zhi xie
+# 了：体貌、句末和能愿补语
+我看到了你在纸上推船	wo kan dao le ni zai zhi shang tui chuan
+闭着眼等风我终于等到了	bi zhe yan deng feng wo zhong yu deng dao le
+我们到了听不见闹钟的地方	wo men dao le ting bu jian nao zhong de di fang
+我们到了站台才听见钟声	wo men dao le zhan tai cai ting jian zhong sheng
+看到了一条只有影子的小路	kan dao le yi tiao zhi you ying zi de xiao lu
+你猜到了吗	ni cai dao le ma
+晚风到了窗前就停下了	wan feng dao le chuang qian jiu ting xia le
+我试着了解风从哪儿来	wo shi zhe liao jie feng cong na er lai
+忘不了门前那盏歪灯	wang bu liao men qian na zhan wai deng
+我受不了空荡的回声	wo shou bu liao kong dang de hui sheng
+旧事没完没了地绕圈	jiu shi mei wan mei liao de rao quan
+我也了却不了这一桩心愿	wo ye liao que bu liao zhe yi zhuang xin yuan
+# 着 / 著：持续、结果和词义
+穿着白衣的小孩给墙补光	chuan zhe bai yi de xiao hai gei qiang bu guang
+我找着你留下的白沙印记	wo zhao zhe ni liu xia de bai sha yin ji
+树梢点着头把黄昏轻轻接住	shu shao dian zhe tou ba huang hun qing qing jie zhu
+猜着你的心事踩过苔痕	cai zhe ni de xin shi cai guo tai hen
+花着零钱买一束薄雾	hua zhe ling qian mai yi shu bo wu
+街坊还要着旧年的价钱	jie fang hai yao zhe jiu nian de jia qian
+你引着小船穿过两座桥	ni yin zhe xiao chuan chuan guo liang zuo qiao
+我吸着凉气听山谷回话	wo xi zhe liang qi ting shan gu hui hua
+门口的灯始终亮着	men kou de deng shi zhong liang zhe
+她的穿着透着一点随意	ta de chuan zhuo tou zhe yi dian sui yi
+孩子睡着了雨还醒着	hai zi shui zhao le yu hai xing zhe
+子弹着火之前听见窸窣	zi dan zhao huo zhi qian ting jian xi su
+终于找着你了	zhong yu zhao zhao ni le
+我点着了蜡烛	wo dian zhao le la zhu
+我猜着了纸条的谜底	wo cai zhao le zhi tiao de mi di
+深夜也别着急	shen ye ye bie zhao ji
+他对潮汐着迷	ta dui chao xi zhao mi
+他沉着地把船靠岸	ta chen zhuo de ba chuan kao an
+她沉着脸不说话	ta chen zhe lian bu shuo hua
+他的穿着打扮很朴素	ta de chuan zhuo da ban hen pu su
+她的著作压住一页花瓣	ta de zhu zuo ya zhu yi ye hua ban
+穿著灰袍的人提著一桶雨	chuan zhe hui pao de ren ti zhe yi tong yu
+# 过：经历与常用词
+你可曾走过这条石路	ni ke ceng zou guo zhe tiao shi lu
+我唱过一遍就收起回声	wo chang guo yi bian jiu shou qi hui sheng
+听过的人都认得这阵风	ting guo de ren dou ren de zhe zhen feng
+小船过了桥就驶进夜里	xiao chuan guo le qiao jiu shi jin ye li
+雨过之后石头还亮着	yu guo zhi hou shi tou hai liang zhe
+过往折成一把纸扇	guo wang zhe cheng yi ba zhi shan
+秋天请你过来挑种子	qiu tian qing ni guo lai tiao zhong zi
+过桥时我没有回头	guo qiao shi wo mei you hui tou
+# 还：仍然与归还
+请把影子钉回墙上还我自由	qing ba ying zi ding hui qiang shang huan wo zi you
+还你钥匙再借一束晚霞	huan ni yao shi zai jie yi shu wan xia
+你还我一把青伞吧	ni huan wo yi ba qing san ba
+请把山谷还给落日	qing ba shan gu huan gei luo ri
+潮水归还岸上的长影	chao shui gui huan an shang de chang ying
+今晚还清欠你的故事	jin wan huan qing qian ni de gu shi
+今天还会下第二场雨	jin tian hai hui xia di er chang yu
+你还记得院里的旧轮胎吗	ni hai ji de yuan li de jiu lun tai ma
+青苔还在等雨来	qing tai hai zai deng yu lai
+# 长 / 長：长短与生长
+长路把晚霞拖成细线	chang lu ba wan xia tuo cheng xi xian
+巷子很长我慢慢走	xiang zi hen chang wo man man zou
+把一声保重拖得很长	ba yi sheng bao zhong tuo de hen chang
+长夜留一处空座	chang ye liu yi chu kong zuo
+柳条长出了浅绿的芽	liu tiao zhang chu le qian lv de ya
+我们在堤岸上长大	wo men zai di an shang zhang da
+新种的小树长高了	xin zhong de xiao shu zhang gao le
+族长在青石上分种子	zu zhang zai qing shi shang fen zhong zi
+成長像折不整齊的信	cheng zhang xiang zhe bu zheng qi de xin
+# 觉 / 覺
+午觉里我听见沙在唱	wu jiao li wo ting jian sha zai chang
+睡一觉再去晒旧雨衣	shui yi jiao zai qu shai jiu yu yi
+一觉醒来米缸空空	yi jiao xing lai mi gang kong kong
+小狗在廊下睡觉	xiao gou zai lang xia shui jiao
+你觉得枕边会长出海吗	ni jue de zhen bian hui zhang chu hai ma
+不知不觉柴火烧尽	bu zhi bu jue chai huo shao jin
+先察覺的是屋檐的雀	xian cha jue de shi wu yan de que
+晨风叫醒后知后觉的人	chen feng jiao xing hou zhi hou jue de ren
+# 乐 / 樂
+旧乐谱像折皱的湖面	jiu yue pu xiang zhe zhou de hu mian
+乐队会在屋顶试音	yue dui hui zai wu ding shi yin
+把音乐晾在绳上	ba yin yue liang zai sheng shang
+箱子里一半是乐器	xiang zi li yi ban shi yue qi
+快樂是檐下晃動的水珠	kuai le shi yan xia huang dong de shui zhu
+苦中作乐用空碗打拍	ku zhong zuo le yong kong wan da pai
+把可乐留给不睡的人	ba ke le liu gei bu shui de ren
+你乐意用石子换我一盏灯吗	ni le yi yong shi zi huan wo yi zhan deng ma
+# 和
+你和我轮流提灯	ni he wo lun liu ti deng
+温和的月色拐进后巷	wen he de yue se guai jin hou xiang
+和弦尾端藏一粒盐	he xian wei duan cang yi li yan
+山谷附和一声轻笑	shan gu fu he yi sheng qing xiao
+天暖和了再折被子	tian nuan huo le zai zhe bei zi
+和面的时候想起白云	huo mian de shi hou xiang qi bai yun
+爷爷一边和稀泥一边吹口哨	ye ye yi bian huo xi ni yi bian chui kou shao
+我搀和了太多纸上风波	wo chan huo le tai duo zhi shang feng bo
+# 落
+天快亮时星星散落一地	tian kuai liang shi xing xing san luo yi di
+日落后只有西坡还亮着	ri luo hou zhi you xi po hai liang zhe
+村落在地图边縁打盹	cun luo zai di tu bian yuan da dun
+落花把河面铺软	luo hua ba he mian pu ruan
+你把钥匙落在床头	ni ba yao shi la zai chuang tou
+可别落下我那把旧伞	ke bie la xia wo na ba jiu san
+一个都没落下就上了船	yi ge dou mei la xia jiu shang le chuan
+屋里有人落枕还想看海	wu li you ren lao zhen hai xiang kan hai
+# 没 / 沒
+我没有偷听河水	wo mei you tou ting he shui
+没关系等到太阳落山	mei guan xi deng dao tai yang luo shan
+沒人認領這封薄薄的信	mei ren ren ling zhe feng bao bao de xin
+还没醒时你像一片雾	hai mei xing shi ni xiang yi pian wu
+河水淹没了石阶	he shui yan mo le shi jie
+桥脚没入暗色的水面	qiao jiao mo ru an se de shui mian
+城影渐渐湮没在远山后	cheng ying jian jian yan mo zai yuan shan hou
+把旧脚印埋没在落叶下面	ba jiu jiao yin mai mo zai luo ye xia mian
+# 便、大、大夫
+这把便宜的伞借给晚风	zhe ba pian yi de san jie gei wan feng
+捡个便宜换一程船	jian ge pian yi huan yi cheng chuan
+不能便宜那阵偷花的风	bu neng pian yi na zhen tou hua de feng
+我便把云朵塞进袖口	wo bian ba yun duo sai jin xiu kou
+方便的时候来捎一壶水	fang bian de shi hou lai shao yi hu shui
+一只信鸽便宜行事先回家	yi zhi xin ge bian yi xing shi xian hui jia
+请大夫看看我的手	qing dai fu kan kan wo de shou
+村里的大夫守着通宵的灯	cun li de dai fu shou zhe tong xiao de deng
+舊畫裡的士大夫在雨中執筆	jiu hua li de shi da fu zai yu zhong zhi bi
+大雪在小站换乘	da xue zai xiao zhan huan cheng
+# 露
+露出笑脸让夕阳歇一会儿	lou chu xiao lian rang xi yang xie yi hui er
+小猫露出了半截尾巴	xiao mao lou chu le ban jie wei ba
+小鹿从灌木丛露出头来	xiao lu cong guan mu cong lou chu tou lai
+月牙只露出一角尖尖	yue ya zhi lou chu yi jiao jian jian
+露水藏在叶子的皱纹里	lu shui cang zai ye zi de zhou wen li
+我把露珠轻轻托起	wo ba lu zhu qing qing tuo qi
+露台上的云梯望不到尽头	lu tai shang de yun ti wang bu dao jin tou
+你在晚风里露营	ni zai wan feng li lu ying
+# 藏
+把白昼藏进一只布袋	ba bai zhou cang jin yi zhi bu dai
+藏起来的音符还会响	cang qi lai de yin fu hai hui xiang
+云层收藏了一场夏雨	yun ceng shou cang le yi chang xia yu
+隐匿的灯藏在船舱	yin ni de deng cang zai chuan cang
+地窖里埋着昨夜的宝藏	di jiao li mai zhe zuo ye de bao zang
+藏族姊妹在山脚歇一歇	zang zu zi mei zai shan jiao xie yi xie
+青藏高原的回声去哪儿	qing zang gao yuan de hui sheng qu na er
+一卷大藏经压平了信纸	yi juan da zang jing ya ping le xin zhi
+# 朝
+朝霞烧红了湿透的船篷	zhao xia shao hong le shi tou de chuan peng
+我和朝阳各伸一只手	wo he zhao yang ge shen yi zhi shou
+朝气吹平了稿纸	zhao qi chui ping le gao zhi
+一朝梦醒满地桂影	yi zhao meng xing man di gui ying
+朝东走能遇见明早的雾	chao dong zou neng yu jian ming zao de wu
+把耳朵朝向河面	ba er duo chao xiang he mian
+朝着有海鸥的方向挥手	chao zhe you hai ou de fang xiang hui shou
+古老的王朝在一册书里醒来	gu lao de wang chao zai yi ce shu li xing lai
+# 调 / 調
+风换了曲调又从头唱	feng huan le qu diao you cong tou chang
+调到那支收不到的电台	tiao dao na zhi shou bu dao de dian tai
+调色盘里堆着远山	tiao se pan li dui zhe yuan shan
+请你调亮这间小屋	qing ni tiao liang zhe jian xiao wu
+你在窗前调音到天亮	ni zai chuang qian tiao yin dao tian liang
+小调穿过盐场的围墙	xiao diao chuan guo yan chang de wei qiang
+把声调抛给幽深的井	ba sheng diao pao gei you shen de jing
+不许调走山脚的守夜人	bu xu diao zou shan jiao de shou ye ren
+# 传 / 傳
+把竹哨传给最后一排	ba zhu shao chuan gei zui hou yi pai
+石巷里传来两下跺脚声	shi xiang li chuan lai liang xia duo jiao sheng
+传说灯塔也做过梦	chuan shuo deng ta ye zuo guo meng
+旧裙上的花纹代代相传	jiu qun shang de hua wen dai dai xiang chuan
+给看门人写一部小传	gei kan men ren xie yi bu xiao zhuan
+这本自传夹着一瓣海棠	zhe ben zi zhuan jia zhe yi ban hai tang
+我的第一本传记留给青苔	wo de di yi ben zhuan ji liu gei qing tai
+在列传的背面描一条河	zai lie zhuan de bei mian miao yi tiao he
+# 差
+差一点就够到月亮	cha yi dian jiu gou dao yue liang
+听不出两滴雨有什么差别	ting bu chu liang di yu you shen me cha bie
+把误差塞进石头底下	ba wu cha sai jin shi tou di xia
+一念之差错过了渡船	yi nian zhi cha cuo guo le du chuan
+爸爸出差带走了一只空箱	ba ba chu chai dai zou le yi zhi kong xiang
+去风里当半天邮差	qu feng li dang ban tian you chai
+应了一桩替月亮值夜的差事	ying le yi zhuang ti yue liang zhi ye de chai shi
+参差的窗沿上排满白瓷杯	cen ci de chuang yan shang pai man bai ci bei
+# 给 / 給
+给我留一块没融化的冰	gei wo liu yi kuai mei rong hua de bing
+把落叶交给赶路的人	ba luo ye jiao gei gan lu de ren
+回去写信給雲彩	hui qu xie xin gei yun cai
+给你一小把刚出锅的栗子	gei ni yi xiao ba gang chu guo de li zi
+回港补给再出发	hui gang bu ji zai chu fa
+感谢山里供给了泉水	gan xie shan li gong ji le quan shui
+请给予枯井一个名字	qing ji yu ku jing yi ge ming zi
+远远坦白各家自给自足	yuan yuan tan bai ge jia zi ji zi zu
+# 似
+那朵灰云似乎认错了山	na duo hui yun si hu ren cuo le shan
+我们相似的影子绕着井走	wo men xiang si de ying zi rao zhe jing zou
+星粒落在相似的酒杯里	xing li luo zai xiang si de jiu bei li
+他的声音如梦似幻	ta de sheng yin ru meng si huan
+风跑得像赶车似的	feng pao de xiang gan che shi de
+街灯像豆子似的洒了满地	jie deng xiang dou zi shi de sa le man di
+故人像出远门似的从我眼前经过	gu ren xiang chu yuan men shi de cong wo yan qian jing guo
+落雪像棉絮似的贴上瓦顶	luo xue xiang mian xu shi de tie shang wa ding
+# 省
+省下半壶热茶给冬天	sheng xia ban hu re cha gei dong tian
+能省一针就多留一截线	neng sheng yi zhen jiu duo liu yi jie xian
+我从省城带回一把锁	wo cong sheng cheng dai hui yi ba suo
+省略一个没说出口的字	sheng lve yi ge mei shuo chu kou de zi
+你可省悟这句问候的分量	ni ke xing wu zhe ju wen hou de fen liang
+反省的石头低了一寸	fan xing de shi tou di le yi cun
+每天自省再拉上窗帘	mei tian zi xing zai la shang chuang lian
+对镜内省时我看见一阵蓝	dui jing nei xing shi wo kan jian yi zhen lan
+# 降
+等夜色降临才吹竹笛	deng ye se jiang lin cai chui zhu di
+让温度降到雪能落下	rang wen du jiang dao xue neng luo xia
+纸飞机降落在锅盖上	zhi fei ji jiang luo zai guo gai shang
+降一点速度等小鹅	jiang yi dian su du deng xiao e
+别向风声投降	bie xiang feng sheng tou xiang
+那头野马终肯归降	na tou ye ma zhong ken gui xiang
+降服不了夜里的浪	xiang fu bu liao ye li de lang
+劝降的字写在旧旗上	quan xiang de zi xie zai jiu qi shang
+# 薄
+薄薄的冰托住半片坏瓦	bao bao de bing tuo zhu ban pian huai wa
+把饼擀薄分给雨后的邻人	ba bing gan bao fen gei yu hou de lin ren
+薄纸上画一扇蓝门	bao zhi shang hua yi shan lan men
+红线拴住薄薄的鞋底	hong xian shuan zhu bao bao de xie di
+薄荷替晚饭吹一阵凉风	bo he ti wan fan chui yi zhen liang feng
+别让刻薄的风进屋	bie rang ke bo de feng jin wu
+我把微薄的光送到岸边	wo ba wei bo de guang song dao an bian
+暮色单薄像一页旧纸	mu se dan bo xiang yi ye jiu zhi
+# 血：固定词组与口语量词
+热血从掌心冲向指尖	re xue cong zhang xin chong xiang zhi jian
+血液裹着奔跑的声响	xue ye guo zhe ben pao de sheng xiang
+血脉记得祖先的鼓点	xue mai ji de zu xian de gu dian
+一腔热血交给海风	yi qiang re xue jiao gei hai feng
+他在门阶上吐了口血	ta zai men jie shang tu le kou xie
+我的膝盖就出了点血	wo de xi gai jiu chu le dian xie
+血淋淋的指尖摸不到灯	xie lin lin de zhi jian mo bu dao deng
+挨了顿狗血喷头的骂也要继续走	ai le dun gou xie pen tou de ma ye yao ji xu zou
+# 曾
+我曾在西堤拾到一只纽扣	wo ceng zai xi di shi dao yi zhi niu kou
+未曾开过门的房子也做梦	wei ceng kai guo men de fang zi ye zuo meng
+何曾听见石头抱怨过	he ceng ting jian shi tou bao yuan guo
+旧时的我曾经怕打雷	jiu shi de wo ceng jing pa da lei
+曾祖母留下一截蓝线	zeng zu mu liu xia yi jie lan xian
+曾祖父的船停在老渡口	zeng zu fu de chuan ting zai lao du kou
+我把酒杯留给姓曾的人	wo ba jiu bei liu gei xing zeng de ren
+曾孙在院子里数瓷片	zeng sun zai yuan zi li shu ci pian
+# 重
+旧木船比暮色还重	jiu mu chuan bi mu se hai zhong
+郑重把青叶夹进书页	zheng zhong ba qing ye jia jin shu ye
+泥土沉重蝉声很轻	ni tu chen zhong chan sheng hen qing
+露水重重地砸醒屋瓦	lu shui zhong zhong de za xing wu wa
+把写坏的章节重写一遍	ba xie huai de zhang jie chong xie yi bian
+重逢那天也下了小雨	chong feng na tian ye xia le xiao yu
+重重迷雾围住石阶	chong chong mi wu wei zhu shi jie
+我想重弹旧曲	wo xiang chong tan jiu qu
+# 行
+一行人踏过干枯的河床	yi xing ren ta guo gan ku de he chuang
+步行的人跟着落叶走	bu xing de ren gen zhe luo ye zou
+把行李寄到没有站牌的地方	ba xing li ji dao mei you zhan pai de di fang
+行走时别碰醒灯下的飞蛾	xing zou shi bie peng xing deng xia de fei e
+兩行清淚把灰塵沖開	liang hang qing lei ba hui chen chong kai
+一行行脚印爬上缓坡	yi hang hang jiao yin pa shang huan po
+银行门口的石兽怕冷	yin hang men kou de shi shou pa leng
+同行的店家在清晨交换样品	tong hang de dian jia zai qing chen jiao huan yang pin
+# 弹 / 彈
+他彈著鋼琴等水燒開	ta tan zhe gang qin deng shui shao kai
+弹过琵琶的指尖记得木纹	tan guo pi pa de zhi jian ji de mu wen
+弹起新曲唤回夜风	tan qi xin qu huan hui ye feng
+橡皮球弹回树篱旁	xiang pi qiu tan hui shu li pang
+空弹壳躺在一截枯木下	kong dan ke tang zai yi jie ku mu xia
+把子弹埋到花园深处	ba zi dan mai dao hua yuan shen chu
+哑弹留下一小圈黑灰	ya dan liu xia yi xiao quan hei hui
+远处的弹药库关上铁门	yuan chu de dan yao ku guan shang tie men
+# 数 / 數
+数一数屋檐排着几朵花	shu yi shu wu yan pai zhe ji duo hua
+我数过枕头上的细针脚	wo shu guo zhen tou shang de xi zhen jiao
+數星星的人忘了眨眼	shu xing xing de ren wang le zha yan
+扳着指头数了三遍	ban zhe zhi tou shu le san bian
+无数盏小灯漂过闸门	wu shu zhan xiao deng piao guo zha men
+倒数第二扇窗只开一寸	dao shu di er shan chuang zhi kai yi cun
+读出所有数字再闭眼	du chu suo you shu zi zai bi yan
+剩下的少数石子也扔进深水	sheng xia de shao shu shi zi ye reng jin shen shui
+夜里听到桥响早已数见不鲜	ye li ting dao qiao xiang zao yi shuo jian bu xian
+数见不鲜的落叶每年换片颜色	shuo jian bu xian de luo ye mei nian huan pian yan se
+# 会 / 會
+你会记得晒热的沙发吗	ni hui ji de shai re de sha fa ma
+有机会就回海边走走	you ji hui jiu hui hai bian zou zou
+我們在矮牆下開會	wo men zai ai qiang xia kai hui
+这会儿我只想靠岸	zhe hui er wo zhi xiang kao an
+会计用墨水记下云的重量	kuai ji yong mo shui ji xia yun de zhong liang
+老会计也为星星记账	lao kuai ji ye wei xing xing ji zhang
+会计师的笔丢在腊月	kuai ji shi de bi diu zai la yue
+會計室的窗玻璃透藍	kuai ji shi de chuang bo li tou lan
+# 角
+屋角的蜘蛛不必赶路	wu jiao de zhi zhu bu bi gan lu
+在街角捡到一枚木扣	zai jie jiao jian dao yi mei mu kou
+被角兜住野花和冷风	bei jiao dou zhu ye hua he leng feng
+一角斜阳落到竹筐里	yi jiao xie yang luo dao zhu kuang li
+主角踩响舞台的木板	zhu jue cai xiang wu tai de mu ban
+配角也有独自归家的时候	pei jue ye you du zi gui jia de shi hou
+我想换个没台词的角色	wo xiang huan ge mei tai ci de jue se
+两朵浪花在岸边角力	liang duo lang hua zai an bian jue li
+# 模
+模仿第一声雨打梧桐	mo fang di yi sheng yu da wu tong
+雨把远山的轮廓抹模糊	yu ba yuan shan de lun kuo mo mo hu
+影子的模型等日光浇筑	ying zi de mo xing deng ri guang jiao zhu
+把快门调回旧模式	ba kuai men tiao hui jiu mo shi
+我只记得窗户的大致模样	wo zhi ji de chuang hu de da zhi mu yang
+印糕的模子晒在竹架上	yin gao de mu zi shai zai zhu jia shang
+模具里是还没冷却的月	mu ju li shi hai mei leng que de yue
+等城砖凝固再拆模	deng cheng zhuan ning gu zai chai mu
+# 系 / 繫
+把鞋带系好才去寻雨	ba xie dai ji hao cai qu xun yu
+系上围巾就能越过寒潮	ji shang wei jin jiu neng yue guo han chao
+你把缆绳系在柳树上	ni ba lan sheng ji zai liu shu shang
+我草草系了个结	wo cao cao ji le ge jie
+联系不上树后的暮云	lian xi bu shang shu hou de mu yun
+在银河系写一封家书	zai yin he xi xie yi feng jia shu
+故鄉的風還牽繫腳步	gu xiang de feng hai qian xi jiao bu
+这关系到明天有没有船	zhe guan xi dao ming tian you mei you chuan
+# 率
+直率的人把话儿交给浪	zhi shuai de ren ba hua er jiao gei lang
+率先划下水面的第一笔	shuai xian hua xia shui mian de di yi bi
+你率领群鸟穿过炊烟	ni shuai ling qun niao chuan guo chui yan
+晚风从来草率地撕纸	wan feng cong lai cao shuai de si zhi
+心率追着屋外的雨数数	xin lv zhui zhe wu wai de yu shu shu
+頻率相同的回聲湊在一起	pin lv xiang tong de hui sheng cou zai yi qi
+测过掉进泥里的概率	ce guo diao jin ni li de gai lv
+小站提高了收信的效率	xiao zhan ti gao le shou xin de xiao lv
+# 参 / 參
+参观山顶的雾时请带伞	can guan shan ding de wu shi qing dai san
+參加一場只給螢火蟲的舞會	can jia yi chang zhi gei ying huo chong de wu hui
+把河道的转弯用作参考	ba he dao de zhuan wan yong zuo can kao
+参与修桥的人都搬走了	can yu xiu qiao de ren dou ban zou le
+人参的苦熬进一锅汤	ren shen de ku ao jin yi guo tang
+海参跟石头一起沉下去	hai shen gen shi tou yi qi chen xia qu
+西洋参切面像小小的年轮	xi yang shen qie mian xiang xiao xiao de nian lun
+参差的竹篱总有一根高过风	cen ci de zhu li zong you yi gen gao guo feng
+# 称
+先称一称雨水有多重	xian cheng yi cheng yu shui you duo zhong
+称呼一只麻雀为云雀	cheng hu yi zhi ma que wei yun que
+名字是别人留的称号	ming zi shi bie ren liu de cheng hao
+称赞昨夜迟到的满月	cheng zan zuo ye chi dao de man yue
+不对称的纸船也能靠岸	bu dui chen de zhi chuan ye neng kao an
+称心的日子有微咸的风	chen xin de ri zi you wei xian de feng
+两道不相称的光在杯里交错	liang dao bu xiang chen de guang zai bei li jiao cuo
+今天找不到一把称手的锤子	jin tian zhao bu dao yi ba chen shou de chui zi
+# 恶 / 惡
+梦里的恶龙只想守住一扇门	meng li de e long zhi xiang shou zhu yi shan men
+恶意的闲话比北风还冷	e yi de xian hua bi bei feng hai leng
+噩梦里的恶鬼怕晒太阳	e meng li de e gui pa shai tai yang
+我把惡習丟在回家的岔道	wo ba e xi diu zai hui jia de cha dao
+我厌恶沾满墨水的手套	wo yan wu zhan man mo shui de shou tao
+别和你憎恶的争吵过夜	bie he ni zeng wu de zheng chao guo ye
+好恶都写在黑色封面上	hao wu dou xie zai hei se feng mian shang
+可恶的雨打坏了新风筝	ke wu de yu da huai le xin feng zheng
+# 吓 / 嚇
+骤亮的灯吓跑了纸上的鸟	zhou liang de deng xia pao le zhi shang de niao
+我没被一阵关门声吓倒	wo mei bei yi zhen guan men sheng xia dao
+大雁低飞吓坏了船夫	da yan di fei xia huai le chuan fu
+別嚇醒懷裡的孩子	bie xia xing huai li de hai zi
+旧玩具也能吓我一跳	jiu wan ju ye neng xia wo yi tiao
+恐吓的墨迹被潮水洗浅	kong he de mo ji bei chao shui xi qian
+电闪雷鸣恫吓不了石屋	dian shan lei ming dong he bu liao shi wu
+你莫威吓院墙下的小狸猫	ni mo wei he yuan qiang xia de xiao li mao
+# 壳
+我把果壳留作小鸟的碗	wo ba guo ke liu zuo xiao niao de wan
+鸡蛋壳里住过一小团黄光	ji dan ke li zhu guo yi xiao tuan huang guang
+贝壳盛不了退下去的潮	bei ke sheng bu liao tui xia qu de chao
+茶杯靠着一只栗子壳	cha bei kao zhe yi zhi li zi ke
+地壳在很深的地方发颤	di qiao zai hen shen de di fang fa chan
+甲壳挡风也挡不了潮声	jia qiao dang feng ye dang bu liao chao sheng
+金蝉脱壳留下空空的日子	jin chan tuo qiao liu xia kong kong de ri zi
+介壳没有忘记海水的味道	jie qiao mei you wang ji hai shui de wei dao
+# 奇
+奇怪的门铃只在中午响	qi guai de men ling zhi zai zhong wu xiang
+稀奇的石纹比树影柔软	xi qi de shi wen bi shu ying rou ruan
+没等来奇迹就等来晨光	mei deng lai qi ji jiu deng lai chen guang
+把奇闻写上第四页	ba qi wen xie shang di si ye
+这回轮到奇数站在秤上	zhe hui lun dao ji shu zhan zai cheng shang
+我们挑奇数日去敲冰	wo men tiao ji shu ri qu qiao bing
+奇函数陪我熬到第一阵鸟鸣	ji han shu pei wo ao dao di yi zhen niao ming
+奇偶都落在同一片沙洲	ji ou dou luo zai tong yi pian sha zhou
+# 脉 / 脈
+山脉把一半雷声挡在北边	shan mai ba yi ban lei sheng dang zai bei bian
+指尖碰着干叶的叶脉	zhi jian peng zhe gan ye de ye mai
+按住动脉听指节的雨声	an zhu dong mai ting zhi jie de yu sheng
+脈搏在安靜的時候打拍	mai bo zai an jing de shi hou da pai
+眼神脉脉像一尾鱼	yan shen mo mo xiang yi wei yu
+含情脉脉望着斜桥	han qing mo mo wang zhe xie qiao
+灯光脉脉在水面铺开	deng guang mo mo zai shui mian pu kai
+脉脉的清溪绕过院墙	mo mo de qing xi rao guo yuan qiang
+# 弄
+把钥匙弄丢的人沿路低头	ba yao shi nong diu de ren yan lu di tou
+你玩弄纸屑我收起风	ni wan nong zhi xie wo shou qi feng
+别捉弄那条迟到的影子	bie zhuo nong na tiao chi dao de ying zi
+请把倒下的花架弄好	qing ba dao xia de hua jia nong hao
+弄堂口只有理发店的灯	long tang kou zhi you li fa dian de deng
+她在旧弄堂里找到一封信	ta zai jiu long tang li zhao dao yi feng xin
+我把风声留在石库门的里弄	wo ba feng sheng liu zai shi ku men de li long
+小巷通向那条狭长的里弄	xiao xiang tong xiang na tiao xia chang de li long
+# 儿：儿化尾与独立的“儿”
+就近坐一会儿听砂砾喝水	jiu jin zuo yi hui er ting sha li he shui
+一會兒夜色就漫過小棧橋	yi hui er ye se jiu man guo xiao zhan qiao
+拿点儿颜料给西山补色	na dian er yan liao gei xi shan bu se
+我从门缝儿望见碎星光	wo cong men feng er wang jian sui xing guang
+小鸟儿扑棱一下就飞远	xiao niao er pu leng yi xia jiu fei yuan
+哪儿还留着平坦的路	na er hai liu zhe ping tan de lu
+她把花儿插进土陶瓶	ta ba hua er cha jin tu tao ping
+女兒用彩筆畫了一艘小船	nv er yong cai bi hua le yi sou xiao chuan
+儿童把沙坑叫作海	er tong ba sha keng jiao zuo hai
+孤儿等云朵把门推开	gu er deng yun duo ba men tui kai
+故乡的儿女啊都请坐下	gu xiang de er nv a dou qing zuo xia
+# ü 拼写、繁简混合、标点、空格、英日混排
+绿色旅店收留了两缕雾	lv se lv dian shou liu le liang lv wu
+铝勺打在锅沿上一声轻响	lv shao da zai guo yan shang yi sheng qing xiang
+屋顶积起几捧微绿的雪	wu ding ji qi ji peng wei lv de xue
+省略的音節飄過女孩的裙角	sheng lve de yin jie piao guo nv hai de qun jiao
+小巷兜住昨夜肆虐过的雪	xiao xiang dou zhu zuo ye si nve guo de xue
+聽一聽我彈著的舊和弦	ting yi ting wo tan zhe de jiu he xian
+青苔還沒長大雨就過去了	qing tai hai mei zhang da yu jiu guo qu le
+弹，吉他还有几根弦	dan ji ta hai you ji gen xian
+弹着 吉他的声音也在这儿	dan zhe ji ta de sheng yin ye zai zhe er
+一 行泪落在扇面	yi xing lei luo zai shan mian
+泪成行，月在水中央	lei cheng hang yue zai shui zhong yang
+本來的目的？讓雨停一會兒	ben lai de mu di rang yu ting yi hui er
+等到了！我们拎着衣角往外跑	deng dao le wo men lin zhe yi jiao wang wai pao
+我知道   了解需要一把钥匙	wo zhi dao liao jie xu yao yi ba yao shi
+弹着 go 吉他	dan zhe - ji ta
+我看到了 blue 夜空	wo kan dao le - ye kong
+在雨里轻轻地 sing	zai yu li qing qing de -
+一行カ泪落在蜡纸上	yi xing - lei luo zai la zhi shang
+你唱完了 きょ 还会唱什么	ni chang wan le - hai hui chang shen me
+明日(あした) 我们再慢慢地走	- wo men zai man man de zou
+good night，窗台长出了雾	- - chuang tai zhang chu le wu
+雨を听完了再回家	yu - ting wan le zai hui jia
+窗前的灯よを照著船邊	chuang qian de deng - - zhao zhe chuan bian
+一行(いっこう)行泪	- xing lei
+<00:12.30>盲<00:12.40>目的爱	mang mu de ai
+# 额外对照：同句的不同读法
+心地再软也要认真地道别	xin di zai ruan ye yao ren zhen de dao bie
+露珠滚过她刚露出的笑脸	lu zhu gun guo ta gang lou chu de xiao lian
+我了解你昨天就到了	wo liao jie ni zuo tian jiu dao le
+睡着的人披着没缝好的披肩	shui zhao de ren pi zhe mei feng hao de pi jian
+在银行门外一行人等着风停	zai yin hang men wai yi xing ren deng zhe feng ting
+还你旧伞时你还以为我带了雨	huan ni jiu san shi ni hai yi wei wo dai le yu
+我得去听你弹得有多轻	wo dei qu ting ni tan de you duo qing
+阳光终于找着了睡觉的鱼	yang guang zhong yu zhao zhao le shui jiao de yu
+愿父亲的大夫寄来平安信	yuan fu qin de dai fu ji lai ping an xin
+把落下的叶子收齐别落下任何一片	ba luo xia de ye zi shou qi bie la xia ren he yi pian
+# 另一组助词边界与词义的对照
+先把目的地写在背面	xian ba mu di di xie zai bei mian
+漫无目的地走进雨里	man wu mu di de zou jin yu li
+我在清晨打的去看潮落	wo zai qing chen da di qu kan chao luo
+一辆的士停在雨旁	yi liang di shi ting zai yu pang
+高高地举起晒干的叶	gao gao de ju qi shai gan de ye
+你得亲手拉好窗帘	ni dei qin shou la hao chuang lian
+他还得悄悄地离开	ta hai dei qiao qiao de li kai
+岸邊有人守著剛點亮的燈	an bian you ren shou zhe gang dian liang de deng
+我念著你的名等風來	wo nian zhe ni de ming deng feng lai
+她看着书忘了关门	ta kan zhe shu wang le guan men
+小马的确跑得很快	xiao ma di que pao de hen kuai
+我等的确认随雪寄来	wo deng de que ren sui xue ji lai
+你的确认为小船可以载月亮	ni di que ren wei xiao chuan ke yi zai yue liang
+别让蝉声托着整晚的月	bie rang chan sheng tuo zhe zheng wan de yue
+山石着了火照出水里的檐	shan shi zhao le huo zhao chu shui li de yan
+我看着火苗摇晃不定	wo kan zhe huo miao yao huang bu ding
+池面的倒影著色很淡	chi mian de dao ying zhuo se hen dan
+一身穿着随意的旅人借走了伞	yi shen chuan zhuo sui yi de lv ren jie zou le san
+没落的旧城重开了灯	mo luo de jiu cheng chong kai le deng
+松针落在旧车站	song zhen luo zai jiu che zhan
+穿著一件褪色長跑衫	chuan zhe yi jian tui se chang pao shan

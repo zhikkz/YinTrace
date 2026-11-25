@@ -54,8 +54,9 @@ def verify_package(path):
             raise SystemExit('Missing KleidiAI notice.')
         if b'Zstandard 1.5.7' not in read('assets/licenses/archive-4.7.1-LICENSE-other.md'):
             raise SystemExit('Missing Zstandard notice.')
-        if b'CC BY-SA 4.0 International' not in read('assets/mandarin/cc-cedict-readings.tsv'):
-            raise SystemExit('Missing CC-CEDICT attribution in the distributed table.')
+        for filename in ('cc-cedict-readings.tsv', 'cc-cedict-words.tsv'):
+            if b'CC BY-SA 4.0 International' not in read('assets/mandarin/' + filename):
+                raise SystemExit(f'Missing CC-CEDICT attribution in {filename}.')
     print('Verified AGPL v3, ONNX Runtime (KleidiAI), archive (Zstandard), and dictionary notices in the IPA.')
 
 

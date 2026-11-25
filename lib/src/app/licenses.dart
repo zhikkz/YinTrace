@@ -41,8 +41,9 @@ $license''');
 CC-CEDICT contributors, published by MDBG. Based on CEDICT, Copyright (C) 1997, 1998 Paul Andrew Denisowski.
 https://www.mdbg.net/chinese/dictionary?page=cedict
 
-YinTrace extracted Chinese headwords and pronunciations, normalized them to toneless pinyin, and retained additional readings and unambiguous context-dependent phrases. This adaptation is available separately under CC BY-SA 4.0 International.
+YinTrace extracted Chinese headwords and toneless pronunciations for the reading and segmentation tables, and wrote er for independently timed 儿/兒. Both tables are available separately under CC BY-SA 4.0 International.
 https://github.com/zhikkz/YinTrace/blob/main/assets/mandarin/cc-cedict-readings.tsv
+https://github.com/zhikkz/YinTrace/blob/main/assets/mandarin/cc-cedict-words.tsv
 https://creativecommons.org/licenses/by-sa/4.0/
 
 $ccLicense''');

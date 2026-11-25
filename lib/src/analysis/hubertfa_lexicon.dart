@@ -10,6 +10,10 @@ import 'mandarin_readings.dart';
 const silencePhone = 0;
 const unknownPhone = -1;
 
+// HuBERTFA v0.0.7 uses er for a separately aligned 儿. The nearest
+// model entries for the interjections ng (嗯) and hng (哼) are en and heng.
+const _mandarinAliases = {'r': 'er', 'ng': 'en', 'hng': 'heng'};
+
 final _toneNumber = RegExp(r'[0-5]$');
 final _combiningTones = RegExp(r'[\u0300\u0301\u0304\u030c]');
 const _marked = 'āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü';
@@ -78,6 +82,13 @@ class HubertFaLexicon {
     );
   }
 
+  Iterable<String> get mandarinSyllables => _mandarin.keys;
+
+  List<int>? _mandarinPhones(String pinyin) {
+    final alias = _mandarinAliases[pinyin];
+    return _mandarin[pinyin] ?? (alias == null ? null : _mandarin[alias]);
+  }
+
   /// One phone sequence per displayed token. A wildcard uses the model's
   /// speech vs silence and edge scores for a word with no dictionary entry.
   List<List<int>> phones(LyricLine line, LyricsLanguage language, Map<int, String> overrides) {
@@ -90,16 +101,18 @@ class HubertFaLexicon {
 
   List<int>? _tokenPhones(LyricToken token, String? pinyin, String? override) {
     if (override != null) {
-      final phones = _mandarin[normalizePinyin(override)];
+      final phones = _mandarinPhones(normalizePinyin(override));
       if (phones == null) throw FormatException('“${token.text}”的拼音“$override”不在模型词典中');
       return phones;
     }
     if (pinyin != null) {
-      final phones = _mandarin[pinyin];
+      final phones = _mandarinPhones(pinyin);
       if (phones != null) return phones;
       for (final alternate in _readings.alternatives(token.text)) {
-        if (_mandarin[alternate] case final match?) return match;
+        if (_mandarinPhones(alternate) case final match?) return match;
       }
+      // Syllabic interjections such as hm, m and n may have no model entry
+      // and no usable character alternative. Let the decoder use a wildcard.
       return null;
     }
     if (isLatinLetter(token.text.runes.first)) return _english[_englishKey(token.text)];
