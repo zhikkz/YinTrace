@@ -113,15 +113,17 @@ flutter test test/real_import_test.dart
 
 正式版发布在 GitHub Releases，目前包括安卓 APK（按架构分包，用发布密钥签名）和未签名的 iOS `.ipa`。
 
-1. 同时改 `pubspec.yaml` 的 `version`（例如 `1.1.0+2`）和 `lib/src/app/licenses.dart` 的 `appVersion`
+1. 同时改 `pubspec.yaml` 的 `version`（例如 `1.1.0+3`）和 `lib/src/app/licenses.dart` 的 `appVersion`
    （`1.1.0`，有测试保证两者一致），写好发布说明 `docs/releases/v1.1.0.md`，合入 `main`。
+   `+` 后面的构建号每发一版加一，要比上一个发布的安装包大（1.0.0 的安卓包已经是 `+2`）：
+   安卓不让构建号更小的包覆盖安装，应用商店也要求每次都更大。
 2. 在 GitHub 的 Actions → Release → Run workflow 里选 `main`，填版本号 `1.1.0`。
    `.github/workflows/release.yml` 检查版本号和发布说明，构建安卓和 iOS 安装包，核对 APK 的签名证书
    与 `android/release-cert-sha256.txt` 一致，然后在这个提交上创建 tag `v1.1.0` 和 Release，
    附上安装包和 `SHA256SUMS.txt`。
 
 已经发布的版本，安卓安装包要带上一个修复时（比如 1.0.0 的导出修复）：修复合入 `main` 后，
-把 `pubspec.yaml` 的构建号加一（`1.0.0+1` → `1.0.0+2`，覆盖安装才认作更新），
+把 `pubspec.yaml` 的构建号加一（`1.0.0+1` → `1.0.0+2`：新旧两个包分得清，旧包也不能再装回新包上面），
 在该版本的发布说明里写清换了什么，再运行 Release 并勾选 `replace_android`。
 它只重新构建、签名安卓 APK，替换 Release 里同名的三个 APK，重算 `SHA256SUMS.txt`，
 并把发布说明更新为现在的 `docs/releases/v<版本>.md`，末尾注明 APK 由哪个提交构建；
