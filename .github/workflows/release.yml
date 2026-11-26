@@ -5,12 +5,21 @@ name: Release
 # Run it from Actions → Release → Run workflow on main; see
 # docs/development.md (发布新版本). The tag v<version> is created on the
 # commit it runs on.
+#
+# With replace_android, it builds the APKs of a version that is already
+# published from the commit it runs on, and swaps them in with new checksums
+# and notes: for a fix that has to reach the APKs of that version. The .ipa
+# and the tag stay; the notes say which commit the APKs were built from.
 on:
   workflow_dispatch:
     inputs:
       version:
         description: 'Version to publish, as in pubspec.yaml (for example 1.0.0)'
         required: true
+      replace_android:
+        description: 'Replace the Android APKs of this already published version (the .ipa and the tag stay)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,6 +33,7 @@ env:
   CI: 'true'
   FLUTTER_SUPPRESS_ANALYTICS: 'true'
   VERSION: ${{ inputs.version }}
+  REPLACE_ANDROID: ${{ inputs.replace_android }}
 
 jobs:
   check:
@@ -31,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: The version is the app's, has notes, and is not published yet
+      - name: The version is the app's, has notes, and is not published yet (or is, to replace its APKs)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -41,7 +51,11 @@ jobs:
           grep -Eq "^version: ${VERSION//./\\.}\+[0-9]+$" pubspec.yaml || { echo "::error::pubspec.yaml is not at $VERSION."; exit 1; }
           grep -q "const appVersion = '$VERSION';" lib/src/app/licenses.dart || { echo "::error::appVersion is not $VERSION."; exit 1; }
           test -s "docs/releases/v$VERSION.md" || { echo "::error::Write docs/releases/v$VERSION.md first."; exit 1; }
-          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          published=false
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then published=true; fi
+          if [ "$REPLACE_ANDROID" = true ]; then
+            [ "$published" = true ] || { echo "::error::v$VERSION is not published: nothing to replace."; exit 1; }
+          elif [ "$published" = true ]; then
             echo "::error::v$VERSION is already published."
             exit 1
           fi
@@ -115,6 +129,7 @@ jobs:
   ios:
     name: iOS app (unsigned .ipa)
     needs: check
+    if: ${{ !inputs.replace_android }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
@@ -151,6 +166,7 @@ jobs:
   publish:
     name: Publish the release
     needs: [android, ios]
+    if: ${{ !inputs.replace_android }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -178,3 +194,43 @@ jobs:
         run: |
           gh release create "v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "音迹 $VERSION" --notes-file notes.md --latest
+
+  replace-android:
+    name: Replace the Android APKs
+    needs: android
+    if: ${{ inputs.replace_android }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Collect the new APKs, the published .ipa and the checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-android --dir artifacts
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --pattern '*.ipa' --dir artifacts
+          mkdir -p dist
+          find artifacts -type f \( -name '*.apk' -o -name '*.ipa' \) -exec cp -t dist {} +
+          [ "$(ls dist/*.apk | wc -l)" = 3 ] && [ "$(ls dist/*.ipa | wc -l)" = 1 ] \
+            || { echo "::error::Expected three APKs and the .ipa."; ls -l dist; exit 1; }
+          (cd dist && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          {
+            cat "docs/releases/v$VERSION.md"
+            printf '\n安卓安装包按提交 [%s](%s/%s/commit/%s) 构建。\n' \
+              "${GITHUB_SHA:0:7}" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+            printf '\n## SHA-256\n\n```\n'
+            cat dist/SHA256SUMS.txt
+            printf '```\n'
+          } > notes.md
+      - name: Replace them on v${{ inputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "v$VERSION" dist/*.apk dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name) \(.size)"'

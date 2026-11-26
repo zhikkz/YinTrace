@@ -15,10 +15,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Asks for the microphone at run time and opens the share sheet
- * ({@link FileShare}). The audio itself is native code that Dart calls
- * through dart:ffi; see NativeAudio.requestMicPermission and
- * NativeAudio.shareFile.
+ * Asks for the microphone at run time, and opens the share sheet and the
+ * "save as" dialog for exported files ({@link FileShare}). The audio itself
+ * is native code that Dart calls through dart:ffi; see
+ * NativeAudio.requestMicPermission, NativeAudio.shareFile and
+ * NativeAudio.saveFileCopy.
  */
 public final class YintraceAudioPlugin
     implements FlutterPlugin,
@@ -65,6 +66,7 @@ public final class YintraceAudioPlugin
   public void onAttachedToActivity(ActivityPluginBinding binding) {
     activity = binding;
     binding.addRequestPermissionsResultListener(this);
+    binding.addActivityResultListener(share);
   }
 
   @Override
@@ -72,7 +74,8 @@ public final class YintraceAudioPlugin
     onAttachedToActivity(binding);
   }
 
-  // The prompt's answer reaches the recreated activity: keep waiting for it.
+  // The prompt's and the save dialog's answers reach the recreated activity:
+  // keep waiting for them.
   @Override
   public void onDetachedFromActivityForConfigChanges() {
     detachActivity();
@@ -82,10 +85,14 @@ public final class YintraceAudioPlugin
   public void onDetachedFromActivity() {
     detachActivity();
     answer(status());
+    if (share != null) share.cancelSave();
   }
 
   private void detachActivity() {
-    if (activity != null) activity.removeRequestPermissionsResultListener(this);
+    if (activity != null) {
+      activity.removeRequestPermissionsResultListener(this);
+      if (share != null) activity.removeActivityResultListener(share);
+    }
     activity = null;
   }
 

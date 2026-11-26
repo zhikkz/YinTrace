@@ -93,7 +93,7 @@ iPhone 模拟器真实插件冒烟（两个真实模型、AAC 往返、AGPL 全�
 Linux 上还构建 Android release APK（构建产物 `yintrace-android-apk`，调试密钥签名），
 并在 Android 14 模拟器上跑 `integration_test/android_smoke_test.dart`：m4a 与 ADTS 的 AAC 解码
 （含编码器延迟的裁剪）、运行时麦克风授权（`tools/ci_android_allow_microphone.py` 代按“允许”）、
-把应用私有目录里的导出文件交给系统分享面板。
+把导出文件交给系统分享面板（导出删掉后对方仍能读到）。
 测试音频由 `tools/make_android_fixtures.sh` 生成。
 
 可选的整曲端到端测试（音频和歌词仅保存在本地，不要提交）：
@@ -120,6 +120,13 @@ flutter test test/real_import_test.dart
    与 `android/release-cert-sha256.txt` 一致，然后在这个提交上创建 tag `v1.1.0` 和 Release，
    附上安装包和 `SHA256SUMS.txt`。
 
+已经发布的版本，安卓安装包要带上一个修复时（比如 1.0.0 的导出修复）：修复合入 `main` 后，
+把 `pubspec.yaml` 的构建号加一（`1.0.0+1` → `1.0.0+2`，覆盖安装才认作更新），
+在该版本的发布说明里写清换了什么，再运行 Release 并勾选 `replace_android`。
+它只重新构建、签名安卓 APK，替换 Release 里同名的三个 APK，重算 `SHA256SUMS.txt`，
+并把发布说明更新为现在的 `docs/releases/v<版本>.md`，末尾注明 APK 由哪个提交构建；
+`.ipa` 和 tag 不变。已装旧包的人不会收到更新提示（版本号相同），要自己重新下载。
+
 安卓发布密钥存在仓库的 Actions secrets 里（也可以放在名为 `release` 的环境的 secrets 里：Settings → Environments → release）：`ANDROID_KEYSTORE_BASE64`（keystore 文件的 base64）、
 `ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。每个版本都必须用这把密钥签名，
 用户才能覆盖安装、保留曲库；密钥和密码要另外备份，丢失后就无法再发布可以覆盖安装的更新。
@@ -137,7 +144,7 @@ App 的“检查更新”读取最新的 Release（`api.github.com/repos/zhikkz/
 | 平台 | 已经可用 | 还需要 |
 |---|---|---|
 | macOS | 原生核心（Core Audio、权限）、权限声明 | 实机测试 |
-| Android | 原生核心（AAudio/OpenSL，CMake 构建）、ONNX Runtime 插件、运行时申请麦克风权限、系统分享面板（导出的文件经 FileProvider 交给别的 App）、m4a/AAC 解码（NDK MediaCodec；wav/mp3/flac 仍走 miniaudio） | 实机测试；aiff/caf 解码；AAC 编码（目前分离结果存 WAV） |
+| Android | 原生核心（AAudio/OpenSL，CMake 构建）、ONNX Runtime 插件、运行时申请麦克风权限、导出文件的系统分享面板（FileProvider）和“存到手机”（系统保存对话框）、m4a/AAC 解码（NDK MediaCodec；wav/mp3/flac 仍走 miniaudio） | 实机测试；aiff/caf 解码；AAC 编码（目前分离结果存 WAV） |
 | Windows | 原生核心（WASAPI，CMake 构建）、ONNX Runtime 插件 | m4a 解码（Media Foundation）；实机测试 |
 
 非 Apple 平台没有 AAC 编码器时，分离结果会自动保存为 WAV。

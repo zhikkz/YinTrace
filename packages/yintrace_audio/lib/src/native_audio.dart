@@ -52,6 +52,9 @@ class DecodedAudio {
 
 enum MicPermission { undetermined, granted, denied }
 
+/// How [NativeAudio.saveFileCopy] ended (the answers in FileShare.java).
+enum SaveCopyResult { saved, cancelled, failed }
+
 /// The active system output (YT_OUTPUT_* in yt_audio.h).
 enum OutputRoute { unknown, speaker, wired, usb, bluetooth, airPlay }
 
@@ -282,7 +285,7 @@ class NativeAudio {
     }
   }
 
-  /// Android's share sheet lives in FileShare.java.
+  /// Android's share sheet and "save as" dialog live in FileShare.java.
   static const _share = MethodChannel('yintrace_audio/share');
 
   /// Shows the system share sheet for [path] (iOS: save to Files, AirDrop,
@@ -303,6 +306,25 @@ class NativeAudio {
       return _b.shareFile(p.cast()) == 0;
     } finally {
       malloc.free(p);
+    }
+  }
+
+  /// Whether [saveFileCopy] can ask where to save: Android, whose exports
+  /// stay where no file manager sees them.
+  static bool get canSaveFileCopy => Platform.isAndroid;
+
+  /// Opens the system's "save as" dialog for a copy of [path] (Android) and
+  /// copies the file to the place picked there. [SaveCopyResult.failed]
+  /// where there is no such dialog.
+  static Future<SaveCopyResult> saveFileCopy(String path) async {
+    if (!canSaveFileCopy) return SaveCopyResult.failed;
+    try {
+      final answer = await _share.invokeMethod<String>('save', {'path': path});
+      return SaveCopyResult.values.firstWhere((r) => r.name == answer, orElse: () => SaveCopyResult.failed);
+    } on PlatformException {
+      return SaveCopyResult.failed;
+    } on MissingPluginException {
+      return SaveCopyResult.failed;
     }
   }
 

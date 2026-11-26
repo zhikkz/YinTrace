@@ -1,7 +1,7 @@
 name: yintrace
 description: "YinTrace 唱歌练习：人声分离 + AI 音高模型逐字音高图 + YIN 实时音高对比"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: ^3.13.7
