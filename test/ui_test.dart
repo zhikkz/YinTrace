@@ -11,6 +11,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -1134,6 +1135,68 @@ void main() {
     expect((await tester.runAsync(() => services.songs.load(song.id)))!.practiceCount, greaterThan(0));
     await tester.pumpWidget(const SizedBox());
     await tester.runAsync(() => services.songs.delete(added.id));
+  });
+
+  testWidgets('when the share sheet does not open, an Android export does not claim to be saved', (tester) async {
+    phone(tester);
+    final out = Directory('${tmp.path}/unshared');
+    final file = '${out.path}/夜航（示例） - 演示.yintrace';
+    var opens = false;
+    final asked = <String>[];
+    Future<void> export() async {
+      await tester.pumpWidget(
+        host(
+          services,
+          Scaffold(
+            body: SongShareSheet(
+              key: UniqueKey(),
+              song: song,
+              background: false,
+              outputDir: out,
+              share: (path) async {
+                asked.add(path);
+                return opens;
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('导出歌曲文件'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确认并导出及分享'));
+      await settleIo(tester, rounds: 5);
+    }
+
+    try {
+      // Android keeps the file where no file manager sees it: only sharing gets it out.
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      await export();
+      expect(asked, [file]);
+      expect(find.text('已导出 夜航（示例） - 演示.yintrace'), findsOneWidget);
+      expect(find.text('没能打开分享面板，点“分享或存到别处”再试一次。'), findsOneWidget);
+      expect(find.textContaining('已保存'), findsNothing);
+      expect(find.textContaining('我的 iPhone'), findsNothing);
+      opens = true;
+      await tester.tap(find.text('分享或存到别处'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确认并分享'));
+      await tester.pumpAndSettle();
+      expect(asked, [file, file]);
+      expect(find.textContaining('没能打开分享面板'), findsNothing);
+      expect(find.textContaining('文件管理器里找不到'), findsOneWidget);
+
+      // On iOS the Files app shows the folder.
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      opens = false;
+      await export();
+      expect(find.text('已保存到 $file'), findsOneWidget);
+      opens = true;
+      await export();
+      expect(find.text('在「文件」App 的 我的 iPhone › 音迹里也能找到。'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('model setup only gates on the models required by this import', (tester) async {

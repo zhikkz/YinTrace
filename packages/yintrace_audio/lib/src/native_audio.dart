@@ -6,7 +6,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:flutter/services.dart' show MethodChannel;
+import 'package:flutter/services.dart' show MethodChannel, MissingPluginException, PlatformException;
 
 import 'bindings.dart';
 
@@ -282,9 +282,22 @@ class NativeAudio {
     }
   }
 
+  /// Android's share sheet lives in FileShare.java.
+  static const _share = MethodChannel('yintrace_audio/share');
+
   /// Shows the system share sheet for [path] (iOS: save to Files, AirDrop,
-  /// messages...). Returns false where there is none.
-  static bool shareFile(String path) {
+  /// messages...; Android: the apps that take a file). Returns false where
+  /// there is none or it could not be opened.
+  static Future<bool> shareFile(String path) async {
+    if (Platform.isAndroid) {
+      try {
+        return await _share.invokeMethod<bool>('share', {'path': path}) ?? false;
+      } on PlatformException {
+        return false;
+      } on MissingPluginException {
+        return false;
+      }
+    }
     final p = path.toNativeUtf8();
     try {
       return _b.shareFile(p.cast()) == 0;

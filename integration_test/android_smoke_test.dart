@@ -8,6 +8,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
@@ -100,4 +101,20 @@ void main() {
     // Granted: answered at once, without a prompt.
     expect(await NativeAudio.requestMicPermission(timeout: const Duration(seconds: 5)), MicPermission.granted);
   }, timeout: const Timeout(Duration(minutes: 4)));
+
+  // Last: the share sheet stays open over the app.
+  testWidgets('an export in the app storage goes to the share sheet', (tester) async {
+    // Where the export page and the song share sheet write.
+    final docs = await getApplicationDocumentsDirectory();
+    final file = File('${docs.path}/分享测试 - 音迹.yintrace')..writeAsBytesSync(List.filled(100000, 7));
+    try {
+      expect(await NativeAudio.shareFile('${docs.path}/没有这个文件.yintrace'), isFalse);
+      expect(await NativeAudio.shareFile(file.path), isTrue);
+      // Handed over from the cache folder ShareProvider serves.
+      final staged = File('${(await getTemporaryDirectory()).path}/yintrace_share/分享测试 - 音迹.yintrace');
+      expect(staged.lengthSync(), file.lengthSync());
+    } finally {
+      file.deleteSync();
+    }
+  });
 }

@@ -18,6 +18,7 @@ import '../export/recordings.dart';
 import '../library/recording.dart';
 import '../library/song.dart';
 import 'copyright_notice.dart';
+import 'export_location.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -80,7 +81,7 @@ class ExportPage extends StatefulWidget {
   final PracticeEngine Function()? engineFactory;
   final bool background;
   final Directory? outputDir;
-  final bool Function(String path)? share;
+  final FutureOr<bool> Function(String path)? share;
 
   @override
   State<ExportPage> createState() => _ExportPageState();
@@ -318,7 +319,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
         _progress = null;
         _exported = path;
       });
-      _share(path);
+      unawaited(_share(path));
     } catch (e) {
       if (!mounted) return;
       setState(() => _progress = null);
@@ -328,9 +329,9 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
     }
   }
 
-  void _share(String path) {
-    final shared = (widget.share ?? NativeAudio.shareFile)(path);
-    if (!shared) _snack('已保存：$path');
+  Future<void> _share(String path) async {
+    final shared = await (widget.share ?? NativeAudio.shareFile)(path);
+    if (!shared) _snack(shareFailedNotice('已保存：$path'));
   }
 
   Future<bool> _confirm(String action) async {
@@ -344,7 +345,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   }
 
   Future<void> _shareAgain(String path) async {
-    if (await _confirm('确认并分享') && mounted && path == _exported) _share(path);
+    if (await _confirm('确认并分享') && mounted && path == _exported) await _share(path);
   }
 
   Future<void> _delete() async {
@@ -564,7 +565,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
               children: [
                 Text('已导出 ${_exported!.split('/').last}', style: context.type.bodyMedium),
                 const SizedBox(height: 4),
-                Text('在「文件」App 的 我的 iPhone › 音迹里也能找到。', style: context.type.bodySmall),
+                Text(exportLocationHint, style: context.type.bodySmall),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(

@@ -15,8 +15,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Asks for the microphone at run time. The audio itself is native code that
- * Dart calls through dart:ffi; see NativeAudio.requestMicPermission.
+ * Asks for the microphone at run time and opens the share sheet
+ * ({@link FileShare}). The audio itself is native code that Dart calls
+ * through dart:ffi; see NativeAudio.requestMicPermission and
+ * NativeAudio.shareFile.
  */
 public final class YintraceAudioPlugin
     implements FlutterPlugin,
@@ -33,6 +35,8 @@ public final class YintraceAudioPlugin
   private static final String REQUESTED = "microphone_requested";
 
   private MethodChannel channel;
+  private MethodChannel shareChannel;
+  private FileShare share;
   private Context context;
   private ActivityPluginBinding activity;
   private final List<MethodChannel.Result> waiting = new ArrayList<>();
@@ -42,12 +46,19 @@ public final class YintraceAudioPlugin
     context = binding.getApplicationContext();
     channel = new MethodChannel(binding.getBinaryMessenger(), "yintrace_audio/microphone");
     channel.setMethodCallHandler(this);
+    share = new FileShare(context, () -> activity == null ? null : activity.getActivity());
+    shareChannel = new MethodChannel(binding.getBinaryMessenger(), "yintrace_audio/share");
+    shareChannel.setMethodCallHandler(share);
   }
 
   @Override
   public void onDetachedFromEngine(FlutterPluginBinding binding) {
     channel.setMethodCallHandler(null);
     channel = null;
+    shareChannel.setMethodCallHandler(null);
+    shareChannel = null;
+    share.close();
+    share = null;
   }
 
   @Override

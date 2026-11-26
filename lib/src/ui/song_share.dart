@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import '../app/services.dart';
 import '../library/song.dart';
 import '../library/song_package.dart';
 import 'copyright_notice.dart';
+import 'export_location.dart';
 import 'theme.dart';
 
 Future<void> showSongShare(BuildContext context, SongMeta song) => showModalBottomSheet<void>(
@@ -27,7 +29,7 @@ class SongShareSheet extends StatefulWidget {
   /// For tests.
   final bool background;
   final Directory? outputDir;
-  final bool Function(String path)? share;
+  final FutureOr<bool> Function(String path)? share;
 
   @override
   State<SongShareSheet> createState() => _SongShareSheetState();
@@ -75,7 +77,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
         _busy = false;
         _exported = path;
       });
-      _share(path);
+      unawaited(_share(path));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -85,13 +87,14 @@ class _SongShareSheetState extends State<SongShareSheet> {
     }
   }
 
-  void _share(String path) {
-    final shared = (widget.share ?? NativeAudio.shareFile)(path);
-    if (!shared) setState(() => _notice = '已保存到 $path');
+  Future<void> _share(String path) async {
+    final shared = await (widget.share ?? NativeAudio.shareFile)(path);
+    if (!mounted) return;
+    setState(() => _notice = shared ? null : shareFailedNotice('已保存到 $path'));
   }
 
   Future<void> _shareAgain(String path) async {
-    if (await _confirm('确认并分享') && mounted) _share(path);
+    if (await _confirm('确认并分享') && mounted) await _share(path);
   }
 
   @override
@@ -136,7 +139,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
               Text('已导出 ${exported.split('/').last}', style: context.type.bodyMedium),
               const SizedBox(height: 4),
               Text(
-                _notice ?? '在「文件」App 的 我的 iPhone › 音迹里也能找到。',
+                _notice ?? exportLocationHint,
                 style: context.type.bodySmall,
               ),
               const SizedBox(height: 14),

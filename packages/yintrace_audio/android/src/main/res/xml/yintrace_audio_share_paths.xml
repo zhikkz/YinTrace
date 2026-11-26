@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What ShareProvider serves: only the files FileShare.java put there to
+     hand to the share sheet, never the app's songs or recordings. -->
+<paths>
+    <cache-path name="share" path="yintrace_share/" />
+</paths>
