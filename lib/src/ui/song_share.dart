@@ -1,13 +1,15 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
 import '../app/services.dart';
+import '../export/export_files.dart';
 import '../library/song.dart';
 import '../library/song_package.dart';
 import 'copyright_notice.dart';
+import 'export_location.dart';
 import 'theme.dart';
 
 Future<void> showSongShare(BuildContext context, SongMeta song) => showModalBottomSheet<void>(
@@ -18,16 +20,25 @@ Future<void> showSongShare(BuildContext context, SongMeta song) => showModalBott
 
 /// Makes a song into one file for someone else (see `song_package.dart`):
 /// written to the app's folder in the Files app and offered to the share
-/// sheet.
+/// sheet. On Android the share sheet and "存到手机" are the only ways out:
+/// the file is deleted when the sheet closes.
 class SongShareSheet extends StatefulWidget {
-  const SongShareSheet({super.key, required this.song, this.background = true, this.outputDir, this.share});
+  const SongShareSheet({
+    super.key,
+    required this.song,
+    this.background = true,
+    this.outputDir,
+    this.share,
+    this.save,
+  });
 
   final SongMeta song;
 
   /// For tests.
   final bool background;
   final Directory? outputDir;
-  final bool Function(String path)? share;
+  final FutureOr<bool> Function(String path)? share;
+  final FutureOr<SaveCopyResult> Function(String path)? save;
 
   @override
   State<SongShareSheet> createState() => _SongShareSheetState();
@@ -36,9 +47,19 @@ class SongShareSheet extends StatefulWidget {
 class _SongShareSheetState extends State<SongShareSheet> {
   bool _busy = false;
   bool _confirming = false;
+  bool _saving = false;
   String? _exported;
   String? _notice;
   String? _error;
+
+  /// Deleted when the sheet closes on Android.
+  final _written = <String>[];
+
+  @override
+  void dispose() {
+    discardExports(_written);
+    super.dispose();
+  }
 
   String get _audio => songPackageAudioFiles(widget.song).map((file) => file.$1.label).join('、');
 
@@ -61,7 +82,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
       _notice = null;
     });
     try {
-      final dir = widget.outputDir ?? await getApplicationDocumentsDirectory();
+      final dir = widget.outputDir ?? await exportDirectory();
       dir.createSync(recursive: true);
       // The newest export of a song replaces the one before.
       final path = '${dir.path}/${songPackageName(widget.song)}';
@@ -70,12 +91,16 @@ class _SongShareSheetState extends State<SongShareSheet> {
       } else {
         exportSongPackageSync(root, widget.song.id, path);
       }
-      if (!mounted) return;
+      if (!_written.contains(path)) _written.add(path);
+      if (!mounted) {
+        discardExports(_written); // closed while exporting
+        return;
+      }
       setState(() {
         _busy = false;
         _exported = path;
       });
-      _share(path);
+      unawaited(_share(path));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -85,13 +110,25 @@ class _SongShareSheetState extends State<SongShareSheet> {
     }
   }
 
-  void _share(String path) {
-    final shared = (widget.share ?? NativeAudio.shareFile)(path);
-    if (!shared) setState(() => _notice = '已保存到 $path');
+  Future<void> _share(String path) async {
+    final shared = await (widget.share ?? NativeAudio.shareFile)(path);
+    if (!mounted) return;
+    setState(() => _notice = shared ? null : shareFailedNotice('已保存到 $path'));
   }
 
   Future<void> _shareAgain(String path) async {
-    if (await _confirm('确认并分享') && mounted) _share(path);
+    if (await _confirm('确认并分享') && mounted) await _share(path);
+  }
+
+  Future<void> _saveCopy(String path) async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    final result = await (widget.save ?? NativeAudio.saveFileCopy)(path);
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      _notice = saveCopyNotice(result) ?? _notice;
+    });
   }
 
   @override
@@ -136,7 +173,7 @@ class _SongShareSheetState extends State<SongShareSheet> {
               Text('已导出 ${exported.split('/').last}', style: context.type.bodyMedium),
               const SizedBox(height: 4),
               Text(
-                _notice ?? '在「文件」App 的 我的 iPhone › 音迹里也能找到。',
+                _notice ?? exportLocationHint,
                 style: context.type.bodySmall,
               ),
               const SizedBox(height: 14),
@@ -145,6 +182,14 @@ class _SongShareSheetState extends State<SongShareSheet> {
                 icon: const Icon(Icons.ios_share_rounded),
                 label: const Text('分享或存到别处'),
               ),
+              if (exportsAreTransient) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _saving ? null : () => _saveCopy(exported),
+                  icon: const Icon(Icons.save_alt_rounded),
+                  label: const Text('存到手机'),
+                ),
+              ],
             ],
           ],
         ),

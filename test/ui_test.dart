@@ -11,6 +11,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -722,7 +723,7 @@ void main() {
       () => keepTake(services.songs, song.id, take, score: 80, audio: const WavAudioBackend(), background: false),
     ))!;
     final out = Directory('${tmp.path}/exports');
-    String? shared;
+    String? shared, copied;
     late PracticeEngine engine;
     final awake = <bool>[];
     final platform = ScreenAwake.platform;
@@ -740,6 +741,10 @@ void main() {
           share: (path) {
             shared = path;
             return true;
+          },
+          save: (path) {
+            copied = path;
+            return SaveCopyResult.saved;
           },
         ),
       ),
@@ -808,8 +813,17 @@ void main() {
     final mix = readWavFile(shared!);
     expect(mix.channels, 2);
     expect(mix.frames, greaterThanOrEqualTo(10 * sr));
+    // Android (the tests' platform): saved through the system dialog, and
+    // deleted when the page closes.
+    await tester.ensureVisible(find.text('存到手机'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('存到手机'));
+    await tester.pumpAndSettle();
+    expect(copied, shared);
+    expect(find.text('已保存到你选的位置。'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await settleIo(tester, rounds: 3);
+    expect(File(shared!).existsSync(), isFalse);
     final saved = (await tester.runAsync(() => services.songs.loadRecordings(song.id)))!
         .firstWhere((r) => r.id == rec.id);
     expect(saved.mix.offsetMs, lessThan(0), reason: 'the alignment is remembered');
@@ -1087,7 +1101,11 @@ void main() {
     await tester.tap(find.text('确认并分享'));
     await tester.pumpAndSettle();
     expect(shared, [file, file]);
+    // What the receiver gets. On Android (the tests' platform) the app keeps
+    // no copy once the sheet closes.
+    final received = File(file).copySync('${tmp.path}/received.yintrace').path;
     await tester.pumpWidget(const SizedBox());
+    expect(File(file).existsSync(), isFalse);
 
     // The receiver can see a package rejected in the queue, then add a valid one.
     String? picked = '${tmp.path}/vocal.wav';
@@ -1118,7 +1136,7 @@ void main() {
     expect(find.text('导入失败'), findsOneWidget);
     await tester.pageBack();
     await tester.pumpAndSettle();
-    picked = file;
+    picked = received;
     await addPackage();
     expect(find.text('已导入'), findsOneWidget);
     expect(find.byType(SongPage), findsNothing);
@@ -1134,6 +1152,93 @@ void main() {
     expect((await tester.runAsync(() => services.songs.load(song.id)))!.practiceCount, greaterThan(0));
     await tester.pumpWidget(const SizedBox());
     await tester.runAsync(() => services.songs.delete(added.id));
+  });
+
+  testWidgets('on Android an export is saved or shared from the app, which keeps no copy', (tester) async {
+    phone(tester);
+    final out = Directory('${tmp.path}/unshared');
+    final file = '${out.path}/夜航（示例） - 演示.yintrace';
+    var opens = false;
+    var saving = SaveCopyResult.saved;
+    final shared = <String>[], saved = <String>[];
+    Future<void> export() async {
+      await tester.pumpWidget(
+        host(
+          services,
+          Scaffold(
+            body: SongShareSheet(
+              key: UniqueKey(),
+              song: song,
+              background: false,
+              outputDir: out,
+              share: (path) async {
+                shared.add(path);
+                return opens;
+              },
+              save: (path) async {
+                saved.add(path);
+                return saving;
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('导出歌曲文件'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确认并导出及分享'));
+      await settleIo(tester, rounds: 5);
+    }
+
+    try {
+      // Android keeps the file where no file manager sees it.
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      await export();
+      expect(shared, [file]);
+      expect(find.text('已导出 夜航（示例） - 演示.yintrace'), findsOneWidget);
+      expect(find.text('没能打开分享面板；可以点“存到手机”，或者再点一次“分享或存到别处”。'), findsOneWidget);
+      expect(find.textContaining('已保存'), findsNothing);
+      expect(find.textContaining('我的 iPhone'), findsNothing);
+      // The system's "save as" dialog: saved, closed, failed.
+      await tester.tap(find.text('存到手机'));
+      await tester.pumpAndSettle();
+      expect(saved, [file]);
+      expect(find.text('已保存到你选的位置。'), findsOneWidget);
+      saving = SaveCopyResult.cancelled;
+      await tester.tap(find.text('存到手机'));
+      await tester.pumpAndSettle();
+      expect(saved, [file, file]);
+      expect(find.text('已保存到你选的位置。'), findsOneWidget);
+      saving = SaveCopyResult.failed;
+      await tester.tap(find.text('存到手机'));
+      await tester.pumpAndSettle();
+      expect(find.text('没能保存，请再试一次。'), findsOneWidget);
+      opens = true;
+      await tester.tap(find.text('分享或存到别处'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确认并分享'));
+      await tester.pumpAndSettle();
+      expect(shared, [file, file]);
+      expect(find.text('离开这里后音迹会删掉这个文件；要留一份，点“存到手机”或“分享或存到别处”。'), findsOneWidget);
+      expect(File(file).existsSync(), isTrue);
+      await tester.pumpWidget(const SizedBox());
+      expect(File(file).existsSync(), isFalse);
+
+      // On iOS the Files app shows the folder: the file stays, and the share
+      // sheet saves it elsewhere.
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      opens = false;
+      await export();
+      expect(find.text('已保存到 $file'), findsOneWidget);
+      expect(find.text('存到手机'), findsNothing);
+      opens = true;
+      await export();
+      expect(find.text('在「文件」App 的 我的 iPhone › 音迹里也能找到。'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      expect(File(file).existsSync(), isTrue);
+      expect(saved, hasLength(3));
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('model setup only gates on the models required by this import', (tester) async {

@@ -1,3 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
   package="io.github.zhikkz.yintrace_audio">
+  <application>
+    <!-- Exported files for the share sheet (FileShare.java). Not exported:
+         an app sees a file only through the grant the share gives it. -->
+    <provider
+      android:name="io.github.zhikkz.yintrace_audio.ShareProvider"
+      android:authorities="${applicationId}.yintrace_audio.share"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/yintrace_audio_share_paths" />
+    </provider>
+  </application>
 </manifest>

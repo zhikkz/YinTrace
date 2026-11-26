@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yintrace/src/audio/audio_backend.dart';
 import 'package:yintrace/src/audio/wav.dart';
 import 'package:yintrace/src/dsp/reverb.dart';
+import 'package:yintrace/src/export/export_files.dart';
 import 'package:yintrace/src/export/mixdown.dart';
 import 'package:yintrace/src/export/recordings.dart';
 import 'package:yintrace/src/library/recording.dart';
@@ -27,6 +28,39 @@ Float32List tone(double seconds, double hz, double amp) =>
     Float32List.fromList([for (var i = 0; i < (seconds * sr).round(); i++) amp * math.sin(2 * math.pi * hz * i / sr)]);
 
 void main() {
+  test('the start on Android clears exports left behind, and those 1.0.0 kept out of reach', () async {
+    final tmp = Directory.systemTemp.createTempSync('yt_sweep');
+    addTearDown(() => tmp.deleteSync(recursive: true));
+    File make(String path) => File('${tmp.path}/$path')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('x');
+    final exports = Directory('${tmp.path}/cache/exports');
+    final documents = Directory('${tmp.path}/app_flutter');
+    final left = [
+      make('cache/exports/夜航 - 我的演唱 2026-11-20 2130.wav'),
+      make('cache/exports/夜航 - 演示.yintrace.tmp'),
+      make('app_flutter/夜航 - 我的演唱 2026-11-20 2130.wav'),
+      make('app_flutter/夜航 - 我的演唱 2026-11-20 2130 (2).m4a'),
+      make('app_flutter/夜航 - 演示.yintrace'),
+      make('app_flutter/夜航 - 演示.yintrace.tmp'),
+    ];
+    final kept = [
+      make('app_flutter/flutter_assets/sounds/click.wav'), // the engine's
+      make('app_flutter/res_timestamp-1-1764000000000'),
+      make('cache/key-shifts/song/+2.wav'),
+    ];
+    await sweepExports(exports: exports, documents: documents);
+    for (final f in left) {
+      expect(f.existsSync(), isFalse, reason: f.path);
+    }
+    for (final f in kept) {
+      expect(f.existsSync(), isTrue, reason: f.path);
+    }
+    expect(exports.existsSync(), isTrue);
+    // Nothing there yet: no error.
+    await sweepExports(exports: Directory('${tmp.path}/none'), documents: Directory('${tmp.path}/none'));
+  });
+
   test('reverb rings out and is wider than the voice', () {
     final impulse = Float32List(sr)..[0] = 1;
     final l = Float32List(sr * 3), r = Float32List(sr * 3);

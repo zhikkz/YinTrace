@@ -5,7 +5,6 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:yintrace_audio/yintrace_audio.dart';
 
 import '../app/screen_awake.dart';
@@ -13,11 +12,13 @@ import '../app/services.dart';
 import '../audio/audio_backend.dart';
 import '../audio/key_shift_cache.dart';
 import '../audio/playback_scrub.dart';
+import '../export/export_files.dart';
 import '../export/mixdown.dart';
 import '../export/recordings.dart';
 import '../library/recording.dart';
 import '../library/song.dart';
 import 'copyright_notice.dart';
+import 'export_location.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -61,7 +62,9 @@ Future<PreviewAudio> preparePreviewInBackground(
 
 /// Turns a kept recording into a finished track: the singer's voice with a
 /// little reverb over the accompaniment, previewed live, exported as m4a to
-/// the app's folder in the Files app and offered to the share sheet.
+/// the app's folder in the Files app and offered to the share sheet. On
+/// Android (WAV) the share sheet and "存到手机" are the only ways out: the
+/// file is deleted when the page closes.
 class ExportPage extends StatefulWidget {
   const ExportPage({
     super.key,
@@ -71,6 +74,7 @@ class ExportPage extends StatefulWidget {
     this.background = true,
     this.outputDir,
     this.share,
+    this.save,
   });
 
   final String songId;
@@ -80,7 +84,8 @@ class ExportPage extends StatefulWidget {
   final PracticeEngine Function()? engineFactory;
   final bool background;
   final Directory? outputDir;
-  final bool Function(String path)? share;
+  final FutureOr<bool> Function(String path)? share;
+  final FutureOr<SaveCopyResult> Function(String path)? save;
 
   @override
   State<ExportPage> createState() => _ExportPageState();
@@ -97,6 +102,10 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   double? _progress;
   bool _confirming = false;
   String? _exported;
+  bool _saving = false;
+
+  /// Every file this page exported, to delete when it closes on Android.
+  final _written = <String>[];
   bool _loaded = false;
   final _scrub = PlaybackScrub();
   bool _seekingWithSlider = false;
@@ -133,6 +142,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    discardExports(_written);
     _clock?.cancel();
     _awake.release();
     final e = _engine;
@@ -284,7 +294,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
     setState(() => _progress = 0);
     _syncAwake();
     try {
-      final dir = widget.outputDir ?? await getApplicationDocumentsDirectory();
+      final dir = widget.outputDir ?? await exportDirectory();
       dir.createSync(recursive: true);
       var base = '${dir.path}/${exportName(meta.title, DateTime.now())}';
       for (var n = 2; File('$base.m4a').existsSync() || File('$base.wav').existsSync(); n++) {
@@ -312,13 +322,17 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
               },
             )
           : exportNow(job.toMessage());
+      _written.add(path);
       await _songs.saveRecording(widget.songId, rec);
-      if (!mounted) return;
+      if (!mounted) {
+        discardExports(_written); // closed while exporting
+        return;
+      }
       setState(() {
         _progress = null;
         _exported = path;
       });
-      _share(path);
+      unawaited(_share(path));
     } catch (e) {
       if (!mounted) return;
       setState(() => _progress = null);
@@ -328,9 +342,20 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
     }
   }
 
-  void _share(String path) {
-    final shared = (widget.share ?? NativeAudio.shareFile)(path);
-    if (!shared) _snack('已保存：$path');
+  Future<void> _share(String path) async {
+    final shared = await (widget.share ?? NativeAudio.shareFile)(path);
+    if (!shared) _snack(shareFailedNotice('已保存：$path'));
+  }
+
+  Future<void> _saveCopy(String path) async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final notice = saveCopyNotice(await (widget.save ?? NativeAudio.saveFileCopy)(path));
+      if (notice != null) _snack(notice);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<bool> _confirm(String action) async {
@@ -344,7 +369,7 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
   }
 
   Future<void> _shareAgain(String path) async {
-    if (await _confirm('确认并分享') && mounted && path == _exported) _share(path);
+    if (await _confirm('确认并分享') && mounted && path == _exported) await _share(path);
   }
 
   Future<void> _delete() async {
@@ -564,14 +589,21 @@ class _ExportPageState extends State<ExportPage> with WidgetsBindingObserver {
               children: [
                 Text('已导出 ${_exported!.split('/').last}', style: context.type.bodyMedium),
                 const SizedBox(height: 4),
-                Text('在「文件」App 的 我的 iPhone › 音迹里也能找到。', style: context.type.bodySmall),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => _shareAgain(_exported!),
-                    icon: const Icon(Icons.ios_share_rounded),
-                    label: const Text('分享或存到别处'),
-                  ),
+                Text(exportLocationHint, style: context.type.bodySmall),
+                Wrap(
+                  children: [
+                    if (exportsAreTransient)
+                      TextButton.icon(
+                        onPressed: _saving ? null : () => _saveCopy(_exported!),
+                        icon: const Icon(Icons.save_alt_rounded),
+                        label: const Text('存到手机'),
+                      ),
+                    TextButton.icon(
+                      onPressed: () => _shareAgain(_exported!),
+                      icon: const Icon(Icons.ios_share_rounded),
+                      label: const Text('分享或存到别处'),
+                    ),
+                  ],
                 ),
               ],
             ),
